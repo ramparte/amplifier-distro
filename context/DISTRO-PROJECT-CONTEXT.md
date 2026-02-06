@@ -225,3 +225,53 @@ planning/12-nexus-synthesis.md for full analysis.
 
 Key takeaway: Nexus is a valid product layer on Ring 3. It needs
 the distro (Rings 1-2) to exist first. No conflict, just sequencing.
+
+---
+
+## Implementation Design (Added Feb 6, Session 2)
+
+The full implementation design is in `IMPLEMENTATION.md` at repo root.
+It covers:
+
+### Interface Inventory (Concrete Details)
+
+| Interface | Stack | Session Creation | Distro Fix |
+|-----------|-------|-----------------|------------|
+| **CLI** | Python/Click/Rich | `resolve_config()` golden path | Produces artifacts CLI consumes |
+| **TUI** | Python/Textual | sys.path hack into CLI internals | Proper pip dependency + distro.yaml reader |
+| **Web** | FastAPI + React/TS | Direct amplifier-core/foundation | Already does it right; add distro.yaml defaults |
+| **Desktop** | Unknown (private repo) | Unknown | TBD |
+| **Voice** | Python/OpenAI Realtime | Hardcoded values | Config extraction + distro.yaml |
+
+### Machine Independence
+
+- Backup: private GitHub repo (`<gh_handle>/amplifier-backup`)
+- Backed up: distro.yaml, memory/, settings.yaml, bundle-registry.yaml
+- NOT backed up: keys.env (security), cache (rebuilds), projects (team tracking handles)
+- Restore: clone backup, apply config, prompt for keys, run init --restore
+- Container: Dockerfile + devcontainer.json, `amp-distro init --non-interactive`
+- Does NOT require Docker for basic setup
+
+### Update Model
+
+- `amp-distro update`: CLI + cache + base bundle + interfaces + pre-flight + rollback
+- Auto-cache-refresh on stale (TTL-based, during pre-flight)
+- Auto-retry on load failure (clear cache entry, re-clone, retry once)
+- Version pinning opt-in via distro.yaml
+- Rollback: snapshot before update, restore if pre-flight fails after
+
+### The `amp-distro` Tool
+
+Standalone CLI tool in this repo. NOT a plugin to amplifier-app-cli.
+Commands: init, status, update, install, backup, restore, doctor, version.
+
+### Open Design Questions (Decided)
+
+- Q1 TUI dependency: use amplifier-app-cli as pip dependency (quick fix)
+- Q3 Memory location: keep ~/amplifier-dev-memory/ as-is, record in distro.yaml
+- Q4 Voice: lower priority installer, Phase 2+ 
+- Q5 Team update coordination: float on @main for now, pin opt-in
+
+### Open Design Questions (Still Open)
+
+- Q2: Should `amp-distro` also be aliased as `amp distro`? (cosmetic)
