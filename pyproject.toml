@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amplifier-distro"
+version = "0.1.0"
+description = "An opinionated Amplifier distribution"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Sam Schillace" }]
+
+dependencies = [
+    "amplifier-core",
+    "click>=8.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+amp-distro = "amplifier_distro.cli:main"
+
+# ── Packaging Boundary ──────────────────────────────────────
+# Only src/ is packaged. Everything else in the repo (planning/,
+# notes/, Dockerfile.dev, INSTRUCTIONS.md, etc.) is working files
+# for development and does NOT ship to users.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ── Code Quality ────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C4", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+include = ["src"]

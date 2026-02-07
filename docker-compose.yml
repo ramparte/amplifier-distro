@@ -1,0 +1,85 @@
+# Amplifier Distro - Development & Testing Environment
+#
+# Usage:
+#   docker compose --profile cli up        # CLI surface only
+#   docker compose --profile gui up        # Web GUI surface
+#   docker compose --profile all up        # All surfaces
+#   docker compose --profile agent-test up # Automated testing
+#   docker compose --profile human-test up # Interactive testing (noVNC)
+#
+# Teardown (clean slate):
+#   docker compose down -v
+#
+# Enter a running CLI container:
+#   docker compose exec cli bash
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile.dev
+  volumes:
+    - .:/workspace                              # Source code (live editing)
+    - /workspace/.venv                          # Exclude .venv from bind mount
+    - amplifier-home:/home/testuser/.amplifier  # Isolated config (NOT host config)
+  env_file:
+    - .env.test
+    - path: .env.local
+      required: false
+  networks:
+    - distro-net
+
+services:
+  # ── CLI Surface ──────────────────────────────────────────────
+  cli:
+    <<: *common
+    profiles: ["cli", "all", "agent-test"]
+    stdin_open: true
+    tty: true
+    command: ["bash"]
+
+  # ── TUI Surface ─────────────────────────────────────────────
+  tui:
+    <<: *common
+    profiles: ["tui", "all"]
+    stdin_open: true
+    tty: true
+    command: ["bash", "-c", "echo 'TUI surface - install amp-tui then run it here'; bash"]
+
+  # ── GUI/Web Surface ─────────────────────────────────────────
+  gui:
+    <<: *common
+    profiles: ["gui", "all"]
+    ports:
+      - "8080:8080"   # FastAPI backend
+      - "3000:3000"   # Web frontend (if separate)
+    command: ["bash", "-c", "echo 'GUI surface - install amp-gui then run it here'; bash"]
+
+  # ── Voice Bridge ────────────────────────────────────────────
+  voice:
+    <<: *common
+    profiles: ["voice", "all"]
+    ports:
+      - "8443:8443"   # WebRTC signaling
+    command: ["bash", "-c", "echo 'Voice surface - install amp-voice then run it here'; bash"]
+
+  # ── noVNC Desktop (Human Interactive Testing) ───────────────
+  # Full Linux desktop in a browser window at localhost:6901
+  # Use this to manually test GUI/Voice with a real browser
+  novnc:
+    image: consol/ubuntu-xfce-vnc:latest
+    profiles: ["human-test"]
+    ports:
+      - "6901:6901"   # noVNC web interface
+      - "5901:5901"   # VNC direct connect
+    shm_size: "2g"
+    networks:
+      - distro-net
+
+volumes:
+  amplifier-home:
+    # This volume holds ~/.amplifier/ state for ALL containers.
+    # Wiped with: docker compose down -v
+
+networks:
+  distro-net:
+    driver: bridge

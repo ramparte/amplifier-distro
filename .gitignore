@@ -1,0 +1,15 @@
+# Real API keys (never commit)
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+
+# Docker
+snapshots/
+
+# OS
+.DS_Store
