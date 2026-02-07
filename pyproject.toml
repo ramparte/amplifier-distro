@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,10 +12,14 @@ license = { text = "MIT" }
 authors = [{ name = "Sam Schillace" }]
 
 dependencies = [
-    "amplifier-core",
     "click>=8.0",
     "pyyaml>=6.0",
+    "pydantic>=2.0",
 ]
+
+# amplifier-core is a runtime dependency for session integration (Phase 1+)
+# but not needed for the amp-distro CLI itself. When needed:
+#   uv tool install git+https://github.com/microsoft/amplifier-core
 
 [project.scripts]
 amp-distro = "amplifier_distro.cli:main"
