@@ -15,6 +15,8 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
     "pydantic>=2.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
 ]
 
 # amplifier-core is a runtime dependency for session integration (Phase 1+)
@@ -23,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 amp-distro = "amplifier_distro.cli:main"
+amp-distro-server = "amplifier_distro.server.cli:serve"
 
 # ── Packaging Boundary ──────────────────────────────────────
 # Only src/ is packaged. Everything else in the repo (planning/,
@@ -42,3 +45,5 @@ select = ["E", "F", "I", "B", "C4", "UP"]
 [tool.pyright]
 pythonVersion = "3.11"
 include = ["src"]
+venvPath = "."
+venv = ".venv"

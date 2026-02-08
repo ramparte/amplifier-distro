@@ -1,4 +1,10 @@
-"""Pydantic schema for ~/.amplifier/distro.yaml"""
+"""Pydantic schema for ~/.amplifier/distro.yaml
+
+Default values here MUST match the canonical constants in conventions.py.
+conventions.py is the source of truth for all filenames, paths, and naming
+standards. This schema defines the shape of distro.yaml; conventions.py
+defines the fixed assumptions the distro relies on.
+"""
 
 from pydantic import BaseModel, Field
 
@@ -21,8 +27,9 @@ class CacheConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
+    # Source of truth: conventions.AMPLIFIER_HOME / conventions.MEMORY_DIR
     path: str = "~/.amplifier/memory"
-    # Legacy location for migration detection
+    # Source of truth: conventions.LEGACY_MEMORY_DIR
     legacy_paths: list[str] = Field(default_factory=lambda: ["~/amplifier-dev-memory"])
 
 
