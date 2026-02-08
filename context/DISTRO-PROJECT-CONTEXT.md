@@ -165,28 +165,46 @@ Ring 3 = workflows that work FOR you.
 
 ---
 
-## Current Status
+## Current Status (Updated Feb 7, 2026)
 
-**Phase:** Pre-Phase-0. Research and design complete. Ready to
-start building.
+**Phase:** Phase 1 in progress. Phase 0 complete.
 
-**What's done:**
-- Research: 14 planning documents covering friction, architecture,
-  gaps, task lists, and Nexus analysis
-- Design: OPINIONS.md (shared conventions), ROADMAP.md (firm plan)
-- Repos: amplifier-distro created and structured
+### What's done:
 
-**What's next (Phase 0, ~1 week):**
-1. Define distro.yaml JSON schema
-2. Create the distro base bundle (compose existing behaviors)
-3. PR to amplifier-foundation: bundle validation strict mode
-4. PR to amplifier-foundation: basic pre-flight checks
-5. Get one team member (Sam) running on strict validation
+**Phase 0 (complete, 2 commits):**
+- `distro.yaml` schema: Pydantic models in `src/amplifier_distro/schema.py`
+- Config I/O: `src/amplifier_distro/config.py` (load/save, gh identity detection)
+- Pre-flight checks: `src/amplifier_distro/preflight.py` (8 checks: distro.yaml,
+  gh auth, identity, ANTHROPIC_API_KEY, OPENAI_API_KEY, workspace, amplifier CLI, memory)
+- `amp-distro` CLI: `src/amplifier_distro/cli.py` (init, status, validate commands)
+- Distro base bundle: `src/bundles/distro-base.md` (foundation agents + anthropic + openai)
+- Docker test environment: `Dockerfile.dev` + `docker-compose.yml` (7 profiles, insulated)
+- `INSTRUCTIONS.md` for team collaborators
+- Packaging boundary: `pyproject.toml` with `src/` layout, working files excluded
 
-**What's after that (Phase 1, ~1 week):**
-1. Session handoff hook (auto-summary at session end)
-2. Handoff injection on session start
-3. Memory location standardization
+**Phase 1 (in progress):**
+- Memory standardization: DONE. Canonical path is `~/.amplifier/memory/`.
+  Migration helper in `src/amplifier_distro/migrate.py` moves files from
+  `~/amplifier-dev-memory/` and creates backward-compat symlink.
+- Bundle validation strict mode: PR #68 submitted to microsoft/amplifier-foundation.
+  Adds `strict: bool` to BundleRegistry and BundleValidator. 10 new tests, 49 total passing.
+  URL: https://github.com/microsoft/amplifier-foundation/pull/68
+- Acceptance tests: 46 pytest tests (34 Phase 0, 12 Phase 1) in `tests/`.
+  All pass in Docker. Designed to be antagonist-inspectable.
+- Session handoffs: DEFERRED to next session. Sam wants to discuss what this
+  means before implementing. Lighter approach (orchestrator:complete hook) preferred
+  over core PR (SESSION_END event) if we decide to do it.
+
+### What's next (Next Session):
+1. **Discuss session handoffs** - What does "sessions carry context forward"
+   mean in practice? Decide approach.
+2. **Check PR #68 status** - If merged, enable strict mode in distro base bundle.
+3. **Start Phase 2** (Interface Adapter) if Phase 1 is closed out.
+
+### Open items:
+- PR #68 (foundation strict mode) needs review/merge
+- Session handoffs approach undecided
+- `src_old/` cleanup done (was Docker permission artifact)
 
 ---
 
@@ -195,11 +213,19 @@ start building.
 1. **Read this file first.** It has the full picture.
 2. **Read OPINIONS.md** for the shared conventions.
 3. **Read ROADMAP.md** for the build plan with phases and tasks.
-4. **For deeper research**, read files in planning/ as needed.
-5. **For Nexus context**, see planning/12-nexus-synthesis.md.
+4. **Read INSTRUCTIONS.md** for development setup and testing.
+5. **For deeper research**, read files in planning/ as needed.
+6. **For Nexus context**, see planning/12-nexus-synthesis.md.
+
+### Development workflow:
+- **Docker test env**: `docker compose --profile cli up -d` then `docker compose exec cli bash`
+- **Run tests**: `python -m pytest tests/ -v` (in Docker or locally in a venv)
+- **amp-distro CLI**: Install with `uv tool install -e .` or `pip install -e .` in a venv
+- **Acceptance tests**: `tests/test_phase0.py` (34 tests), `tests/test_phase1.py` (12 tests)
 
 To pick up a specific task:
-- Check ROADMAP.md Phase 0 tasks
+- Check this file's "What's next" section
+- Check ROADMAP.md for phase-level tasks
 - Each task has clear scope and exit criteria
 - Work in the relevant repo (PRs to foundation, core, or this repo)
 - Update this context file when decisions change
@@ -268,10 +294,14 @@ Commands: init, status, update, install, backup, restore, doctor, version.
 ### Open Design Questions (Decided)
 
 - Q1 TUI dependency: use amplifier-app-cli as pip dependency (quick fix)
-- Q3 Memory location: keep ~/amplifier-dev-memory/ as-is, record in distro.yaml
+- Q3 Memory location: MOVE to ~/.amplifier/memory/ (canonical). Migration helper
+  created in migrate.py. Creates symlink from old location for backward compat.
+  (Updated Feb 7 - reversed earlier decision to keep in place)
 - Q4 Voice: lower priority installer, Phase 2+ 
 - Q5 Team update coordination: float on @main for now, pin opt-in
 
 ### Open Design Questions (Still Open)
 
 - Q2: Should `amp-distro` also be aliased as `amp distro`? (cosmetic)
+- Q6: Session handoffs - what approach? Lighter (orchestrator:complete hook) or
+  heavier (SESSION_END core PR)? Deferred to next session for discussion.
