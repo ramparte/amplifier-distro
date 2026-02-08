@@ -6,9 +6,9 @@ amplifier-foundation primitives into a clean, distro-aware API.
 
 Architecture:
     Interface (CLI/TUI/Voice/Web)
-        → Bridge API (this module)
-            → amplifier-foundation (load_bundle, prepare, create_session)
-            → distro.yaml (config)
+        -> Bridge API (this module)
+            -> amplifier-foundation (load_bundle, prepare, create_session)
+            -> distro.yaml (config)
 
 No interface should import amplifier-core or amplifier-foundation directly
 for session creation. They go through the Bridge.
@@ -16,12 +16,15 @@ for session creation. They go through the Bridge.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-# Convention constants — will move to conventions.py when that module exists
+logger = logging.getLogger(__name__)
+
+# Convention constants - will move to conventions.py when that module exists
 AMPLIFIER_HOME = "~/.amplifier"
 PROJECTS_DIR = "projects"
 HANDOFF_FILENAME = "handoff.md"
@@ -65,8 +68,7 @@ class SessionHandle:
         """Send a prompt and get the response."""
         if self._session is None:
             raise RuntimeError("Session not initialized")
-        # Delegate to the actual session's orchestrator
-        result: str = await self._session.run(prompt)
+        result: str = await self._session.execute(prompt)
         return result
 
     async def run_streaming(self, prompt: str) -> AsyncIterator[str]:
@@ -75,6 +77,14 @@ class SessionHandle:
             raise RuntimeError("Session not initialized")
         async for chunk in self._session.run_streaming(prompt):
             yield chunk
+
+    async def cleanup(self) -> None:
+        """Clean up session resources."""
+        if self._session is not None:
+            try:
+                await self._session.cleanup()
+            except Exception:
+                logger.warning("Error during session cleanup", exc_info=True)
 
 
 @dataclass
@@ -140,9 +150,27 @@ class AmplifierBridge(Protocol):
         """Derive project ID from working directory.
 
         Uses workspace_root from distro.yaml to determine the project
-        slug. E.g., ~/dev/amplifier-distro → "amplifier-distro"
+        slug. E.g., ~/dev/amplifier-distro -> "amplifier-distro"
         """
         ...
+
+
+def _require_foundation() -> tuple[Any, Any]:
+    """Import amplifier-foundation, raising a clear error if missing.
+
+    Returns (load_bundle, BundleRegistry) tuple.
+    """
+    try:
+        from amplifier_foundation import load_bundle  # type: ignore[import-not-found]
+        from amplifier_foundation.registry import (  # type: ignore[import-not-found]
+            BundleRegistry,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            "amplifier-foundation is not installed. "
+            "Install with: pip install amplifier-foundation"
+        ) from e
+    return load_bundle, BundleRegistry
 
 
 class LocalBridge:
@@ -176,33 +204,75 @@ class LocalBridge:
                 failures = [c.message for c in report.checks if not c.passed]
                 raise RuntimeError(f"Preflight failed: {'; '.join(failures)}")
 
-        # 3. Determine bundle
+        # 3. Import foundation (late, so server boots without it)
+        load_bundle, BundleRegistry = _require_foundation()
+
+        # 4. Determine bundle
         bundle_name = config.bundle_name or distro.get("bundle", {}).get(
             "active", "my-amplifier"
         )
 
-        # 4. Get project ID
+        # 5. Get project ID and check for handoff
         project_id = self.get_project_id(config.working_dir)
-
-        # 5. Check for handoff from previous session
         handoff = await self.get_handoff(project_id)
         inject = list(config.inject_context or [])
         if handoff:
             inject.append(f"Previous session context:\n{handoff.summary}")
 
-        # 6. Load bundle and create session
-        # NOTE: Actual amplifier-foundation integration goes here.
-        # For now, this is the API contract. Implementation requires
-        # amplifier-foundation imports which we defer until runtime.
-        _ = bundle_name  # used when foundation integration lands
-        _ = inject  # used when foundation integration lands
-        session_id = f"bridge-{project_id}-placeholder"
+        # 6. Load and prepare bundle
+        registry = BundleRegistry()
+        bundle = await load_bundle(bundle_name, registry=registry)
+        prepared = await bundle.prepare()
+
+        # 7. Create protocol adapters
+        from amplifier_distro.bridge_protocols import (
+            BridgeApprovalSystem,
+            BridgeDisplaySystem,
+            BridgeStreamingHook,
+        )
+
+        display = config.display or BridgeDisplaySystem()
+        approval = BridgeApprovalSystem(auto_approve=True)
+        streaming = BridgeStreamingHook(on_event=config.on_stream)
+
+        # 8. Create session
+        session = await prepared.create_session(
+            approval_system=approval,
+            display_system=display,
+            session_cwd=config.working_dir,
+        )
+
+        # 9. Register streaming hook for all events
+        try:
+            from amplifier_core.events import (  # type: ignore[import-not-found]
+                ALL_EVENTS,
+            )
+
+            for event in list(ALL_EVENTS):
+                session.coordinator.hooks.register(
+                    event=event,
+                    handler=streaming,
+                    priority=100,
+                    name=f"bridge-streaming:{event}",
+                )
+        except (ImportError, AttributeError):
+            logger.debug(
+                "Could not register streaming hooks"
+                " (amplifier-core events not available)"
+            )
+
+        logger.info(
+            "Session created: id=%s project=%s bundle=%s",
+            session.coordinator.session_id,
+            project_id,
+            bundle_name,
+        )
 
         return SessionHandle(
-            session_id=session_id,
+            session_id=session.coordinator.session_id,
             project_id=project_id,
             working_dir=config.working_dir,
-            _session=None,  # Will be real AmplifierSession
+            _session=session,
         )
 
     async def resume_session(
@@ -212,7 +282,10 @@ class LocalBridge:
         raise NotImplementedError("Session resume not yet implemented")
 
     async def end_session(self, handle: SessionHandle) -> HandoffSummary | None:
-        """End session and write handoff."""
+        """End session, clean up resources, and write handoff."""
+        # Clean up the session
+        await handle.cleanup()
+
         # TODO: Generate summary using LLM
         # TODO: Write handoff.md to session directory
         return None
@@ -257,7 +330,7 @@ class LocalBridge:
             # First component is the project
             return str(relative.parts[0]) if relative.parts else cwd.name
         except ValueError:
-            # Not under workspace — use directory name
+            # Not under workspace - use directory name
             return cwd.name
 
     def _load_distro_config(self) -> dict[str, Any]:

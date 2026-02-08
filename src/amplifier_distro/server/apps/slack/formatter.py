@@ -1,15 +1,49 @@
 """Format Amplifier output for Slack messages.
 
 Handles:
-- Markdown to Slack mrkdwn conversion
+- Markdown to Slack mrkdwn conversion (with protected regions)
 - Long message splitting (Slack has ~4000 char limit)
 - Block Kit message formatting for rich UI elements
+- Table → structured list conversion
+
+Uses the "protected regions" pattern: code blocks and inline code are
+replaced with placeholders before conversion, then restored after, so
+regex replacements never mangle code content.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+# Placeholder prefix unlikely to appear in real text
+_PH = "\x00PH"
+
+
+def _protect_regions(text: str) -> tuple[str, list[str]]:
+    """Replace code blocks and inline code with numbered placeholders.
+
+    Returns (text_with_placeholders, list_of_originals).
+    """
+    regions: list[str] = []
+
+    def _stash(m: re.Match[str]) -> str:
+        idx = len(regions)
+        regions.append(m.group(0))
+        return f"{_PH}{idx}{_PH}"
+
+    # Fenced code blocks first (greedy across lines)
+    text = re.sub(r"```[\s\S]*?```", _stash, text)
+    # Then inline code (single backtick)
+    text = re.sub(r"`[^`\n]+`", _stash, text)
+    return text, regions
+
+
+def _restore_regions(text: str, regions: list[str]) -> str:
+    """Put the originals back in place of placeholders."""
+    for i, original in enumerate(regions):
+        text = text.replace(f"{_PH}{i}{_PH}", original)
+    return text
 
 
 class SlackFormatter:
@@ -26,15 +60,21 @@ class SlackFormatter:
         - Code blocks: ```lang\\n...``` -> ```\\n...``` (lang stripped)
         - Links: [text](url) -> <url|text>
         - Headers: # text -> *text* (bold, no header support in Slack)
+        - Tables: converted to structured key/value lists
+
+        Code blocks and inline code are protected during conversion
+        so their contents are never mangled by the regex passes.
         """
         if not text:
             return ""
 
-        result = text
+        # --- Protect code regions ---
+        result, regions = _protect_regions(text)
 
-        # Convert code blocks first (preserve contents)
-        # Remove language hints from fenced code blocks
-        result = re.sub(r"```\w*\n", "```\n", result)
+        # --- Convert Markdown tables to readable lists ---
+        result = SlackFormatter._convert_tables(result)
+
+        # --- Standard Markdown → Slack mrkdwn ---
 
         # Convert links: [text](url) -> <url|text>
         result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", result)
@@ -48,17 +88,80 @@ class SlackFormatter:
         # Convert strikethrough: ~~text~~ -> ~text~
         result = re.sub(r"~~(.+?)~~", r"~\1~", result)
 
-        # Bullet lists: - item -> • item (Slack renders these better)
-        result = re.sub(r"^(\s*)[-*]\s+", r"\1• ", result, flags=re.MULTILINE)
+        # Bullet lists: - item -> bullet item (Slack renders these better)
+        # Use a callable replacement to avoid regex escape issues with
+        # the unicode bullet character in raw strings.
+        result = re.sub(
+            r"^(\s*)[-*]\s+",
+            lambda m: m.group(1) + "\u2022 ",
+            result,
+            flags=re.MULTILINE,
+        )
+
+        # --- Restore protected regions ---
+        result = _restore_regions(result, regions)
+
+        # Strip language hints from fenced code blocks (after restore)
+        result = re.sub(r"```\w*\n", "```\n", result)
 
         return result
+
+    @staticmethod
+    def _convert_tables(text: str) -> str:
+        """Convert Markdown tables to structured key/value lists.
+
+        Slack mrkdwn doesn't support tables, so we convert:
+            | Name | Value |
+            |------|-------|
+            | Foo  | Bar   |
+
+        Into:
+            *Name:* Foo
+            *Value:* Bar
+            ---
+        """
+        lines = text.split("\n")
+        out: list[str] = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+
+            # Detect table header row (contains | delimiters)
+            if (
+                "|" in line
+                and i + 1 < len(lines)
+                and re.match(r"^\s*\|[\s\-:|]+\|\s*$", lines[i + 1])
+            ):
+                headers = [h.strip() for h in line.strip().strip("|").split("|")]
+                i += 2  # skip header + separator
+
+                # Process data rows
+                while i < len(lines) and "|" in lines[i]:
+                    cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                    # Build key: value pairs
+                    parts = []
+                    for h, c in zip(headers, cells, strict=False):
+                        if c:
+                            parts.append(f"*{h}:* {c}")
+                    out.append("  ".join(parts))
+                    i += 1
+
+                # Separator between table and next content
+                if out and out[-1] != "":
+                    out.append("")
+            else:
+                out.append(line)
+                i += 1
+
+        return "\n".join(out)
 
     @staticmethod
     def split_message(text: str, max_length: int = 3900) -> list[str]:
         """Split a long message into chunks respecting Slack's limit.
 
         Tries to split at paragraph boundaries first, then line boundaries,
-        then hard-splits as last resort. Preserves code blocks.
+        then hard-splits as last resort. Never splits inside code blocks.
         """
         if len(text) <= max_length:
             return [text]
@@ -196,19 +299,19 @@ class SlackFormatter:
                     "type": "mrkdwn",
                     "text": (
                         "*Commands* (mention @amp or use in a session thread):\n\n"
-                        "• `list` - List recent Amplifier sessions\n"
-                        "• `projects` - List known projects\n"
-                        "• `new [description]` - Start a new session\n"
-                        "• `connect <session_id>` - Connect to an existing session\n"
-                        "• `status` - Show current session status\n"
-                        "• `breakout` - Move session to its own channel\n"
-                        "• `end` - End the current session\n"
-                        "• `help` - Show this help\n"
+                        "\u2022 `list` - List recent Amplifier sessions\n"
+                        "\u2022 `projects` - List known projects\n"
+                        "\u2022 `new [description]` - Start a new session\n"
+                        "\u2022 `connect <id>` - Connect to existing session\n"
+                        "\u2022 `status` - Show current session status\n"
+                        "\u2022 `breakout` - Move session to its own channel\n"
+                        "\u2022 `end` - End the current session\n"
+                        "\u2022 `help` - Show this help\n"
                         "\n"
                         "*How it works:*\n"
-                        "• Messages in this channel create threads per session\n"
-                        "• Reply in a thread to continue that session\n"
-                        "• Use `breakout` to promote a thread to its own channel\n"
+                        "\u2022 Messages in this channel create threads per session\n"
+                        "\u2022 Reply in a thread to continue that session\n"
+                        "\u2022 Use `breakout` to promote a thread to its own channel\n"
                     ),
                 },
             },

@@ -34,6 +34,7 @@ from .config import SlackConfig
 from .discovery import AmplifierDiscovery
 from .events import SlackEventHandler
 from .sessions import SlackSessionManager
+from .simulator import router as simulator_router
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,13 @@ def initialize(
         "event_handler": event_handler,
     }
     _state.update(state)
+
+    # Wire simulator hub when in simulator mode
+    if config.simulator_mode and isinstance(client, MemorySlackClient):
+        from .simulator import wire_client_to_hub
+
+        wire_client_to_hub(client)
+
     return state
 
 
@@ -283,6 +291,11 @@ async def list_projects() -> list[dict[str, Any]]:
         }
         for p in projects
     ]
+
+
+# --- Simulator Routes (always included, serves UI in simulator mode) ---
+
+router.include_router(simulator_router)
 
 
 # --- Manifest ---

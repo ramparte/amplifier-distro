@@ -1,8 +1,10 @@
 """Configuration for the Slack bridge.
 
 Loaded from environment variables and/or the distro server config.
-The bridge can operate in two modes:
-- Events API mode: Slack sends webhooks to our endpoint (production)
+The bridge can operate in three modes:
+
+- Events API mode: Slack sends webhooks to our endpoint (needs public URL)
+- Socket Mode: We open a WebSocket to Slack (no public URL needed)
 - Simulator mode: No real Slack, uses in-memory client (testing)
 """
 
@@ -18,7 +20,7 @@ class SlackConfig:
 
     # --- Slack API Credentials ---
     bot_token: str = ""  # xoxb-... (Bot User OAuth Token)
-    app_token: str = ""  # xapp-... (for Socket Mode, future)
+    app_token: str = ""  # xapp-... (for Socket Mode)
     signing_secret: str = ""  # For Events API signature verification
 
     # --- Channel Configuration ---
@@ -42,6 +44,7 @@ class SlackConfig:
 
     # --- Mode ---
     simulator_mode: bool = False  # Use in-memory client (no real Slack)
+    socket_mode: bool = False  # Use Socket Mode instead of Events API
 
     @classmethod
     def from_env(cls) -> SlackConfig:
@@ -54,11 +57,15 @@ class SlackConfig:
             hub_channel_name=os.environ.get("SLACK_HUB_CHANNEL_NAME", "amplifier"),
             simulator_mode=os.environ.get("SLACK_SIMULATOR_MODE", "").lower()
             in ("1", "true", "yes"),
+            socket_mode=os.environ.get("SLACK_SOCKET_MODE", "").lower()
+            in ("1", "true", "yes"),
         )
 
     @property
     def is_configured(self) -> bool:
         """Whether the Slack credentials are configured."""
+        if self.socket_mode:
+            return bool(self.bot_token and self.app_token)
         return bool(self.bot_token and self.signing_secret)
 
     @property
@@ -66,6 +73,8 @@ class SlackConfig:
         """Current operating mode."""
         if self.simulator_mode:
             return "simulator"
+        if self.socket_mode and self.bot_token and self.app_token:
+            return "socket"
         if self.is_configured:
-            return "live"
+            return "events-api"
         return "unconfigured"

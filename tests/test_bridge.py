@@ -293,9 +293,15 @@ class TestLocalBridgeCreateSession:
     Antagonist note: create_session() is the main entry point. Even in
     placeholder mode (before full foundation integration), it must return
     a properly structured SessionHandle with correct project derivation.
+
+    These tests mock amplifier-foundation since it's not installed in the
+    test environment. The mock chain: _require_foundation -> load_bundle
+    -> bundle.prepare() -> prepared.create_session() -> session object.
     """
 
-    def test_create_session_returns_session_handle(self):
+    @staticmethod
+    def _make_bridge_and_config():
+        """Create a configured bridge and config for testing."""
         bridge = LocalBridge()
         bridge._config = {
             "workspace_root": "~/dev",
@@ -306,46 +312,73 @@ class TestLocalBridgeCreateSession:
             working_dir=Path("~/dev/test-project").expanduser(),
             run_preflight=False,
         )
-        handle = asyncio.run(bridge.create_session(config))
+        return bridge, config
+
+    @staticmethod
+    def _mock_foundation():
+        """Create mocks for the amplifier-foundation chain."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_session = MagicMock()
+        mock_session.coordinator.session_id = "test-session-id-12345678"
+
+        mock_prepared = AsyncMock()
+        mock_prepared.create_session = AsyncMock(return_value=mock_session)
+
+        mock_bundle = AsyncMock()
+        mock_bundle.prepare = AsyncMock(return_value=mock_prepared)
+
+        mock_load_bundle = AsyncMock(return_value=mock_bundle)
+        mock_registry_cls = MagicMock()
+
+        return mock_load_bundle, mock_registry_cls
+
+    def test_create_session_returns_session_handle(self):
+        from unittest.mock import patch
+
+        bridge, config = self._make_bridge_and_config()
+        mock_load, mock_reg = self._mock_foundation()
+        with patch(
+            "amplifier_distro.bridge._require_foundation",
+            return_value=(mock_load, mock_reg),
+        ):
+            handle = asyncio.run(bridge.create_session(config))
         assert isinstance(handle, SessionHandle)
 
     def test_create_session_derives_project_id(self):
-        bridge = LocalBridge()
-        bridge._config = {
-            "workspace_root": "~/dev",
-            "preflight": {"enabled": False},
-            "bundle": {"active": "test-bundle"},
-        }
-        config = BridgeConfig(
-            working_dir=Path("~/dev/test-project").expanduser(),
-            run_preflight=False,
-        )
-        handle = asyncio.run(bridge.create_session(config))
+        from unittest.mock import patch
+
+        bridge, config = self._make_bridge_and_config()
+        mock_load, mock_reg = self._mock_foundation()
+        with patch(
+            "amplifier_distro.bridge._require_foundation",
+            return_value=(mock_load, mock_reg),
+        ):
+            handle = asyncio.run(bridge.create_session(config))
         assert handle.project_id == "test-project"
 
     def test_create_session_preserves_working_dir(self):
-        bridge = LocalBridge()
-        bridge._config = {
-            "workspace_root": "~/dev",
-            "preflight": {"enabled": False},
-            "bundle": {"active": "test-bundle"},
-        }
-        working = Path("~/dev/test-project").expanduser()
-        config = BridgeConfig(working_dir=working, run_preflight=False)
-        handle = asyncio.run(bridge.create_session(config))
+        from unittest.mock import patch
+
+        bridge, config = self._make_bridge_and_config()
+        working = config.working_dir
+        mock_load, mock_reg = self._mock_foundation()
+        with patch(
+            "amplifier_distro.bridge._require_foundation",
+            return_value=(mock_load, mock_reg),
+        ):
+            handle = asyncio.run(bridge.create_session(config))
         assert handle.working_dir == working
 
     def test_create_session_generates_nonempty_session_id(self):
-        bridge = LocalBridge()
-        bridge._config = {
-            "workspace_root": "~/dev",
-            "preflight": {"enabled": False},
-            "bundle": {"active": "test-bundle"},
-        }
-        config = BridgeConfig(
-            working_dir=Path("~/dev/test-project").expanduser(),
-            run_preflight=False,
-        )
-        handle = asyncio.run(bridge.create_session(config))
+        from unittest.mock import patch
+
+        bridge, config = self._make_bridge_and_config()
+        mock_load, mock_reg = self._mock_foundation()
+        with patch(
+            "amplifier_distro.bridge._require_foundation",
+            return_value=(mock_load, mock_reg),
+        ):
+            handle = asyncio.run(bridge.create_session(config))
         assert handle.session_id  # non-empty string
         assert isinstance(handle.session_id, str)

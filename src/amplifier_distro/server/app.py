@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,14 @@ class DistroServer:
         app = server.app
     """
 
-    def __init__(self, title: str = "Amplifier Distro", version: str = "0.1.0") -> None:
+    def __init__(
+        self,
+        title: str = "Amplifier Distro",
+        version: str = "0.1.0",
+        dev_mode: bool = False,
+    ) -> None:
         self._apps: dict[str, AppManifest] = {}
+        self._dev_mode = dev_mode
         self._app = FastAPI(
             title=title,
             version=version,
@@ -76,6 +82,7 @@ class DistroServer:
         )
         self._core_router = APIRouter(prefix="/api", tags=["core"])
         self._setup_core_routes()
+        self._setup_bridge_routes()
         self._setup_root_redirect()
         self._app.include_router(self._core_router)
         self._mount_static_files()
@@ -89,6 +96,11 @@ class DistroServer:
     def apps(self) -> dict[str, AppManifest]:
         """Get registered apps."""
         return dict(self._apps)
+
+    @property
+    def dev_mode(self) -> bool:
+        """Whether the server is running in dev mode."""
+        return self._dev_mode
 
     def register_app(self, manifest: AppManifest) -> None:
         """Register an app with the server.
@@ -210,11 +222,66 @@ class DistroServer:
                 for name, m in self._apps.items()
             }
 
+    def _setup_bridge_routes(self) -> None:
+        """Set up Bridge API routes for session management."""
+
+        @self._core_router.post("/bridge/session", response_model=None)
+        async def create_session(request: Request) -> JSONResponse:
+            """Create an Amplifier session via the Bridge."""
+            from amplifier_distro.bridge import BridgeConfig, LocalBridge
+
+            body = await request.json()
+            bridge = LocalBridge()
+            bridge_config = BridgeConfig(
+                working_dir=Path(body.get("working_dir", ".")),
+                bundle_name=body.get("bundle_name"),
+                run_preflight=body.get("run_preflight", True),
+            )
+            try:
+                handle = await bridge.create_session(bridge_config)
+                return JSONResponse(
+                    content={
+                        "session_id": handle.session_id,
+                        "project_id": handle.project_id,
+                        "working_dir": str(handle.working_dir),
+                    }
+                )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+        @self._core_router.post("/bridge/execute")
+        async def execute_prompt(request: Request) -> JSONResponse:
+            """Execute a prompt on an existing session."""
+            body = await request.json()
+            session_id = body.get("session_id")
+            prompt = body.get("prompt")
+            if not session_id or not prompt:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "session_id and prompt are required"},
+                )
+            # Session management (placeholder - needs session store)
+            return JSONResponse(
+                status_code=501,
+                content={
+                    "error": (
+                        "Session execution via HTTP not yet implemented. Use WebSocket."
+                    )
+                },
+            )
+
     def _setup_root_redirect(self) -> None:
         """Add root redirect to wizard or web-chat."""
 
         @self._app.get("/")
         async def root() -> RedirectResponse:
+            # Dev mode: go straight to web-chat if available
+            if self._dev_mode and "web-chat" in self._apps:
+                return RedirectResponse(url="/apps/web-chat/")
+            # Default: wizard for setup
             return RedirectResponse(url="/static/wizard.html")
 
     def _mount_static_files(self) -> None:
@@ -226,10 +293,13 @@ class DistroServer:
             )
 
 
-def create_server(**kwargs: Any) -> DistroServer:
+def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.
 
     This is the main entry point for starting the server.
+
+    Args:
+        dev_mode: If True, skip wizard and use existing environment.
 
     Usage:
         server = create_server()
@@ -241,4 +311,4 @@ def create_server(**kwargs: Any) -> DistroServer:
         import uvicorn
         uvicorn.run(server.app, host="0.0.0.0", port=8400)
     """
-    return DistroServer(**kwargs)
+    return DistroServer(dev_mode=dev_mode, **kwargs)

@@ -17,11 +17,24 @@ dependencies = [
     "pydantic>=2.0",
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
+    "httpx>=0.24.0",
+    "python-multipart>=0.0.6",
 ]
 
-# amplifier-core is a runtime dependency for session integration (Phase 1+)
-# but not needed for the amp-distro CLI itself. When needed:
-#   uv tool install git+https://github.com/microsoft/amplifier-core
+[project.optional-dependencies]
+# Slack bridge with Socket Mode support
+slack = [
+    "slack-bolt>=1.18.0",
+    "slack-sdk>=3.26.0",
+]
+# Full Amplifier session integration
+amplifier = [
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation",
+]
+# All optional features
+all = [
+    "amplifier-distro[slack,amplifier]",
+]
 
 [project.scripts]
 amp-distro = "amplifier_distro.cli:main"

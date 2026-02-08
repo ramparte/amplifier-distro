@@ -12,13 +12,16 @@ import click
     "--apps-dir", default=None, type=click.Path(exists=True), help="Apps directory"
 )
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
-def serve(host: str, port: int, apps_dir: str | None, reload: bool) -> None:
+@click.option(
+    "--dev", is_flag=True, help="Dev mode: skip wizard, use existing environment"
+)
+def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -> None:
     """Start the Amplifier distro server."""
     import uvicorn
 
     from amplifier_distro.server.app import create_server
 
-    server = create_server()
+    server = create_server(dev_mode=dev)
 
     # Auto-discover apps
     if apps_dir:
@@ -32,9 +35,31 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool) -> None:
             if discovered:
                 click.echo(f"Loaded {len(discovered)} app(s): {', '.join(discovered)}")
 
+    if dev:
+        click.echo("--- Dev mode: using existing environment ---")
+        # Show detected config
+        try:
+            from amplifier_distro.config import config_path, load_config
+
+            if config_path().exists():
+                cfg = load_config()
+                click.echo(f"  Config: {config_path()}")
+                click.echo(f"  Workspace: {cfg.workspace_root}")
+                click.echo(
+                    f"  Identity: {cfg.identity.github_handle or '(auto-detect)'}"
+                )
+            else:
+                click.echo(f"  No distro.yaml found at {config_path()}")
+                click.echo("  Creating default config...")
+                _create_default_config()
+        except Exception as e:
+            click.echo(f"  Config issue: {e}")
+
     click.echo(f"Starting Amplifier Distro Server on {host}:{port}")
     click.echo(f"API docs: http://{host}:{port}/api/docs")
     click.echo(f"Apps: http://{host}:{port}/api/apps")
+    if dev:
+        click.echo(f"Web: http://{host}:{port}/static/wizard.html")
 
     uvicorn.run(
         server.app,
@@ -43,3 +68,53 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool) -> None:
         reload=reload,
         log_level="info",
     )
+
+
+def _create_default_config() -> None:
+    """Create a default distro.yaml from environment detection."""
+    import subprocess
+
+    from amplifier_distro.config import save_config
+    from amplifier_distro.schema import DistroConfig, IdentityConfig
+
+    # Detect identity
+    gh_handle = ""
+    git_email = ""
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            gh_handle = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    try:
+        result = subprocess.run(
+            ["git", "config", "--global", "user.email"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            git_email = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Detect workspace
+    home = Path.home()
+    workspace = str(home / "dev")
+    for candidate in ["dev/ANext", "dev", "projects", "workspace"]:
+        if (home / candidate).exists():
+            workspace = str(home / candidate)
+            break
+
+    cfg = DistroConfig(
+        workspace_root=workspace,
+        identity=IdentityConfig(github_handle=gh_handle, git_email=git_email),
+    )
+    save_config(cfg)
+    click.echo(f"  Created: {cfg.workspace_root} ({gh_handle or 'no gh handle'})")
