@@ -165,69 +165,131 @@ Ring 3 = workflows that work FOR you.
 
 ---
 
-## Current Status (Updated Feb 7, 2026)
+## Current Status (Updated Feb 8, 2026)
 
-**Phase:** Phase 1 in progress. Phase 0 complete.
+**Phase:** Foundational architecture complete. Server-centric model established.
+
+### Architecture Shift (Feb 8)
+
+Sam's new vision: the distro is oriented around a **central server**. The
+server hosts the web UI, config UI, installation wizard, and serves as the
+Tailscale endpoint for backend services (Slack bridge, voice bridge). All
+interfaces talk through the **Bridge API** to create sessions.
+
+```
+                     Tailscale
+                        |
+    +---------+   +-----v------+   +----------+
+    | CLI/TUI |-->|            |<--| Slack    |
+    +---------+   |  Distro    |   | Bridge   |
+    +---------+   |  Server    |   +----------+
+    | Voice   |-->|  (FastAPI) |   +----------+
+    +---------+   |            |<--| Voice    |
+    +---------+   |  /apps/    |   | Bridge   |
+    | CarPlay |-->|  plugin    |   +----------+
+    +---------+   |  system    |
+                  +-----+------+
+                        |
+                  Bridge API
+                        |
+                  amplifier-foundation
+```
+
+Three foundational pieces were built (Feb 8):
+
+1. **conventions.py** - The ONE immutable file. Defines every filename,
+   path, and naming standard. This can never change (major version bump +
+   migration required). Everything reads this.
+
+2. **bridge.py** - The Bridge API (Interface Adapter). Protocol definition
+   + LocalBridge implementation. The single interface through which ALL
+   surfaces create and manage Amplifier sessions.
+
+3. **server/** - FastAPI server with app/plugin system. Apps register
+   routers and get mounted at `/apps/{name}/`. Example plugin included.
+   Built-in routes: `/api/health`, `/api/config`, `/api/status`, `/api/apps`.
 
 ### What's done:
 
-**Phase 0 (complete, 2 commits):**
-- `distro.yaml` schema: Pydantic models in `src/amplifier_distro/schema.py`
-- Config I/O: `src/amplifier_distro/config.py` (load/save, gh identity detection)
-- Pre-flight checks: `src/amplifier_distro/preflight.py` (8 checks: distro.yaml,
-  gh auth, identity, ANTHROPIC_API_KEY, OPENAI_API_KEY, workspace, amplifier CLI, memory)
-- `amp-distro` CLI: `src/amplifier_distro/cli.py` (init, status, validate commands)
-- Distro base bundle: `src/bundles/distro-base.md` (foundation agents + anthropic + openai)
-- Docker test environment: `Dockerfile.dev` + `docker-compose.yml` (7 profiles, insulated)
-- `INSTRUCTIONS.md` for team collaborators
-- Packaging boundary: `pyproject.toml` with `src/` layout, working files excluded
+**Phase 0 (complete):**
+- `distro.yaml` schema, config I/O, pre-flight checks (8), CLI (init/status/validate)
+- Distro base bundle, Docker test environment, INSTRUCTIONS.md
 
-**Phase 1 (in progress):**
-- Memory standardization: DONE. Canonical path is `~/.amplifier/memory/`.
-  Migration helper in `src/amplifier_distro/migrate.py` moves files from
-  `~/amplifier-dev-memory/` and creates backward-compat symlink.
-- Bundle validation strict mode: PR #68 submitted to microsoft/amplifier-foundation.
-  Adds `strict: bool` to BundleRegistry and BundleValidator. 10 new tests, 49 total passing.
-  URL: https://github.com/microsoft/amplifier-foundation/pull/68
-- Acceptance tests: 46 pytest tests (34 Phase 0, 12 Phase 1) in `tests/`.
-  All pass in Docker. Designed to be antagonist-inspectable.
-- Session handoffs: DEFERRED to next session. Sam wants to discuss what this
-  means before implementing. Lighter approach (orchestrator:complete hook) preferred
-  over core PR (SESSION_END event) if we decide to do it.
+**Phase 1 (complete):**
+- Memory standardization to `~/.amplifier/memory/` with migration helper
+- Acceptance tests: 46 tests (Phase 0 + Phase 1)
 
-### What's next (Next Session):
-1. **Discuss session handoffs** - What does "sessions carry context forward"
-   mean in practice? Decide approach.
-2. **Check PR #68 status** - If merged, enable strict mode in distro base bundle.
-3. **Start Phase 2** (Interface Adapter) if Phase 1 is closed out.
+**Foundational Architecture (complete):**
+- `conventions.py`: Immutable naming standards (filenames, paths, ports)
+- `bridge.py`: AmplifierBridge protocol + LocalBridge implementation
+- `server/app.py`: DistroServer with app/plugin discovery and registration
+- `server/apps/example/`: Example app demonstrating plugin pattern
+- `server/cli.py`: `amp-distro-server` entry point (host/port/reload)
+- `pyproject.toml`: FastAPI + uvicorn deps, server entry point
+- Acceptance tests: 161 total (45 conventions + 28 bridge + 27 server + 61 existing)
+- All 161 tests pass in Docker (0.44s)
+
+**PR #68** (bundle validation strict mode) was closed by upstream. The
+branch and code exist at `ramparte/amplifier-foundation` on branch
+`feat/bundle-validation-strict-mode`. May resubmit or discuss with robotdad.
+
+### What's next:
+1. **Sam is building server apps separately** (Slack bridge, voice bridge).
+   These will be app plugins that register with the server.
+2. **Wire Bridge to amplifier-foundation** - The LocalBridge.create_session()
+   currently stubs the actual session creation. Needs real load_bundle +
+   prepare + create_session integration.
+3. **Session handoffs** - Convention decided: `handoff.md` file (per
+   conventions.py HANDOFF_FILENAME). Implementation approach still TBD.
+4. **Server lifecycle** - Daemonization, PID file (conventions.py defines
+   SERVER_PID_FILE), systemd/launchd integration.
+5. **Web UI app** - Installation wizard + config editor as a server app.
 
 ### Open items:
-- PR #68 (foundation strict mode) needs review/merge
-- Session handoffs approach undecided
-- `src_old/` cleanup done (was Docker permission artifact)
+- PR #68 closed - need to discuss with upstream or re-approach
+- Bridge create_session() is stubbed (needs foundation integration)
+- Handoff generation approach undecided (hook vs explicit)
+- Server daemonization not implemented yet
 
 ---
 
 ## How to Continue This Work
 
 1. **Read this file first.** It has the full picture.
-2. **Read OPINIONS.md** for the shared conventions.
-3. **Read ROADMAP.md** for the build plan with phases and tasks.
-4. **Read INSTRUCTIONS.md** for development setup and testing.
-5. **For deeper research**, read files in planning/ as needed.
-6. **For Nexus context**, see planning/12-nexus-synthesis.md.
+2. **Read conventions.py** for the immutable naming standards.
+3. **Read bridge.py** for the session creation API contract.
+4. **Read server/app.py** for the plugin system.
+5. **Read OPINIONS.md** for shared conventions.
+6. **Read ROADMAP.md** for the phase-level plan.
 
 ### Development workflow:
 - **Docker test env**: `docker compose --profile cli up -d` then `docker compose exec cli bash`
-- **Run tests**: `python -m pytest tests/ -v` (in Docker or locally in a venv)
-- **amp-distro CLI**: Install with `uv tool install -e .` or `pip install -e .` in a venv
-- **Acceptance tests**: `tests/test_phase0.py` (34 tests), `tests/test_phase1.py` (12 tests)
+- **Run tests**: `python -m pytest tests/ -v` (161 tests, ~0.5s)
+- **Start server**: `amp-distro-server --port 8400 --reload`
+- **amp-distro CLI**: Install with `pip install -e .` in a venv
+- **Add a server app**: Create `server/apps/myapp/__init__.py` with a `manifest`
+
+### File map (key source files):
+```
+src/amplifier_distro/
+  conventions.py    # IMMUTABLE naming standards
+  bridge.py         # Session creation API (AmplifierBridge protocol)
+  schema.py         # distro.yaml Pydantic models
+  config.py         # Config load/save
+  preflight.py      # Health checks
+  migrate.py        # Memory migration helper
+  cli.py            # amp-distro CLI (init, status, validate)
+  server/
+    app.py          # DistroServer + plugin system
+    cli.py          # amp-distro-server CLI
+    apps/
+      example/      # Example plugin app
+```
 
 To pick up a specific task:
 - Check this file's "What's next" section
 - Check ROADMAP.md for phase-level tasks
 - Each task has clear scope and exit criteria
-- Work in the relevant repo (PRs to foundation, core, or this repo)
 - Update this context file when decisions change
 
 ---
