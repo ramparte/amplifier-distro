@@ -94,7 +94,21 @@ def run_preflight() -> PreflightReport:
     else:
         report.checks.append(CheckResult("Workspace", False, f"{ws} does not exist"))
 
-    # Check 7: Amplifier installed
+    # Check 7: Memory store location
+    memory_path = Path(config.memory.path).expanduser()
+    if memory_path.is_dir():
+        report.checks.append(CheckResult("Memory store", True, str(memory_path)))
+    else:
+        report.checks.append(
+            CheckResult(
+                "Memory store",
+                False,
+                f"{memory_path} not found. Run 'amp-distro init' to create it",
+                severity="warning",
+            )
+        )
+
+    # Check 8: Amplifier installed
     if shutil.which("amplifier"):
         report.checks.append(CheckResult("Amplifier CLI", True, "Installed"))
     else:

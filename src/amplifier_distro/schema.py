@@ -20,6 +20,12 @@ class CacheConfig(BaseModel):
     auto_refresh_on_stale: bool = True
 
 
+class MemoryConfig(BaseModel):
+    path: str = "~/.amplifier/memory"
+    # Legacy location for migration detection
+    legacy_paths: list[str] = Field(default_factory=lambda: ["~/amplifier-dev-memory"])
+
+
 class PreflightConfig(BaseModel):
     enabled: bool = True
     mode: str = "block"  # block | warn | off
@@ -44,3 +50,4 @@ class DistroConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     interfaces: InterfacesConfig = Field(default_factory=InterfacesConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)

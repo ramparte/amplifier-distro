@@ -11,6 +11,7 @@ from .config import (
     load_config,
     save_config,
 )
+from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
 from .schema import IdentityConfig
 
@@ -67,6 +68,17 @@ def init() -> None:
     # Save
     save_config(config)
     click.echo(f"\nSaved to {path}")
+
+    # Migrate memory store
+    click.echo("\nMemory store:")
+    result = migrate_memory()
+    if result.migrated:
+        click.echo(f"  Migrated from {result.source}")
+        click.echo(f"  New location: {result.destination}")
+        for f in result.files_moved:
+            click.echo(f"    moved {f}")
+    else:
+        click.echo(f"  {result.message}")
 
     # Run preflight to show status
     click.echo("\n--- Health Check ---\n")
