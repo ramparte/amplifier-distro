@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,9 @@ class DistroServer:
         )
         self._core_router = APIRouter(prefix="/api", tags=["core"])
         self._setup_core_routes()
+        self._setup_root_redirect()
         self._app.include_router(self._core_router)
+        self._mount_static_files()
 
     @property
     def app(self) -> FastAPI:
@@ -205,6 +209,21 @@ class DistroServer:
                 }
                 for name, m in self._apps.items()
             }
+
+    def _setup_root_redirect(self) -> None:
+        """Add root redirect to wizard or web-chat."""
+
+        @self._app.get("/")
+        async def root() -> RedirectResponse:
+            return RedirectResponse(url="/static/wizard.html")
+
+    def _mount_static_files(self) -> None:
+        """Mount static files directory if it exists."""
+        static_dir = Path(__file__).parent / "static"
+        if static_dir.exists():
+            self._app.mount(
+                "/static", StaticFiles(directory=str(static_dir)), name="static"
+            )
 
 
 def create_server(**kwargs: Any) -> DistroServer:

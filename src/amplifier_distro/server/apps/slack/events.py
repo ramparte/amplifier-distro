@@ -1,0 +1,273 @@
+"""Slack Events API handler.
+
+Handles incoming HTTP webhooks from Slack's Events API:
+1. URL verification challenge (required for Slack app setup)
+2. Event callbacks (messages, mentions, etc.)
+
+Security:
+- All requests are verified using the Slack signing secret
+- Timestamps are checked to prevent replay attacks
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import logging
+import time
+from typing import Any
+
+from .client import SlackClient
+from .commands import CommandContext, CommandHandler
+from .config import SlackConfig
+from .formatter import SlackFormatter
+from .models import SlackMessage
+from .sessions import SlackSessionManager
+
+logger = logging.getLogger(__name__)
+
+
+class SlackEventHandler:
+    """Handles incoming Slack events.
+
+    This is the main entry point for all Slack → Bridge communication.
+    It verifies signatures, parses events, and routes them to either
+    the command handler or the session manager.
+    """
+
+    def __init__(
+        self,
+        client: SlackClient,
+        session_manager: SlackSessionManager,
+        command_handler: CommandHandler,
+        config: SlackConfig,
+    ) -> None:
+        self._client = client
+        self._sessions = session_manager
+        self._commands = command_handler
+        self._config = config
+        self._bot_user_id: str | None = None
+
+    async def get_bot_user_id(self) -> str:
+        """Get and cache the bot's user ID."""
+        if self._bot_user_id is None:
+            self._bot_user_id = await self._client.get_bot_user_id()
+        return self._bot_user_id
+
+    def verify_signature(
+        self,
+        body: bytes,
+        timestamp: str,
+        signature: str,
+    ) -> bool:
+        """Verify a Slack request signature.
+
+        Slack signs each request with the signing secret. We verify
+        the signature to ensure the request is authentic.
+
+        Returns True if the signature is valid.
+        """
+        if not self._config.signing_secret:
+            # In simulator mode, skip verification
+            return self._config.simulator_mode
+
+        # Check timestamp to prevent replay attacks (5 minute window)
+        try:
+            ts = int(timestamp)
+        except (ValueError, TypeError):
+            return False
+
+        if abs(time.time() - ts) > 300:
+            logger.warning("Slack request timestamp too old, possible replay attack")
+            return False
+
+        # Compute expected signature
+        sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+        expected = (
+            "v0="
+            + hmac.new(
+                self._config.signing_secret.encode(),
+                sig_basestring.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+        )
+
+        return hmac.compare_digest(expected, signature)
+
+    async def handle_event_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Handle a Slack event payload.
+
+        This is the main dispatch method. It handles:
+        - URL verification challenges
+        - Event callbacks (messages, mentions, etc.)
+
+        Returns a response dict to send back to Slack.
+        """
+        event_type = payload.get("type")
+
+        # URL verification challenge
+        if event_type == "url_verification":
+            return {"challenge": payload.get("challenge", "")}
+
+        # Event callback
+        if event_type == "event_callback":
+            event = payload.get("event", {})
+            await self._dispatch_event(event)
+            return {"ok": True}
+
+        logger.warning(f"Unknown event type: {event_type}")
+        return {"ok": True}
+
+    async def _dispatch_event(self, event: dict[str, Any]) -> None:
+        """Dispatch a Slack event to the appropriate handler."""
+        event_type = event.get("type")
+
+        if event_type == "message":
+            await self._handle_message(event)
+        elif event_type == "app_mention":
+            await self._handle_app_mention(event)
+        else:
+            logger.debug(f"Ignoring event type: {event_type}")
+
+    async def _handle_message(self, event: dict[str, Any]) -> None:
+        """Handle a message event.
+
+        Routes the message to either:
+        1. Command handler (if it looks like a command)
+        2. Session manager (if there's an active session mapping)
+        3. Ignore (if neither applies)
+        """
+        # Ignore bot messages (prevent loops)
+        if event.get("bot_id") or event.get("subtype") == "bot_message":
+            return
+
+        # Ignore message edits and deletes
+        if event.get("subtype") in ("message_changed", "message_deleted"):
+            return
+
+        bot_user_id = await self.get_bot_user_id()
+        user_id = event.get("user", "")
+        text = event.get("text", "").strip()
+        channel_id = event.get("channel", "")
+        thread_ts = event.get("thread_ts")
+        message_ts = event.get("ts", "")
+
+        if not text or not channel_id:
+            return
+
+        message = SlackMessage(
+            channel_id=channel_id,
+            user_id=user_id,
+            text=text,
+            ts=message_ts,
+            thread_ts=thread_ts,
+        )
+
+        # Check if this is a command (mentions bot or starts with bot name)
+        is_command = (
+            f"<@{bot_user_id}>" in text
+            or text.lower().startswith(f"@{self._config.bot_name}")
+            or text.lower().startswith(f"{self._config.bot_name} ")
+        )
+
+        if is_command:
+            await self._handle_command_message(message, bot_user_id)
+            return
+
+        # Check if there's a session mapping for this context
+        mapping = self._sessions.get_mapping(channel_id, thread_ts)
+        if mapping and mapping.is_active:
+            await self._handle_session_message(message)
+            return
+
+        # No mapping and not a command - ignore in hub, but if we're in
+        # a thread that was created by a "new" command, treat as session message
+        # (This handles the case where someone replies in a session thread
+        # without mentioning the bot)
+
+    async def _handle_app_mention(self, event: dict[str, Any]) -> None:
+        """Handle an @mention event.
+
+        Always treated as a command.
+        """
+        bot_user_id = await self.get_bot_user_id()
+        message = SlackMessage(
+            channel_id=event.get("channel", ""),
+            user_id=event.get("user", ""),
+            text=event.get("text", ""),
+            ts=event.get("ts", ""),
+            thread_ts=event.get("thread_ts"),
+        )
+        await self._handle_command_message(message, bot_user_id)
+
+    async def _handle_command_message(
+        self, message: SlackMessage, bot_user_id: str
+    ) -> None:
+        """Parse and execute a command from a message."""
+        command, args = self._commands.parse_command(message.text, bot_user_id)
+
+        ctx = CommandContext(
+            channel_id=message.channel_id,
+            user_id=message.user_id,
+            thread_ts=message.thread_ts,
+            raw_text=message.text,
+        )
+
+        # Add a "thinking" reaction
+        await self._client.add_reaction(
+            message.channel_id, message.ts, "hourglass_flowing_sand"
+        )
+
+        result = await self._commands.handle(command, args, ctx)
+
+        # Determine where to reply
+        reply_thread = message.thread_ts or message.ts
+        if result.create_thread:
+            reply_thread = None  # Will create a new thread from the reply
+
+        # Send the response
+        if result.blocks:
+            await self._client.post_message(
+                message.channel_id,
+                text=result.text or "Amplifier",
+                thread_ts=reply_thread,
+                blocks=result.blocks,
+            )
+        elif result.text:
+            for chunk in SlackFormatter.split_message(result.text):
+                await self._client.post_message(
+                    message.channel_id,
+                    text=chunk,
+                    thread_ts=reply_thread,
+                )
+
+        # Remove the thinking reaction (best-effort)
+        # In real Slack, we'd remove it. For now just add a done reaction.
+        await self._client.add_reaction(
+            message.channel_id, message.ts, "white_check_mark"
+        )
+
+    async def _handle_session_message(self, message: SlackMessage) -> None:
+        """Route a message to its mapped Amplifier session."""
+        # Add thinking indicator
+        await self._client.add_reaction(
+            message.channel_id, message.ts, "hourglass_flowing_sand"
+        )
+
+        # Route through session manager
+        response = await self._sessions.route_message(message)
+
+        if response:
+            reply_thread = message.thread_ts or message.ts
+            chunks = SlackFormatter.format_response(response)
+            for chunk in chunks:
+                await self._client.post_message(
+                    message.channel_id,
+                    text=chunk,
+                    thread_ts=reply_thread,
+                )
+
+        # Done reaction
+        await self._client.add_reaction(
+            message.channel_id, message.ts, "white_check_mark"
+        )
