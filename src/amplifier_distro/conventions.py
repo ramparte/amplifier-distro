@@ -57,6 +57,12 @@ BUNDLE_REGISTRY_FILENAME = "bundle-registry.yaml"
 SETTINGS_FILENAME = "settings.yaml"
 CACHE_DIR = "cache"  # relative to AMPLIFIER_HOME
 
+# --- Generated Bundle ---
+DISTRO_BUNDLE_DIR = "bundles"  # relative to AMPLIFIER_HOME
+DISTRO_BUNDLE_FILENAME = "distro.yaml"
+DISTRO_BUNDLE_NAME = "amplifier-distro"
+# Full path: ~/.amplifier/bundles/distro.yaml
+
 # --- Server ---
 SERVER_DIR = "server"  # relative to AMPLIFIER_HOME
 SERVER_SOCKET = "server.sock"  # Unix socket for local IPC

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amplifier - Get Started</title>
+<style>
+/* ------------------------------------------------------------------ */
+/*  Design Tokens (shared with wizard.html)                            */
+/* ------------------------------------------------------------------ */
+:root {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --bg-card: #374151;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --border: #4b5563;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Reset & Base                                                       */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Card                                                               */
+/* ------------------------------------------------------------------ */
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 460px;
+  text-align: center;
+}
+
+.logo {
+  font-size: 32px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.tagline {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin-bottom: 36px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Form Elements                                                      */
+/* ------------------------------------------------------------------ */
+.field {
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.field input {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.field input:focus {
+  border-color: var(--accent);
+}
+
+.field input::placeholder {
+  color: #6b7280;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Provider Detection                                                 */
+/* ------------------------------------------------------------------ */
+.detection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-height: 24px;
+  margin-bottom: 24px;
+  text-align: left;
+}
+
+.detection .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.detection.anthropic .dot { background: #8b5cf6; }
+.detection.openai .dot { background: #10b981; }
+.detection.unknown .dot { background: var(--warning); }
+.detection.none { color: var(--text-secondary); }
+
+/* ------------------------------------------------------------------ */
+/*  Button                                                             */
+/* ------------------------------------------------------------------ */
+.btn-start {
+  width: 100%;
+  padding: 14px 24px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-start:hover { background: var(--accent-hover); }
+.btn-start:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-start .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------------ */
+/*  Feedback Messages                                                  */
+/* ------------------------------------------------------------------ */
+.error-msg {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(239,68,68,0.1);
+  color: var(--error);
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: left;
+}
+
+.success-msg {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(34,197,94,0.1);
+  color: var(--success);
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Footer Links                                                       */
+/* ------------------------------------------------------------------ */
+.divider {
+  margin: 24px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.help-links {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.help-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.help-links a:hover { text-decoration: underline; }
+
+.settings-link {
+  margin-top: 20px;
+  font-size: 13px;
+}
+
+.settings-link a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.settings-link a:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Amplifier</div>
+  <p class="tagline">Paste your API key to get started</p>
+
+  <div class="field">
+    <label for="apiKey">API Key</label>
+    <input type="password" id="apiKey" placeholder="sk-ant-api03-... or sk-..." autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="detection none" id="detection">
+    Enter your API key above
+  </div>
+
+  <button class="btn-start" id="startBtn" disabled>
+    Start Chatting
+  </button>
+
+  <div id="feedback"></div>
+
+  <hr class="divider">
+
+  <div class="help-links">
+    Don't have a key?<br>
+    <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get one from Anthropic</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get one from OpenAI</a>
+  </div>
+
+  <div class="settings-link">
+    <a href="/static/wizard.html">Advanced setup</a>
+  </div>
+</div>
+
+<script>
+const input = document.getElementById('apiKey');
+const detection = document.getElementById('detection');
+const startBtn = document.getElementById('startBtn');
+const feedback = document.getElementById('feedback');
+
+let detectedProvider = null;
+
+input.addEventListener('input', () => {
+  const key = input.value.trim();
+  feedback.innerHTML = '';
+
+  if (!key) {
+    detection.className = 'detection none';
+    detection.innerHTML = 'Enter your API key above';
+    startBtn.disabled = true;
+    detectedProvider = null;
+    return;
+  }
+
+  if (key.startsWith('sk-ant-')) {
+    detectedProvider = 'anthropic';
+    detection.className = 'detection anthropic';
+    detection.innerHTML = '<span class="dot"></span> Anthropic (Claude) detected';
+    startBtn.disabled = false;
+  } else if (key.startsWith('sk-')) {
+    detectedProvider = 'openai';
+    detection.className = 'detection openai';
+    detection.innerHTML = '<span class="dot"></span> OpenAI detected';
+    startBtn.disabled = false;
+  } else {
+    detectedProvider = null;
+    detection.className = 'detection unknown';
+    detection.innerHTML = '<span class="dot"></span> Unknown key format';
+    startBtn.disabled = true;
+  }
+});
+
+startBtn.addEventListener('click', async () => {
+  const key = input.value.trim();
+  if (!key || !detectedProvider) return;
+
+  startBtn.disabled = true;
+  startBtn.innerHTML = '<span class="spinner"></span> Setting up...';
+  feedback.innerHTML = '';
+
+  try {
+    const res = await fetch('/apps/install-wizard/quickstart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key }),
+    });
+
+    const data = await res.json();
+
+    if (data.status === 'ready') {
+      feedback.innerHTML = '<div class="success-msg">Ready! Redirecting to chat...</div>';
+      startBtn.innerHTML = 'Redirecting...';
+      setTimeout(() => { window.location.href = '/'; }, 800);
+    } else {
+      feedback.innerHTML = '<div class="error-msg">' + esc(data.message || 'Setup failed') + '</div>';
+      startBtn.disabled = false;
+      startBtn.innerHTML = 'Start Chatting';
+    }
+  } catch (err) {
+    feedback.innerHTML = '<div class="error-msg">Connection error: ' + esc(err.message) + '</div>';
+    startBtn.disabled = false;
+    startBtn.innerHTML = 'Start Chatting';
+  }
+});
+
+// Allow Enter key to submit
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !startBtn.disabled) startBtn.click();
+});
+
+function esc(str) {
+  if (str == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

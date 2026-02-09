@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amplifier - Settings</title>
+<style>
+/* ------------------------------------------------------------------ */
+/*  Design Tokens (shared with wizard.html)                            */
+/* ------------------------------------------------------------------ */
+:root {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --bg-card: #374151;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --border: #4b5563;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Reset & Base                                                       */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Card Container                                                     */
+/* ------------------------------------------------------------------ */
+.settings-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  width: 100%;
+  max-width: 640px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Header                                                             */
+/* ------------------------------------------------------------------ */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.header h1 {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.header a {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+}
+
+.header a:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sections                                                           */
+/* ------------------------------------------------------------------ */
+.section {
+  margin-bottom: 32px;
+}
+
+.section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0 0 32px 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Provider Status                                                    */
+/* ------------------------------------------------------------------ */
+.provider-status {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.provider-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.provider-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.provider-icon.anthropic { background: rgba(139,92,246,0.2); color: #a78bfa; }
+.provider-icon.openai { background: rgba(16,185,129,0.2); color: #6ee7b7; }
+.provider-icon.unknown { background: rgba(107,114,128,0.2); color: #9ca3af; }
+
+.provider-details .provider-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.provider-details .provider-model {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-badge .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-badge.connected {
+  background: rgba(34,197,94,0.1);
+  color: var(--success);
+}
+.status-badge.connected .status-dot { background: var(--success); }
+
+.status-badge.disconnected {
+  background: rgba(239,68,68,0.1);
+  color: var(--error);
+}
+.status-badge.disconnected .status-dot { background: var(--error); }
+
+.status-badge.loading {
+  background: rgba(59,130,246,0.1);
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature Rows                                                       */
+/* ------------------------------------------------------------------ */
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feature-row {
+  background: var(--bg-card);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: background 0.1s ease;
+}
+
+.feature-row:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+.feature-row:last-child  { border-radius: 0 0 var(--radius) var(--radius); }
+.feature-row:only-child  { border-radius: var(--radius); }
+
+.feature-row:hover { background: #3f4a5c; }
+
+/* ------------------------------------------------------------------ */
+/*  Toggle Switch (matches wizard.html)                                */
+/* ------------------------------------------------------------------ */
+.toggle {
+  width: 44px;
+  height: 24px;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle .toggle-knob {
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.toggle.on .toggle-knob {
+  transform: translateX(20px);
+}
+
+.toggle.saving {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature Info                                                       */
+/* ------------------------------------------------------------------ */
+.feature-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.feature-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tier Action Button                                                 */
+/* ------------------------------------------------------------------ */
+.tier-action {
+  margin-top: 12px;
+}
+
+.btn-tier {
+  width: 100%;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-tier:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-tier:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-tier .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------------ */
+/*  Environment Detection                                              */
+/* ------------------------------------------------------------------ */
+.env-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.env-item {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.env-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.env-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.env-badge.found {
+  background: rgba(34,197,94,0.15);
+  color: var(--success);
+}
+
+.env-badge.missing {
+  background: rgba(107,114,128,0.15);
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Toast Notification                                                 */
+/* ------------------------------------------------------------------ */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.25s ease;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.success { background: rgba(34,197,94,0.15); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+.toast.error   { background: rgba(239,68,68,0.15); color: var(--error); border: 1px solid rgba(239,68,68,0.3); }
+
+/* ------------------------------------------------------------------ */
+/*  Loading State                                                      */
+/* ------------------------------------------------------------------ */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+  gap: 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Scrollbar                                                          */
+/* ------------------------------------------------------------------ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ------------------------------------------------------------------ */
+/*  Footer                                                             */
+/* ------------------------------------------------------------------ */
+.footer-links {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.footer-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.footer-links a:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<div class="settings-card" id="settingsCard">
+  <div class="loading-state" id="loadingState">
+    <div class="loading-spinner"></div>
+    Loading settings...
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================================================================== */
+/*  State                                                              */
+/* ================================================================== */
+const state = {
+  status: null,
+  detect: null,
+  loaded: false,
+};
+
+const API = '/apps/install-wizard';
+
+/* ================================================================== */
+/*  API Helpers                                                        */
+/* ================================================================== */
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(API + path, opts);
+    if (!res.ok) return { error: 'HTTP ' + res.status };
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+/* ================================================================== */
+/*  Load Data                                                          */
+/* ================================================================== */
+async function loadAll() {
+  const [statusData, detectData] = await Promise.all([
+    api('GET', '/status'),
+    api('GET', '/detect'),
+  ]);
+  state.status = statusData.error ? null : statusData;
+  state.detect = detectData.error ? null : detectData;
+  state.loaded = true;
+  render();
+}
+
+/* ================================================================== */
+/*  Feature Toggle                                                     */
+/* ================================================================== */
+async function toggleFeature(featureId, enabled) {
+  const toggle = document.querySelector('[data-feature="' + featureId + '"] .toggle');
+  if (toggle) toggle.classList.add('saving');
+
+  const res = await api('POST', '/features', { feature_id: featureId, enabled: enabled });
+
+  if (res && !res.error) {
+    // Update local state
+    if (state.status && state.status.features) {
+      const f = state.status.features.find(f => f.id === featureId);
+      if (f) f.enabled = enabled;
+    }
+    showToast(enabled ? 'Enabled' : 'Disabled', 'success');
+  } else {
+    showToast('Failed to update', 'error');
+  }
+
+  if (toggle) toggle.classList.remove('saving');
+  render();
+}
+
+/* ================================================================== */
+/*  Enable All Recommended                                             */
+/* ================================================================== */
+async function enableAllRecommended() {
+  const btn = document.getElementById('tierBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Enabling...';
+  }
+
+  const res = await api('POST', '/tier', { tier: 1 });
+
+  if (res && !res.error) {
+    // Reload status to get updated feature states
+    const statusData = await api('GET', '/status');
+    if (!statusData.error) state.status = statusData;
+    showToast('All recommended features enabled', 'success');
+  } else {
+    showToast('Failed to enable tier', 'error');
+  }
+
+  render();
+}
+
+/* ================================================================== */
+/*  Toast                                                              */
+/* ================================================================== */
+let toastTimer = null;
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  // Force reflow then show
+  void el.offsetWidth;
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 2000);
+}
+
+/* ================================================================== */
+/*  Render                                                             */
+/* ================================================================== */
+function render() {
+  const card = document.getElementById('settingsCard');
+
+  if (!state.loaded) return;
+
+  const status = state.status || {};
+  const detect = state.detect || {};
+  const features = status.features || [];
+  const tier1 = features.filter(f => f.tier === 1 || f.tier === 'recommended');
+  const tier2 = features.filter(f => f.tier === 2 || f.tier === 'power');
+
+  // Provider info
+  const provider = status.provider || detect.provider || 'unknown';
+  const model = status.model || status.default_model || '';
+  const connected = status.status === 'ready' || status.configured === true || !!status.provider;
+
+  card.innerHTML = renderHeader()
+    + renderProvider(provider, model, connected)
+    + '<hr class="section-divider">'
+    + renderFeatureSection('Recommended', tier1, features.length > 0)
+    + renderTierAction(tier1)
+    + '<hr class="section-divider">'
+    + renderFeatureSection('Power User', tier2, features.length > 0)
+    + '<hr class="section-divider">'
+    + renderEnvironment(detect)
+    + renderFooter();
+
+  bindEvents();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Header                                                             */
+/* ------------------------------------------------------------------ */
+function renderHeader() {
+  return '<div class="header">'
+    + '<h1>Amplifier Settings</h1>'
+    + '<a href="/apps/web-chat/">Back to Chat</a>'
+    + '</div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Provider                                                           */
+/* ------------------------------------------------------------------ */
+function renderProvider(provider, model, connected) {
+  const providerLabel = provider === 'anthropic' ? 'Anthropic'
+    : provider === 'openai' ? 'OpenAI'
+    : provider.charAt(0).toUpperCase() + provider.slice(1);
+  const iconClass = provider === 'anthropic' ? 'anthropic'
+    : provider === 'openai' ? 'openai' : 'unknown';
+  const iconLetter = provider === 'anthropic' ? 'A'
+    : provider === 'openai' ? 'O' : '?';
+  const statusClass = connected ? 'connected' : 'disconnected';
+  const statusLabel = connected ? 'Connected' : 'Not configured';
+
+  return '<div class="section">'
+    + '<div class="section-title">Provider</div>'
+    + '<div class="provider-status">'
+    +   '<div class="provider-info">'
+    +     '<div class="provider-icon ' + iconClass + '">' + esc(iconLetter) + '</div>'
+    +     '<div class="provider-details">'
+    +       '<div class="provider-name">' + esc(providerLabel) + '</div>'
+    +       (model ? '<div class="provider-model">' + esc(model) + '</div>' : '')
+    +     '</div>'
+    +   '</div>'
+    +   '<span class="status-badge ' + statusClass + '">'
+    +     '<span class="status-dot"></span> ' + statusLabel
+    +   '</span>'
+    + '</div>'
+    + '</div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Features Section                                                   */
+/* ------------------------------------------------------------------ */
+function renderFeatureSection(title, features, hasFeatures) {
+  if (!hasFeatures) {
+    return '<div class="section">'
+      + '<div class="section-title">' + esc(title) + ' Features</div>'
+      + '<div style="color: var(--text-secondary); font-size: 13px; padding: 20px 0;">'
+      + 'Feature information not available. The server may still be initializing.'
+      + '</div></div>';
+  }
+
+  if (features.length === 0) {
+    return '<div class="section">'
+      + '<div class="section-title">' + esc(title) + ' Features</div>'
+      + '<div style="color: var(--text-secondary); font-size: 13px; padding: 12px 0;">'
+      + 'No features in this tier.'
+      + '</div></div>';
+  }
+
+  let html = '<div class="section">'
+    + '<div class="section-title">' + esc(title) + ' Features</div>'
+    + '<div class="feature-list">';
+
+  features.forEach(f => {
+    const on = f.enabled ? ' on' : '';
+    html += '<div class="feature-row" data-feature="' + esc(f.id) + '">'
+      + '<div class="toggle' + on + '" data-toggle="' + esc(f.id) + '">'
+      + '<div class="toggle-knob"></div></div>'
+      + '<div class="feature-info">'
+      + '<div class="feature-name">' + esc(f.name || f.id) + '</div>'
+      + (f.description ? '<div class="feature-desc">' + esc(f.description) + '</div>' : '')
+      + '</div></div>';
+  });
+
+  html += '</div></div>';
+  return html;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tier Action                                                        */
+/* ------------------------------------------------------------------ */
+function renderTierAction(tier1Features) {
+  const allEnabled = tier1Features.length > 0 && tier1Features.every(f => f.enabled);
+
+  if (allEnabled) {
+    return '<div class="tier-action">'
+      + '<div style="text-align: center; font-size: 13px; color: var(--success); padding: 8px 0;">'
+      + 'All recommended features enabled'
+      + '</div></div>';
+  }
+
+  return '<div class="tier-action">'
+    + '<button class="btn-tier" id="tierBtn" onclick="enableAllRecommended()">'
+    + 'Enable All Recommended</button></div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Environment                                                        */
+/* ------------------------------------------------------------------ */
+function renderEnvironment(detect) {
+  const tools = [
+    { name: 'Git', key: 'git_available', fallback: 'git_email' },
+    { name: 'Tailscale', key: 'tailscale_available', fallback: 'tailscale_hostname' },
+    { name: 'CLI', key: 'cli_installed', fallback: 'cli_available' },
+    { name: 'TUI', key: 'tui_installed', fallback: 'tui_available' },
+  ];
+
+  let html = '<div class="section">'
+    + '<div class="section-title">Environment</div>'
+    + '<div class="env-grid">';
+
+  tools.forEach(t => {
+    // Check primary key, then fallback key, to determine presence
+    const found = detect[t.key] === true
+      || (detect[t.key] === undefined && !!detect[t.fallback]);
+    const badgeClass = found ? 'found' : 'missing';
+    const badgeLabel = found ? 'Found' : 'Not found';
+    html += '<div class="env-item">'
+      + '<span class="env-name">' + esc(t.name) + '</span>'
+      + '<span class="env-badge ' + badgeClass + '">' + badgeLabel + '</span>'
+      + '</div>';
+  });
+
+  html += '</div></div>';
+  return html;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Footer                                                             */
+/* ------------------------------------------------------------------ */
+function renderFooter() {
+  return '<div class="footer-links">'
+    + '<a href="/static/wizard.html">Full Setup Wizard</a>'
+    + '<a href="/static/quickstart.html">Quickstart</a>'
+    + '</div>';
+}
+
+/* ================================================================== */
+/*  Event Binding                                                      */
+/* ================================================================== */
+function bindEvents() {
+  document.querySelectorAll('[data-toggle]').forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const featureId = toggle.dataset.toggle;
+      const isOn = toggle.classList.contains('on');
+      toggleFeature(featureId, !isOn);
+    });
+  });
+}
+
+/* ================================================================== */
+/*  Utilities                                                          */
+/* ================================================================== */
+function esc(str) {
+  if (str == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+/* ================================================================== */
+/*  Boot                                                               */
+/* ================================================================== */
+loadAll();
+</script>
+</body>
+</html>

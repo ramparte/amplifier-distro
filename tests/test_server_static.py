@@ -1,12 +1,12 @@
 """Server Static Files & Root Redirect Acceptance Tests
 
 These tests validate the server modifications for static file
-serving and root redirect to the install wizard.
+serving and phase-aware root redirect.
 
 Exit criteria verified:
-1. GET / returns a 302 redirect to /static/wizard.html
-2. GET /static/wizard.html returns 200 with HTML content
-3. wizard.html contains expected elements (title, step indicators)
+1. GET / returns a redirect (phase-aware: quickstart or settings)
+2. Static HTML files return 200 with HTML content
+3. HTML files contain expected elements (title, Amplifier branding)
 """
 
 from starlette.testclient import TestClient
@@ -15,26 +15,27 @@ from amplifier_distro.server.app import DistroServer
 
 
 class TestRootRedirect:
-    """Verify GET / redirects to the install wizard.
+    """Verify GET / redirects based on setup phase.
 
     Antagonist note: The root URL is the first thing a user hits.
-    It must redirect to the wizard so new users land on the setup
-    flow immediately.
+    It redirects based on compute_phase(): unconfigured -> quickstart,
+    ready -> settings (or web-chat if registered).
     """
 
     def test_root_returns_redirect(self):
         server = DistroServer()
         client = TestClient(server.app, follow_redirects=False)
         response = client.get("/")
-        assert response.status_code == 307 or response.status_code == 302
+        assert response.status_code in (302, 307)
 
-    def test_root_redirects_to_wizard_html(self):
+    def test_root_redirects_to_static_page(self):
         server = DistroServer()
         client = TestClient(server.app, follow_redirects=False)
         response = client.get("/")
-        assert "/static/wizard.html" in response.headers["location"]
+        location = response.headers["location"]
+        assert "/static/" in location
 
-    def test_root_follow_redirect_reaches_wizard(self):
+    def test_root_follow_redirect_reaches_page(self):
         server = DistroServer()
         client = TestClient(server.app, follow_redirects=True)
         response = client.get("/")

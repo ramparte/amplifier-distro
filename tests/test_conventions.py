@@ -104,6 +104,15 @@ class TestCanonicalValues:
     def test_project_settings_filename(self):
         assert conventions.PROJECT_SETTINGS_FILENAME == "settings.yaml"
 
+    def test_distro_bundle_dir(self):
+        assert conventions.DISTRO_BUNDLE_DIR == "bundles"
+
+    def test_distro_bundle_filename(self):
+        assert conventions.DISTRO_BUNDLE_FILENAME == "distro.yaml"
+
+    def test_distro_bundle_name(self):
+        assert conventions.DISTRO_BUNDLE_NAME == "amplifier-distro"
+
     def test_backup_repo_pattern(self):
         assert conventions.BACKUP_REPO_PATTERN == "{github_handle}/amplifier-backup"
 
@@ -133,6 +142,8 @@ class TestStringConstants:
         "SERVER_PID_FILE",
         "PROJECT_AGENTS_FILENAME",
         "PROJECT_SETTINGS_FILENAME",
+        "DISTRO_BUNDLE_FILENAME",
+        "DISTRO_BUNDLE_NAME",
     ]
 
     DIRECTORY_CONSTANTS = [
@@ -142,6 +153,7 @@ class TestStringConstants:
         "SERVER_DIR",
         "INTERFACES_DIR",
         "PROJECT_AMPLIFIER_DIR",
+        "DISTRO_BUNDLE_DIR",
     ]
 
     def test_all_filename_constants_are_nonempty_strings(self):

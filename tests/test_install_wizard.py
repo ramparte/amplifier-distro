@@ -1,20 +1,23 @@
-"""Install Wizard Acceptance Tests
+"""Install Wizard Tests (Refactored)
 
-These tests validate the install wizard server app which guides
-new users through Amplifier setup.
+Tests for the new quickstart-based install wizard that replaced
+the 7-step wizard. The new wizard is stateless - everything is
+derived from the filesystem.
 
 Exit criteria verified:
 1. Manifest has correct name, description, and router
-2. WizardState initializes with correct defaults
-3. WIZARD_STEPS has 7 entries with required fields
-4. AVAILABLE_MODULES has valid entries with required fields
-5. Default modules include essential tools and providers
-6. All API endpoints return expected responses
-7. Step sequencing advances state correctly
-8. Reset returns wizard to initial state
+2. compute_phase() returns correct phase based on filesystem state
+3. GET /detect returns structured environment detection
+4. GET /status returns phase, provider, tier, features
+5. POST /quickstart creates bundle and settings from API key
+6. POST /features toggles features on/off
+7. POST /tier sets feature tier level
 """
 
-from typing import Any
+from __future__ import annotations
+
+import os
+from pathlib import Path
 
 import pytest
 from fastapi import APIRouter
@@ -23,18 +26,31 @@ from starlette.testclient import TestClient
 from amplifier_distro.server.app import AppManifest, DistroServer
 
 
-@pytest.fixture(autouse=True)
-def reset_wizard():
-    """Reset wizard state before each test."""
-    import amplifier_distro.server.apps.install_wizard as wizard_mod
-    from amplifier_distro.server.apps.install_wizard import WizardState
+@pytest.fixture
+def wizard_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect all wizard file operations to a temp directory."""
+    home = tmp_path / "amplifier"
+    home.mkdir()
 
-    wizard_mod._wizard_state = WizardState()
-    yield
+    # Redirect bundle_composer's BUNDLE_PATH
+    test_bundle = home / "bundles" / "distro.yaml"
+    monkeypatch.setattr("amplifier_distro.bundle_composer.BUNDLE_PATH", test_bundle)
+
+    # Redirect install wizard's AMPLIFIER_HOME
+    monkeypatch.setattr(
+        "amplifier_distro.server.apps.install_wizard.AMPLIFIER_HOME",
+        str(home),
+    )
+
+    # Clear provider env vars to start clean
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    return home
 
 
 @pytest.fixture
-def wizard_client() -> TestClient:
+def wizard_client(wizard_home: Path) -> TestClient:
     """Create a TestClient with the install wizard registered."""
     from amplifier_distro.server.apps.install_wizard import manifest
 
@@ -43,13 +59,11 @@ def wizard_client() -> TestClient:
     return TestClient(server.app)
 
 
-class TestInstallWizardManifest:
-    """Verify the install wizard manifest has correct structure.
+# --- Manifest Tests ---
 
-    Antagonist note: The manifest is the contract between the wizard
-    app and the distro server. Name, description, and router are
-    required for proper registration and route mounting.
-    """
+
+class TestInstallWizardManifest:
+    """Verify the install wizard manifest has correct structure."""
 
     def test_manifest_name_is_install_wizard(self):
         from amplifier_distro.server.apps.install_wizard import manifest
@@ -74,453 +88,249 @@ class TestInstallWizardManifest:
         assert isinstance(manifest, AppManifest)
 
 
-class TestWizardState:
-    """Verify WizardState model initializes with correct defaults.
+# --- compute_phase Tests ---
 
-    Antagonist note: The wizard state drives the entire setup flow.
-    Initial state must be pristine so the wizard starts from step 0
-    with nothing completed.
-    """
 
-    def test_initial_current_step_is_zero(self):
-        from amplifier_distro.server.apps.install_wizard import WizardState
+class TestComputePhase:
+    """Verify compute_phase() returns correct phase from filesystem state."""
 
-        state = WizardState()
-        assert state.current_step == 0
+    def test_unconfigured_when_no_settings(self, wizard_home: Path):
+        from amplifier_distro.server.apps.install_wizard import compute_phase
 
-    def test_initial_setup_complete_is_false(self):
-        from amplifier_distro.server.apps.install_wizard import WizardState
+        # No settings.yaml exists
+        assert compute_phase() == "unconfigured"
 
-        state = WizardState()
-        assert state.setup_complete is False
+    def test_unconfigured_when_settings_but_no_key(self, wizard_home: Path):
+        from amplifier_distro.server.apps.install_wizard import compute_phase
 
-    def test_initial_completed_steps_is_empty(self):
-        from amplifier_distro.server.apps.install_wizard import WizardState
+        # Create settings.yaml but no env var
+        settings = wizard_home / "settings.yaml"
+        settings.write_text("bundle:\n  active: amplifier-distro\n")
+        assert compute_phase() == "unconfigured"
 
-        state = WizardState()
-        assert state.completed_steps == []
+    def test_ready_when_settings_and_key(
+        self, wizard_home: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from amplifier_distro.server.apps.install_wizard import compute_phase
 
-    def test_state_is_valid_pydantic_model(self):
-        from pydantic import BaseModel
+        # Create settings.yaml AND set env var
+        settings = wizard_home / "settings.yaml"
+        settings.write_text("bundle:\n  active: amplifier-distro\n")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test123")
+        assert compute_phase() == "ready"
 
-        from amplifier_distro.server.apps.install_wizard import WizardState
 
-        state = WizardState()
-        assert isinstance(state, BaseModel)
-        # model_dump should work without error
-        dumped = state.model_dump()
-        assert isinstance(dumped, dict)
+# --- GET /detect Tests ---
 
 
-class TestWizardSteps:
-    """Verify WIZARD_STEPS has correct structure and count.
+class TestDetectEndpoint:
+    """Verify GET /detect returns structured environment data."""
 
-    Antagonist note: The wizard defines exactly 7 steps. Each step
-    must have id, name, and description for the UI to render them.
-    """
-
-    def test_wizard_steps_has_seven_entries(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        assert len(WIZARD_STEPS) == 7
-
-    def test_each_step_has_id(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        for step in WIZARD_STEPS:
-            assert "id" in step, f"Step missing 'id': {step}"
-
-    def test_each_step_has_name(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        for step in WIZARD_STEPS:
-            assert "name" in step, f"Step missing 'name': {step}"
-
-    def test_each_step_has_description(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        for step in WIZARD_STEPS:
-            assert "description" in step, f"Step missing 'description': {step}"
-
-    def test_step_ids_are_unique(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        ids = [step["id"] for step in WIZARD_STEPS]
-        assert len(ids) == len(set(ids)), "Step IDs must be unique"
-
-    def test_expected_step_ids_present(self):
-        from amplifier_distro.server.apps.install_wizard import WIZARD_STEPS
-
-        ids = {step["id"] for step in WIZARD_STEPS}
-        expected = {
-            "welcome",
-            "config",
-            "modules",
-            "interfaces",
-            "network",
-            "provider",
-            "verify",
-        }
-        assert ids == expected
-
-
-class TestAvailableModules:
-    """Verify AVAILABLE_MODULES has valid entries.
-
-    Antagonist note: Available modules are presented to users during
-    setup. Each must have all required fields and valid categories.
-    Default modules must include the essentials for a working system.
-    """
-
-    def test_available_modules_is_non_empty(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        assert len(AVAILABLE_MODULES) > 0
-
-    def test_each_module_has_required_fields(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        required_fields = {"id", "name", "description", "category", "default", "repo"}
-        for mod in AVAILABLE_MODULES:
-            for field in required_fields:
-                assert field in mod, f"Module {mod.get('id', '?')} missing '{field}'"
-
-    def test_categories_are_valid(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        valid_categories = {"provider", "tool", "bundle"}
-        for mod in AVAILABLE_MODULES:
-            assert mod["category"] in valid_categories, (
-                f"Module {mod['id']} has invalid category: {mod['category']}"
-            )
-
-    def test_default_modules_include_provider_anthropic(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        defaults = [m["id"] for m in AVAILABLE_MODULES if m["default"]]
-        assert "provider-anthropic" in defaults
-
-    def test_default_modules_include_tool_bash(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        defaults = [m["id"] for m in AVAILABLE_MODULES if m["default"]]
-        assert "tool-bash" in defaults
-
-    def test_default_modules_include_tool_filesystem(self):
-        from amplifier_distro.server.apps.install_wizard import AVAILABLE_MODULES
-
-        defaults = [m["id"] for m in AVAILABLE_MODULES if m["default"]]
-        assert "tool-filesystem" in defaults
-
-
-class TestWizardIndexEndpoint:
-    """Verify GET /apps/install-wizard/ returns wizard status."""
-
-    def test_index_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/")
-        assert response.status_code == 200
-
-    def test_index_returns_app_name(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/").json()
-        assert data["app"] == "install-wizard"
-
-    def test_index_returns_setup_complete(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/").json()
-        assert data["setup_complete"] is False
-
-    def test_index_returns_total_steps(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/").json()
-        assert data["total_steps"] == 7
-
-
-class TestWizardStepsEndpoint:
-    """Verify GET /apps/install-wizard/steps returns step list."""
-
-    def test_steps_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/steps")
-        assert response.status_code == 200
-
-    def test_steps_returns_seven_steps(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/steps").json()
-        assert len(data) == 7
-
-    def test_steps_include_completion_status(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/steps").json()
-        for step in data:
-            assert "completed" in step
-            assert "current" in step
-
-    def test_first_step_is_current(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/steps").json()
-        assert data[0]["current"] is True
-        assert data[1]["current"] is False
-
-
-class TestWizardModulesEndpoint:
-    """Verify GET /apps/install-wizard/modules returns module list."""
-
-    def test_modules_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/modules")
-        assert response.status_code == 200
-
-    def test_modules_returns_modules_list(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/modules").json()
-        assert "modules" in data
-        assert len(data["modules"]) > 0
-
-    def test_modules_returns_selected_list(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/modules").json()
-        assert "selected" in data
-        assert data["selected"] == []
-
-
-class TestWizardStateEndpoint:
-    """Verify GET /apps/install-wizard/state returns full state."""
-
-    def test_state_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/state")
-        assert response.status_code == 200
-
-    def test_state_returns_initial_values(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/state").json()
-        assert data["current_step"] == 0
-        assert data["setup_complete"] is False
-        assert data["completed_steps"] == []
-
-    def test_state_returns_all_fields(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/state").json()
-        expected_keys = {
-            "current_step",
-            "completed_steps",
-            "workspace_root",
-            "github_handle",
-            "git_email",
-            "selected_modules",
-            "installed_interfaces",
-            "tailscale_enabled",
-            "tailscale_hostname",
-            "provider",
-            "provider_key_set",
-            "setup_complete",
-        }
-        assert set(data.keys()) == expected_keys
-
-
-class TestWizardDetectEndpoint:
-    """Verify GET /apps/install-wizard/detect returns detection results."""
-
-    def test_detect_returns_200(self, wizard_client: TestClient):
+    def test_returns_200(self, wizard_client: TestClient):
         response = wizard_client.get("/apps/install-wizard/detect")
         assert response.status_code == 200
 
-    def test_detect_returns_tools_dict(self, wizard_client: TestClient):
+    def test_has_github_key(self, wizard_client: TestClient):
         data = wizard_client.get("/apps/install-wizard/detect").json()
-        assert "tools" in data
-        assert isinstance(data["tools"], dict)
+        assert "github" in data
 
-    def test_detect_returns_api_keys_dict(self, wizard_client: TestClient):
+    def test_has_git_key(self, wizard_client: TestClient):
         data = wizard_client.get("/apps/install-wizard/detect").json()
-        assert "api_keys" in data
-        assert "anthropic" in data["api_keys"]
-        assert "openai" in data["api_keys"]
+        assert "git" in data
 
-    def test_detect_returns_tailscale_info(self, wizard_client: TestClient):
+    def test_has_tailscale_key(self, wizard_client: TestClient):
         data = wizard_client.get("/apps/install-wizard/detect").json()
         assert "tailscale" in data
 
-    def test_detect_returns_workspace_candidates(self, wizard_client: TestClient):
+    def test_has_api_keys_key(self, wizard_client: TestClient):
         data = wizard_client.get("/apps/install-wizard/detect").json()
-        assert "workspace_candidates" in data
-        assert isinstance(data["workspace_candidates"], list)
+        assert "api_keys" in data
 
 
-class TestStepWelcome:
-    """Verify POST /apps/install-wizard/steps/welcome."""
+# --- GET /status Tests ---
 
-    def test_welcome_step_succeeds(self, wizard_client: TestClient, tmp_path: Any):
-        response = wizard_client.post(
-            "/apps/install-wizard/steps/welcome",
-            json={
-                "workspace_root": str(tmp_path / "test_workspace"),
-                "github_handle": "testuser",
-                "git_email": "test@example.com",
-            },
-        )
+
+class TestStatusEndpoint:
+    """Verify GET /status returns current setup state."""
+
+    def test_returns_200(self, wizard_client: TestClient):
+        response = wizard_client.get("/apps/install-wizard/status")
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["workspace_created"] is True
 
-    def test_welcome_step_advances_state(
-        self, wizard_client: TestClient, tmp_path: Any
-    ):
+    def test_has_phase(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/status").json()
+        assert "phase" in data
+
+    def test_has_provider(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/status").json()
+        assert "provider" in data
+
+    def test_has_tier(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/status").json()
+        assert "tier" in data
+
+    def test_has_features(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/status").json()
+        assert "features" in data
+
+
+# --- POST /quickstart Tests ---
+
+
+class TestQuickstartEndpoint:
+    """Verify POST /quickstart sets up a working environment."""
+
+    def test_anthropic_key_returns_ready(self, wizard_client: TestClient):
+        resp = wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ready"
+        assert data["provider"] == "anthropic"
+
+    def test_openai_key_returns_ready(self, wizard_client: TestClient):
+        resp = wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-test123"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ready"
+        assert data["provider"] == "openai"
+
+    def test_invalid_key_returns_400(self, wizard_client: TestClient):
+        resp = wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "invalid-key"},
+        )
+        assert resp.status_code == 400
+
+    def test_empty_key_returns_400(self, wizard_client: TestClient):
+        resp = wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": ""},
+        )
+        assert resp.status_code == 400
+
+    def test_missing_key_returns_422(self, wizard_client: TestClient):
+        resp = wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={},
+        )
+        assert resp.status_code == 422
+
+    def test_creates_bundle_file(self, wizard_client: TestClient, wizard_home: Path):
         wizard_client.post(
-            "/apps/install-wizard/steps/welcome",
-            json={"workspace_root": str(tmp_path / "ws")},
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 1
-        assert "welcome" in state["completed_steps"]
+        bundle_path = wizard_home / "bundles" / "distro.yaml"
+        assert bundle_path.exists()
 
-
-class TestStepModules:
-    """Verify POST /apps/install-wizard/steps/modules."""
-
-    def test_modules_step_succeeds(self, wizard_client: TestClient):
-        response = wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["provider-anthropic", "tool-bash"]},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["count"] == 2
-
-    def test_modules_step_updates_selected(self, wizard_client: TestClient):
+    def test_creates_settings_file(self, wizard_client: TestClient, wizard_home: Path):
         wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["tool-bash", "tool-filesystem"]},
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert "tool-bash" in state["selected_modules"]
-        assert "tool-filesystem" in state["selected_modules"]
+        settings_path = wizard_home / "settings.yaml"
+        assert settings_path.exists()
 
-
-class TestStepNetwork:
-    """Verify POST /apps/install-wizard/steps/network."""
-
-    def test_network_step_with_tailscale_disabled(self, wizard_client: TestClient):
-        response = wizard_client.post(
-            "/apps/install-wizard/steps/network",
-            json={"tailscale_enabled": False},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ok"
-        assert data["tailscale_enabled"] is False
-
-    def test_network_step_advances_state(self, wizard_client: TestClient):
+    def test_creates_keys_file(self, wizard_client: TestClient, wizard_home: Path):
         wizard_client.post(
-            "/apps/install-wizard/steps/network",
-            json={"tailscale_enabled": False},
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert "network" in state["completed_steps"]
-        assert state["current_step"] == 5
+        keys_path = wizard_home / "keys.env"
+        assert keys_path.exists()
 
-
-class TestStepVerify:
-    """Verify POST /apps/install-wizard/steps/verify."""
-
-    def test_verify_step_runs_checks(self, wizard_client: TestClient):
-        response = wizard_client.post("/apps/install-wizard/steps/verify")
-        assert response.status_code == 200
-        data = response.json()
-        assert "checks" in data
-        assert isinstance(data["checks"], list)
-        assert len(data["checks"]) > 0
-
-    def test_verify_checks_have_name_and_passed(self, wizard_client: TestClient):
-        data = wizard_client.post("/apps/install-wizard/steps/verify").json()
-        for check in data["checks"]:
-            assert "name" in check
-            assert "passed" in check
-
-
-class TestResetWizard:
-    """Verify POST /apps/install-wizard/reset."""
-
-    def test_reset_returns_ok(self, wizard_client: TestClient):
-        response = wizard_client.post("/apps/install-wizard/reset")
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-
-    def test_reset_clears_state_after_step(self, wizard_client: TestClient):
-        # Advance state
+    def test_sets_env_var(self, wizard_client: TestClient):
         wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["tool-bash"]},
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] != 0
-
-        # Reset
-        wizard_client.post("/apps/install-wizard/reset")
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 0
-        assert state["completed_steps"] == []
-        assert state["setup_complete"] is False
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test123"
 
 
-class TestStepSequencing:
-    """Verify wizard state progresses through steps correctly.
+# --- POST /features Tests ---
 
-    Antagonist note: The wizard is a sequential flow. Each step
-    must advance current_step and record itself in completed_steps.
-    After reset, everything returns to initial state.
-    """
 
-    def test_welcome_advances_to_step_1(self, wizard_client: TestClient, tmp_path: Any):
+class TestFeaturesEndpoint:
+    """Verify POST /features toggles features on/off."""
+
+    def _setup_bundle(self, client: TestClient) -> None:
+        """Helper: quickstart to create initial bundle."""
+        client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
+        )
+
+    def test_enable_feature(self, wizard_client: TestClient):
+        self._setup_bundle(wizard_client)
+        resp = wizard_client.post(
+            "/apps/install-wizard/features",
+            json={"feature_id": "dev-memory", "enabled": True},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["features"]["dev-memory"]["enabled"] is True
+
+    def test_disable_feature(self, wizard_client: TestClient):
+        self._setup_bundle(wizard_client)
+        # Enable first
         wizard_client.post(
-            "/apps/install-wizard/steps/welcome",
-            json={"workspace_root": str(tmp_path / "ws")},
+            "/apps/install-wizard/features",
+            json={"feature_id": "dev-memory", "enabled": True},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 1
+        # Then disable
+        resp = wizard_client.post(
+            "/apps/install-wizard/features",
+            json={"feature_id": "dev-memory", "enabled": False},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["features"]["dev-memory"]["enabled"] is False
 
-    def test_modules_advances_to_step_3(self, wizard_client: TestClient):
-        wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["tool-bash"]},
+    def test_unknown_feature_returns_400(self, wizard_client: TestClient):
+        self._setup_bundle(wizard_client)
+        resp = wizard_client.post(
+            "/apps/install-wizard/features",
+            json={"feature_id": "nonexistent", "enabled": True},
         )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 3
+        assert resp.status_code == 400
 
-    def test_network_advances_to_step_5(self, wizard_client: TestClient):
-        wizard_client.post(
-            "/apps/install-wizard/steps/network",
-            json={"tailscale_enabled": False},
-        )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 5
 
-    def test_multiple_steps_accumulate_completed(
-        self, wizard_client: TestClient, tmp_path: Any
-    ):
-        wizard_client.post(
-            "/apps/install-wizard/steps/welcome",
-            json={"workspace_root": str(tmp_path / "ws")},
-        )
-        wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["tool-bash"]},
-        )
-        wizard_client.post(
-            "/apps/install-wizard/steps/network",
-            json={"tailscale_enabled": False},
-        )
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert "welcome" in state["completed_steps"]
-        assert "modules" in state["completed_steps"]
-        assert "network" in state["completed_steps"]
+# --- POST /tier Tests ---
 
-    def test_reset_returns_to_initial_state(
-        self, wizard_client: TestClient, tmp_path: Any
-    ):
-        # Run through some steps
-        wizard_client.post(
-            "/apps/install-wizard/steps/welcome",
-            json={"workspace_root": str(tmp_path / "ws")},
-        )
-        wizard_client.post(
-            "/apps/install-wizard/steps/modules",
-            json={"modules": ["tool-bash"]},
+
+class TestTierEndpoint:
+    """Verify POST /tier sets the feature tier level."""
+
+    def _setup_bundle(self, client: TestClient) -> None:
+        """Helper: quickstart to create initial bundle."""
+        client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
         )
 
-        # Reset
-        wizard_client.post("/apps/install-wizard/reset")
-        state = wizard_client.get("/apps/install-wizard/state").json()
-        assert state["current_step"] == 0
-        assert state["completed_steps"] == []
-        assert state["selected_modules"] == []
-        assert state["setup_complete"] is False
+    def test_set_tier_1(self, wizard_client: TestClient):
+        self._setup_bundle(wizard_client)
+        resp = wizard_client.post(
+            "/apps/install-wizard/tier",
+            json={"tier": 1},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["features"]["dev-memory"]["enabled"] is True
+        assert data["features"]["deliberate-dev"]["enabled"] is True
+
+    def test_set_tier_returns_features_added(self, wizard_client: TestClient):
+        self._setup_bundle(wizard_client)
+        resp = wizard_client.post(
+            "/apps/install-wizard/tier",
+            json={"tier": 1},
+        )
+        data = resp.json()
+        assert "features_added" in data
+        assert "dev-memory" in data["features_added"]

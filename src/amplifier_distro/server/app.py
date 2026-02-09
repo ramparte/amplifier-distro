@@ -274,15 +274,19 @@ class DistroServer:
             )
 
     def _setup_root_redirect(self) -> None:
-        """Add root redirect to wizard or web-chat."""
+        """Phase-aware root redirect: quickstart, web-chat, or settings."""
 
         @self._app.get("/")
         async def root() -> RedirectResponse:
-            # Dev mode: go straight to web-chat if available
-            if self._dev_mode and "web-chat" in self._apps:
+            from amplifier_distro.server.apps.install_wizard import compute_phase
+
+            phase = compute_phase()
+            if phase == "unconfigured":
+                return RedirectResponse(url="/static/quickstart.html")
+            # Ready: go to web-chat if available, otherwise settings
+            if "web-chat" in self._apps:
                 return RedirectResponse(url="/apps/web-chat/")
-            # Default: wizard for setup
-            return RedirectResponse(url="/static/wizard.html")
+            return RedirectResponse(url="/static/settings.html")
 
     def _mount_static_files(self) -> None:
         """Mount static files directory if it exists."""

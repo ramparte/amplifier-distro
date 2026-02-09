@@ -184,7 +184,8 @@ class TestAppDiscovery:
         server.discover_apps(apps_dir)
         client = TestClient(server.app)
 
-        wiz = client.get("/apps/install-wizard/")
+        # install-wizard has no index route; /status is the canonical endpoint
+        wiz = client.get("/apps/install-wizard/status")
         assert wiz.status_code == 200
 
         chat = client.get("/apps/web-chat/")
