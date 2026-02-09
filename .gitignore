@@ -1,4 +1,5 @@
 # Real API keys (never commit)
+.env
 .env.local
 
 # Python

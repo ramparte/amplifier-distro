@@ -31,7 +31,7 @@ class SlackConfig:
     thread_per_session: bool = True  # New sessions start as threads
     allow_breakout: bool = True  # Allow promoting threads to channels
     channel_prefix: str = "amp-"  # Prefix for breakout channel names
-    bot_name: str = "amp"  # Name the bot responds to
+    bot_name: str = "slackbridge"  # Name the bot responds to
 
     # --- Session Defaults ---
     default_bundle: str | None = None  # Override distro.yaml default
