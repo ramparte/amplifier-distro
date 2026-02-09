@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 _INITIAL_BACKOFF = 1.0
 _MAX_BACKOFF = 60.0
 _BACKOFF_FACTOR = 2.0
+
+# Dedup window: ignore duplicate events for the same message within this window
+_DEDUP_WINDOW_SECS = 10.0
+_DEDUP_MAX_SIZE = 200
 
 
 class SocketModeAdapter:
@@ -54,6 +59,10 @@ class SocketModeAdapter:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._running = False
         self._bot_user_id: str | None = None
+        # Dedup: track recently-seen message timestamps to avoid processing
+        # both app_mention and message events for the same @mention.
+        # Maps "channel:ts" -> monotonic time when first seen.
+        self._seen_events: dict[str, float] = {}
 
     async def start(self) -> None:
         """Start the Socket Mode connection in the background."""
@@ -208,6 +217,7 @@ class SocketModeAdapter:
         user = event.get("user", "?")
         text = event.get("text", "")[:80]
         channel = event.get("channel", "?")
+        msg_ts = event.get("ts", "")
 
         logger.info(
             f"[socket] Event: type={event_type} user={user} "
@@ -227,6 +237,17 @@ class SocketModeAdapter:
             logger.debug("[socket] Skipping bot_message subtype")
             return
 
+        # Deduplicate: Slack sends both app_mention and message events for
+        # the same @mention. We only process the first one we see for a
+        # given channel:ts pair.
+        if msg_ts and channel:
+            dedup_key = f"{channel}:{msg_ts}"
+            if self._is_duplicate(dedup_key):
+                logger.info(
+                    f"[socket] Skipping duplicate event {event_type} for {dedup_key}"
+                )
+                return
+
         # Forward to our event handler
         handler_payload = {
             "type": "event_callback",
@@ -237,6 +258,30 @@ class SocketModeAdapter:
             logger.info(f"[socket] Handler result: {result}")
         except Exception:
             logger.exception("[socket] Error in event handler")
+
+    def _is_duplicate(self, key: str) -> bool:
+        """Check if this event key was recently seen. Records it if not.
+
+        Uses a simple dict with monotonic timestamps. Evicts stale entries
+        periodically to bound memory.
+        """
+        now = time.monotonic()
+
+        # Evict stale entries if the cache is getting large
+        if len(self._seen_events) > _DEDUP_MAX_SIZE:
+            cutoff = now - _DEDUP_WINDOW_SECS
+            self._seen_events = {
+                k: v for k, v in self._seen_events.items() if v > cutoff
+            }
+
+        if key in self._seen_events:
+            age = now - self._seen_events[key]
+            if age < _DEDUP_WINDOW_SECS:
+                return True
+            # Expired, treat as new
+
+        self._seen_events[key] = now
+        return False
 
     async def _ack(self, frame: dict[str, Any]) -> None:
         """Send acknowledgement for a Socket Mode envelope."""

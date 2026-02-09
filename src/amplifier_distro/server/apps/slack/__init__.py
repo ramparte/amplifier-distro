@@ -34,6 +34,7 @@ from .config import SlackConfig
 from .discovery import AmplifierDiscovery
 from .events import SlackEventHandler
 from .sessions import SlackSessionManager
+from .setup import router as setup_router
 from .simulator import router as simulator_router
 
 logger = logging.getLogger(__name__)
@@ -306,6 +307,10 @@ async def list_projects() -> list[dict[str, Any]]:
         for p in projects
     ]
 
+
+# --- Setup Routes (always available for configuration) ---
+
+router.include_router(setup_router)
 
 # --- Simulator Routes (always included, serves UI in simulator mode) ---
 

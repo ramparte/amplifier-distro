@@ -213,10 +213,8 @@ class SlackEventHandler:
             raw_text=message.text,
         )
 
-        # Add a "thinking" reaction
-        await self._client.add_reaction(
-            message.channel_id, message.ts, "hourglass_flowing_sand"
-        )
+        # Add a "thinking" reaction (best-effort, never fatal)
+        await self._safe_react(message.channel_id, message.ts, "hourglass_flowing_sand")
 
         result = await self._commands.handle(command, args, ctx)
 
@@ -225,34 +223,72 @@ class SlackEventHandler:
         if result.create_thread:
             reply_thread = None  # Will create a new thread from the reply
 
-        # Send the response
-        if result.blocks:
-            await self._client.post_message(
-                message.channel_id,
-                text=result.text or "Amplifier",
-                thread_ts=reply_thread,
-                blocks=result.blocks,
-            )
-        elif result.text:
-            for chunk in SlackFormatter.split_message(result.text):
+        # Send the response, with fallback for blocks failures
+        try:
+            if result.blocks:
                 await self._client.post_message(
                     message.channel_id,
-                    text=chunk,
+                    text=result.text or "Amplifier",
                     thread_ts=reply_thread,
+                    blocks=result.blocks,
                 )
+            elif result.text:
+                for chunk in SlackFormatter.split_message(result.text):
+                    await self._client.post_message(
+                        message.channel_id,
+                        text=chunk,
+                        thread_ts=reply_thread,
+                    )
+        except Exception:
+            logger.warning(
+                "Failed to send blocks, falling back to plain text", exc_info=True
+            )
+            # Fallback: send blocks content as plain text
+            fallback = result.text or self._blocks_to_plaintext(result.blocks)
+            if fallback:
+                try:
+                    for chunk in SlackFormatter.split_message(fallback):
+                        await self._client.post_message(
+                            message.channel_id,
+                            text=chunk,
+                            thread_ts=reply_thread,
+                        )
+                except Exception:
+                    logger.exception("Fallback plain-text send also failed")
 
-        # Remove the thinking reaction (best-effort)
-        # In real Slack, we'd remove it. For now just add a done reaction.
-        await self._client.add_reaction(
-            message.channel_id, message.ts, "white_check_mark"
-        )
+        # Done reaction (best-effort, never fatal)
+        await self._safe_react(message.channel_id, message.ts, "white_check_mark")
+
+    async def _safe_react(self, channel: str, ts: str, emoji: str) -> None:
+        """Add a reaction, ignoring failures (already_reacted, etc.)."""
+        try:
+            await self._client.add_reaction(channel, ts, emoji)
+        except Exception:
+            logger.debug(
+                f"Reaction '{emoji}' failed (likely duplicate event)", exc_info=True
+            )
+
+    @staticmethod
+    def _blocks_to_plaintext(blocks: list[dict[str, Any]] | None) -> str:
+        """Extract readable text from Block Kit blocks as a fallback."""
+        if not blocks:
+            return ""
+        parts: list[str] = []
+        for block in blocks:
+            if block.get("type") == "header":
+                text = block.get("text", {}).get("text", "")
+                if text:
+                    parts.append(f"*{text}*")
+            elif block.get("type") == "section":
+                text = block.get("text", {}).get("text", "")
+                if text:
+                    parts.append(text)
+        return "\n".join(parts)
 
     async def _handle_session_message(self, message: SlackMessage) -> None:
         """Route a message to its mapped Amplifier session."""
-        # Add thinking indicator
-        await self._client.add_reaction(
-            message.channel_id, message.ts, "hourglass_flowing_sand"
-        )
+        # Add thinking indicator (best-effort)
+        await self._safe_react(message.channel_id, message.ts, "hourglass_flowing_sand")
 
         # Route through session manager
         response = await self._sessions.route_message(message)
@@ -267,7 +303,5 @@ class SlackEventHandler:
                     thread_ts=reply_thread,
                 )
 
-        # Done reaction
-        await self._client.add_reaction(
-            message.channel_id, message.ts, "white_check_mark"
-        )
+        # Done reaction (best-effort)
+        await self._safe_react(message.channel_id, message.ts, "white_check_mark")

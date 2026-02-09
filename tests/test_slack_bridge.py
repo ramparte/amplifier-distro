@@ -869,3 +869,297 @@ class TestSlackBridgeEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert "blocks" in data or "text" in data
+
+
+# --- Config File Tests ---
+
+
+class TestSlackConfigFile:
+    """Test SlackConfig loading from file + env."""
+
+    def test_from_env_only(self):
+        """Config loads from env vars when no config file."""
+        from amplifier_distro.server.apps.slack.config import SlackConfig
+
+        with patch.dict(
+            os.environ,
+            {
+                "SLACK_BOT_TOKEN": "xoxb-env",
+                "SLACK_APP_TOKEN": "xapp-env",
+                "SLACK_SOCKET_MODE": "true",
+            },
+            clear=False,
+        ):
+            cfg = SlackConfig.from_env()
+            assert cfg.bot_token == "xoxb-env"
+            assert cfg.app_token == "xapp-env"
+            assert cfg.socket_mode is True
+
+    def test_from_file(self, tmp_path):
+        """Config loads from slack.yaml when no env vars."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        config_file = tmp_path / "slack.yaml"
+        config_file.write_text(
+            "bot_token: xoxb-file\n"
+            "app_token: xapp-file\n"
+            "hub_channel_id: C_FILE\n"
+            "socket_mode: true\n"
+        )
+
+        # Patch the config file loader to use our temp file
+        original = config_mod._load_config_file
+
+        def _load_from_tmp() -> dict:
+            import yaml
+
+            return yaml.safe_load(config_file.read_text()) or {}
+
+        config_mod._load_config_file = _load_from_tmp
+        try:
+            # Clear env vars that would override
+            env = {
+                "SLACK_BOT_TOKEN": "",
+                "SLACK_APP_TOKEN": "",
+                "SLACK_HUB_CHANNEL_ID": "",
+                "SLACK_SOCKET_MODE": "",
+                "SLACK_SIGNING_SECRET": "",
+                "SLACK_SIMULATOR_MODE": "",
+                "SLACK_HUB_CHANNEL_NAME": "",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.bot_token == "xoxb-file"
+                assert cfg.app_token == "xapp-file"
+                assert cfg.hub_channel_id == "C_FILE"
+                assert cfg.socket_mode is True
+        finally:
+            config_mod._load_config_file = original
+
+    def test_env_overrides_file(self, tmp_path):
+        """Env vars take priority over config file values."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        config_file = tmp_path / "slack.yaml"
+        config_file.write_text("bot_token: xoxb-file\n")
+
+        original = config_mod._load_config_file
+
+        def _load_from_tmp() -> dict:
+            import yaml
+
+            return yaml.safe_load(config_file.read_text()) or {}
+
+        config_mod._load_config_file = _load_from_tmp
+        try:
+            with patch.dict(
+                os.environ,
+                {"SLACK_BOT_TOKEN": "xoxb-env"},
+                clear=False,
+            ):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.bot_token == "xoxb-env"
+        finally:
+            config_mod._load_config_file = original
+
+
+# --- Setup Module Tests ---
+
+
+class TestSlackSetup:
+    """Test the Slack bridge setup/install module."""
+
+    def test_setup_status_unconfigured(self, bridge_client):
+        """Setup status shows unconfigured when no tokens."""
+        resp = bridge_client.get("/apps/slack/setup/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "steps" in data
+        assert "configured" in data
+        assert isinstance(data["config_path"], str)
+
+    def test_setup_manifest(self, bridge_client):
+        """Manifest endpoint returns valid app manifest."""
+        resp = bridge_client.get("/apps/slack/setup/manifest")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "manifest" in data
+        assert "manifest_yaml" in data
+        assert "instructions" in data
+        assert "create_url" in data
+
+        # Verify manifest structure
+        m = data["manifest"]
+        assert m["features"]["bot_user"]["always_online"] is True
+        assert "app_mentions:read" in m["oauth_config"]["scopes"]["bot"]
+        assert m["settings"]["socket_mode_enabled"] is True
+
+    def test_validate_bad_prefix(self, bridge_client):
+        """Validate rejects tokens with wrong prefix."""
+        resp = bridge_client.post(
+            "/apps/slack/setup/validate",
+            json={"bot_token": "not-a-valid-token"},
+        )
+        assert resp.status_code == 400
+
+    def test_configure_saves_config(self, bridge_client, tmp_path):
+        """Configure endpoint persists config to disk."""
+        from amplifier_distro.server.apps.slack import setup
+
+        # Redirect config path to temp dir
+        original = setup._config_path
+
+        def _tmp_config_path() -> Path:
+            return tmp_path / "slack.yaml"
+
+        setup._config_path = _tmp_config_path
+        try:
+            resp = bridge_client.post(
+                "/apps/slack/setup/configure",
+                json={
+                    "bot_token": "xoxb-test-token",
+                    "app_token": "xapp-test-token",
+                    "hub_channel_id": "C_TEST",
+                    "hub_channel_name": "test-channel",
+                    "socket_mode": True,
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "saved"
+            assert data["mode"] == "socket"
+
+            # Verify file was written
+            import yaml
+
+            saved = yaml.safe_load((tmp_path / "slack.yaml").read_text())
+            assert saved["bot_token"] == "xoxb-test-token"
+            assert saved["app_token"] == "xapp-test-token"
+            assert saved["hub_channel_id"] == "C_TEST"
+            assert saved["socket_mode"] is True
+        finally:
+            setup._config_path = original
+
+    def test_channels_no_token(self, bridge_client):
+        """Channels endpoint requires a bot token."""
+        with patch.dict(os.environ, {"SLACK_BOT_TOKEN": ""}, clear=False):
+            resp = bridge_client.get("/apps/slack/setup/channels")
+            assert resp.status_code == 400
+
+    def test_test_no_token(self, bridge_client):
+        """Test endpoint requires a bot token."""
+        from amplifier_distro.server.apps.slack import setup
+
+        # Ensure no config file
+        original = setup.load_slack_config
+        setup.load_slack_config = lambda: {}
+        try:
+            with patch.dict(os.environ, {"SLACK_BOT_TOKEN": ""}, clear=False):
+                resp = bridge_client.post(
+                    "/apps/slack/setup/test",
+                    json={},
+                )
+                assert resp.status_code == 400
+        finally:
+            setup.load_slack_config = original
+
+
+# --- Setup Config Persistence Tests ---
+
+
+class TestSlackSetupHelpers:
+    """Test setup module helper functions."""
+
+    def test_save_and_load_config(self, tmp_path):
+        """Round-trip: save config then load it back."""
+        from amplifier_distro.server.apps.slack import setup
+
+        original = setup._config_path
+
+        def _tmp_config_path() -> Path:
+            return tmp_path / "slack.yaml"
+
+        setup._config_path = _tmp_config_path
+        try:
+            config = {
+                "bot_token": "xoxb-round-trip",
+                "app_token": "xapp-round-trip",
+                "hub_channel_id": "C_RT",
+                "socket_mode": True,
+            }
+            setup.save_slack_config(config)
+
+            loaded = setup.load_slack_config()
+            assert loaded["bot_token"] == "xoxb-round-trip"
+            assert loaded["app_token"] == "xapp-round-trip"
+            assert loaded["hub_channel_id"] == "C_RT"
+            assert loaded["socket_mode"] is True
+        finally:
+            setup._config_path = original
+
+    def test_load_missing_config(self, tmp_path):
+        """Loading a non-existent config returns empty dict."""
+        from amplifier_distro.server.apps.slack import setup
+
+        original = setup._config_path
+
+        def _tmp_config_path() -> Path:
+            return tmp_path / "nonexistent" / "slack.yaml"
+
+        setup._config_path = _tmp_config_path
+        try:
+            result = setup.load_slack_config()
+            assert result == {}
+        finally:
+            setup._config_path = original
+
+    def test_file_permissions(self, tmp_path):
+        """Config file is written with chmod 600 (owner-only)."""
+        from amplifier_distro.server.apps.slack import setup
+
+        original = setup._config_path
+
+        def _tmp_config_path() -> Path:
+            return tmp_path / "slack.yaml"
+
+        setup._config_path = _tmp_config_path
+        try:
+            setup.save_slack_config({"bot_token": "xoxb-perms"})
+            path = tmp_path / "slack.yaml"
+            assert path.exists()
+            mode = oct(path.stat().st_mode & 0o777)
+            assert mode == "0o600"
+        finally:
+            setup._config_path = original
+
+
+# --- Event Deduplication Tests ---
+
+
+class TestSocketModeDedup:
+    """Test event deduplication in SocketModeAdapter."""
+
+    def test_dedup_prevents_double_processing(self):
+        """Same channel:ts should be deduplicated."""
+        from amplifier_distro.server.apps.slack.socket_mode import (
+            SocketModeAdapter,
+        )
+
+        adapter = SocketModeAdapter.__new__(SocketModeAdapter)
+        adapter._seen_events = {}
+
+        assert adapter._is_duplicate("C1:1.0") is False
+        assert adapter._is_duplicate("C1:1.0") is True
+
+    def test_dedup_different_messages_pass(self):
+        """Different channel:ts pairs are not duplicates."""
+        from amplifier_distro.server.apps.slack.socket_mode import (
+            SocketModeAdapter,
+        )
+
+        adapter = SocketModeAdapter.__new__(SocketModeAdapter)
+        adapter._seen_events = {}
+
+        assert adapter._is_duplicate("C1:1.0") is False
+        assert adapter._is_duplicate("C1:2.0") is False
+        assert adapter._is_duplicate("C2:1.0") is False
