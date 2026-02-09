@@ -1,12 +1,19 @@
-"""CLI entry point for the distro server."""
+"""CLI entry point for the distro server.
+
+Usage:
+    amp-distro-server [OPTIONS]              # via installed script
+    python -m amplifier_distro.server [OPTIONS]  # via module
+"""
 
 from pathlib import Path
 
 import click
 
 
-@click.command("serve")
-@click.option("--host", default="127.0.0.1", help="Bind host")
+@click.command("amp-distro-server")
+@click.option(
+    "--host", default="127.0.0.1", help="Bind host (use 0.0.0.0 for LAN/Tailscale)"
+)
 @click.option("--port", default=8400, type=int, help="Bind port")
 @click.option(
     "--apps-dir", default=None, type=click.Path(exists=True), help="Apps directory"
@@ -56,10 +63,12 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -
             click.echo(f"  Config issue: {e}")
 
     click.echo(f"Starting Amplifier Distro Server on {host}:{port}")
-    click.echo(f"API docs: http://{host}:{port}/api/docs")
-    click.echo(f"Apps: http://{host}:{port}/api/apps")
-    if dev:
-        click.echo(f"Web: http://{host}:{port}/static/wizard.html")
+    if host == "0.0.0.0":
+        click.echo(f"  Local:     http://127.0.0.1:{port}")
+        _show_tailscale_url(port)
+    else:
+        click.echo(f"  URL: http://{host}:{port}")
+    click.echo(f"  API docs:  http://{host}:{port}/api/docs")
 
     uvicorn.run(
         server.app,
@@ -68,6 +77,24 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -
         reload=reload,
         log_level="info",
     )
+
+
+def _show_tailscale_url(port: int) -> None:
+    """Show Tailscale URL if available."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip", "-4"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            ts_ip = result.stdout.strip().split("\n")[0]
+            click.echo(f"  Tailscale: http://{ts_ip}:{port}")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
 
 
 def _create_default_config() -> None:
