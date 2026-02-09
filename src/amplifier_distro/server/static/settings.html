@@ -496,6 +496,22 @@ async function loadAll() {
 }
 
 /* ================================================================== */
+/*  Normalize API Data                                                 */
+/* ================================================================== */
+// API returns features as a dict { "dev-memory": { enabled, tier, ... } }
+// Convert to an array of { id, enabled, tier, name, description } for rendering
+function featuresAsArray(featuresObj) {
+  if (!featuresObj || Array.isArray(featuresObj)) return featuresObj || [];
+  return Object.entries(featuresObj).map(([id, f]) => ({
+    id,
+    enabled: f.enabled,
+    tier: f.tier,
+    name: f.name || id,
+    description: f.description || '',
+  }));
+}
+
+/* ================================================================== */
 /*  Feature Toggle                                                     */
 /* ================================================================== */
 async function toggleFeature(featureId, enabled) {
@@ -505,10 +521,11 @@ async function toggleFeature(featureId, enabled) {
   const res = await api('POST', '/features', { feature_id: featureId, enabled: enabled });
 
   if (res && !res.error) {
-    // Update local state
+    // Update local state (features may be dict or array)
     if (state.status && state.status.features) {
-      const f = state.status.features.find(f => f.id === featureId);
-      if (f) f.enabled = enabled;
+      if (state.status.features[featureId]) {
+        state.status.features[featureId].enabled = enabled;
+      }
     }
     showToast(enabled ? 'Enabled' : 'Disabled', 'success');
   } else {
@@ -520,22 +537,22 @@ async function toggleFeature(featureId, enabled) {
 }
 
 /* ================================================================== */
-/*  Enable All Recommended                                             */
+/*  Set Tier                                                           */
 /* ================================================================== */
-async function enableAllRecommended() {
-  const btn = document.getElementById('tierBtn');
+async function setTier(tierLevel) {
+  const btn = document.getElementById('tierBtn' + tierLevel);
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Enabling...';
   }
 
-  const res = await api('POST', '/tier', { tier: 1 });
+  const res = await api('POST', '/tier', { tier: tierLevel });
 
   if (res && !res.error) {
     // Reload status to get updated feature states
     const statusData = await api('GET', '/status');
     if (!statusData.error) state.status = statusData;
-    showToast('All recommended features enabled', 'success');
+    showToast('Tier ' + tierLevel + ' features enabled', 'success');
   } else {
     showToast('Failed to enable tier', 'error');
   }
@@ -568,22 +585,23 @@ function render() {
 
   const status = state.status || {};
   const detect = state.detect || {};
-  const features = status.features || [];
-  const tier1 = features.filter(f => f.tier === 1 || f.tier === 'recommended');
-  const tier2 = features.filter(f => f.tier === 2 || f.tier === 'power');
+  const features = featuresAsArray(status.features);
+  const tier1 = features.filter(f => f.tier === 1);
+  const tier2 = features.filter(f => f.tier === 2);
 
   // Provider info
-  const provider = status.provider || detect.provider || 'unknown';
-  const model = status.model || status.default_model || '';
-  const connected = status.status === 'ready' || status.configured === true || !!status.provider;
+  const provider = status.provider || 'unknown';
+  const model = status.model || '';
+  const connected = status.phase === 'ready' || !!status.provider;
 
   card.innerHTML = renderHeader()
     + renderProvider(provider, model, connected)
     + '<hr class="section-divider">'
     + renderFeatureSection('Recommended', tier1, features.length > 0)
-    + renderTierAction(tier1)
+    + renderTierAction(1, tier1)
     + '<hr class="section-divider">'
     + renderFeatureSection('Power User', tier2, features.length > 0)
+    + renderTierAction(2, tier2)
     + '<hr class="section-divider">'
     + renderEnvironment(detect)
     + renderFooter();
@@ -674,30 +692,36 @@ function renderFeatureSection(title, features, hasFeatures) {
 /* ------------------------------------------------------------------ */
 /*  Tier Action                                                        */
 /* ------------------------------------------------------------------ */
-function renderTierAction(tier1Features) {
-  const allEnabled = tier1Features.length > 0 && tier1Features.every(f => f.enabled);
+function renderTierAction(tierLevel, tierFeatures) {
+  if (tierFeatures.length === 0) return '';
+
+  const allEnabled = tierFeatures.every(f => f.enabled);
+  const label = tierLevel === 1 ? 'Recommended' : 'Power User';
 
   if (allEnabled) {
     return '<div class="tier-action">'
       + '<div style="text-align: center; font-size: 13px; color: var(--success); padding: 8px 0;">'
-      + 'All recommended features enabled'
+      + 'All ' + esc(label.toLowerCase()) + ' features enabled'
       + '</div></div>';
   }
 
   return '<div class="tier-action">'
-    + '<button class="btn-tier" id="tierBtn" onclick="enableAllRecommended()">'
-    + 'Enable All Recommended</button></div>';
+    + '<button class="btn-tier" id="tierBtn' + tierLevel + '" onclick="setTier(' + tierLevel + ')">'
+    + 'Enable All ' + esc(label) + '</button></div>';
 }
 
 /* ------------------------------------------------------------------ */
 /*  Environment                                                        */
 /* ------------------------------------------------------------------ */
 function renderEnvironment(detect) {
+  // API returns nested objects: { git: { installed, configured }, github: { handle }, ... }
   const tools = [
-    { name: 'Git', key: 'git_available', fallback: 'git_email' },
-    { name: 'Tailscale', key: 'tailscale_available', fallback: 'tailscale_hostname' },
-    { name: 'CLI', key: 'cli_installed', fallback: 'cli_available' },
-    { name: 'TUI', key: 'tui_installed', fallback: 'tui_available' },
+    { name: 'Git', found: detect.git && detect.git.installed },
+    { name: 'GitHub', found: detect.github && detect.github.configured, detail: detect.github && detect.github.handle },
+    { name: 'Tailscale', found: detect.tailscale && detect.tailscale.installed, detail: detect.tailscale && detect.tailscale.ip },
+    { name: 'Amplifier CLI', found: detect.amplifier_cli && detect.amplifier_cli.installed },
+    { name: 'Anthropic Key', found: detect.api_keys && detect.api_keys.anthropic },
+    { name: 'OpenAI Key', found: detect.api_keys && detect.api_keys.openai },
   ];
 
   let html = '<div class="section">'
@@ -705,14 +729,11 @@ function renderEnvironment(detect) {
     + '<div class="env-grid">';
 
   tools.forEach(t => {
-    // Check primary key, then fallback key, to determine presence
-    const found = detect[t.key] === true
-      || (detect[t.key] === undefined && !!detect[t.fallback]);
-    const badgeClass = found ? 'found' : 'missing';
-    const badgeLabel = found ? 'Found' : 'Not found';
+    const badgeClass = t.found ? 'found' : 'missing';
+    const badgeLabel = t.found ? (t.detail || 'Found') : 'Not found';
     html += '<div class="env-item">'
       + '<span class="env-name">' + esc(t.name) + '</span>'
-      + '<span class="env-badge ' + badgeClass + '">' + badgeLabel + '</span>'
+      + '<span class="env-badge ' + badgeClass + '">' + esc(badgeLabel) + '</span>'
       + '</div>';
   });
 
