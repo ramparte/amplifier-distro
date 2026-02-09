@@ -25,6 +25,7 @@ from amplifier_distro.conventions import (
     KEYS_FILENAME,
     SETTINGS_FILENAME,
 )
+from amplifier_distro.docs_config import DOC_POINTERS, get_docs_for_category
 from amplifier_distro.features import FEATURES, PROVIDERS, detect_provider
 from amplifier_distro.server.app import AppManifest
 
@@ -348,6 +349,28 @@ async def change_provider(req: ProviderRequest) -> dict[str, Any]:
         "status": "ok",
         "provider": provider_id,
         "model": provider.default_model,
+    }
+
+
+@router.get("/docs")
+async def get_docs(category: str | None = None) -> dict[str, Any]:
+    """Return documentation pointers, optionally filtered by category."""
+    if category:
+        pointers = get_docs_for_category(category)
+    else:
+        pointers = list(DOC_POINTERS.values())
+
+    return {
+        "docs": [
+            {
+                "id": dp.id,
+                "title": dp.title,
+                "url": dp.url,
+                "description": dp.description,
+                "category": dp.category,
+            }
+            for dp in pointers
+        ]
     }
 
 
