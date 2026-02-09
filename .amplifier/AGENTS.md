@@ -7,7 +7,7 @@ docs are in `planning/`, design decisions in `OPINIONS.md`, roadmap in `ROADMAP.
 full implementation spec in `IMPLEMENTATION.md`, and session-resumption context in
 `context/DISTRO-PROJECT-CONTEXT.md`. Read that context file first.
 
-**Status:** Phase 0 IN PROGRESS. Core architecture built, quickstart flow working.
+**Status:** Phase 0 COMPLETE. Quickstart-to-hello-world flow working end-to-end in Docker. 409 tests pass.
 
 ---
 

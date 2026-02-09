@@ -116,11 +116,25 @@ def initialize(
 async def on_startup() -> None:
     """Initialize the Slack bridge on server startup."""
     initialize()
-    logger.info(f"Slack bridge initialized (mode: {_state['config'].mode})")
+    config: SlackConfig = _state["config"]
+    logger.info(f"Slack bridge initialized (mode: {config.mode})")
+
+    # Start Socket Mode connection if configured
+    if config.socket_mode and config.is_configured:
+        from .socket_mode import SocketModeAdapter
+
+        adapter = SocketModeAdapter(config, _state["event_handler"])
+        _state["socket_adapter"] = adapter
+        await adapter.start()
+        logger.info("Socket Mode connection started")
 
 
 async def on_shutdown() -> None:
     """Clean up the Slack bridge on server shutdown."""
+    # Stop Socket Mode connection if running
+    if "socket_adapter" in _state:
+        await _state["socket_adapter"].stop()
+
     if "session_manager" in _state:
         # End all active sessions
         for mapping in _state["session_manager"].list_active():
