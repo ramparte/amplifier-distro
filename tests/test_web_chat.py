@@ -1,13 +1,13 @@
 """Web Chat App Acceptance Tests
 
-These tests validate the web-chat server app which wraps
-the amplifier-web interface.
+These tests validate the web-chat server app which serves a
+self-contained chat UI and provides API endpoints.
 
 Exit criteria verified:
 1. Manifest has correct name, description, and router
-2. Index endpoint returns status (available or not_installed)
-3. Status endpoint returns availability boolean
-4. When amplifier-web is not installed, response includes install hint
+2. Index endpoint serves HTML chat interface
+3. API session endpoint returns connection status
+4. API chat endpoint accepts messages and returns responses
 5. Server discovers both web-chat and install-wizard apps
 """
 
@@ -62,69 +62,97 @@ class TestWebChatManifest:
 
 
 class TestWebChatIndexEndpoint:
-    """Verify GET /apps/web-chat/ returns status.
+    """Verify GET /apps/web-chat/ serves the chat HTML page.
 
-    Antagonist note: The index endpoint must always return a valid
-    status regardless of whether amplifier-web is installed. The
-    status field is the key discriminator.
+    Antagonist note: The index endpoint must serve an HTML page
+    that contains the chat interface. This is the landing page
+    after quickstart completes.
     """
 
     def test_index_returns_200(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/")
         assert response.status_code == 200
 
-    def test_index_returns_app_name(self, webchat_client: TestClient):
-        data = webchat_client.get("/apps/web-chat/").json()
-        assert data["app"] == "web-chat"
+    def test_index_returns_html(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/")
+        assert "text/html" in response.headers["content-type"]
 
-    def test_index_returns_valid_status(self, webchat_client: TestClient):
-        data = webchat_client.get("/apps/web-chat/").json()
-        assert data["status"] in ("available", "not_installed")
+    def test_index_contains_amplifier_title(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/")
+        assert "Amplifier" in response.text
 
-    def test_index_returns_message(self, webchat_client: TestClient):
-        data = webchat_client.get("/apps/web-chat/").json()
+    def test_index_contains_chat_area(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/")
+        assert "chatArea" in response.text
+
+    def test_index_contains_settings_link(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/")
+        assert "/static/settings.html" in response.text
+
+    def test_index_contains_message_input(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/")
+        assert "messageInput" in response.text
+
+
+class TestWebChatSessionAPI:
+    """Verify GET /apps/web-chat/api/session returns status."""
+
+    def test_session_returns_200(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/api/session")
+        assert response.status_code == 200
+
+    def test_session_returns_connected_bool(self, webchat_client: TestClient):
+        data = webchat_client.get("/apps/web-chat/api/session").json()
+        assert "connected" in data
+        assert isinstance(data["connected"], bool)
+
+    def test_session_not_connected_by_default(self, webchat_client: TestClient):
+        data = webchat_client.get("/apps/web-chat/api/session").json()
+        assert data["connected"] is False
+
+    def test_session_returns_message(self, webchat_client: TestClient):
+        data = webchat_client.get("/apps/web-chat/api/session").json()
         assert "message" in data
         assert len(data["message"]) > 0
 
 
-class TestWebChatStatusEndpoint:
-    """Verify GET /apps/web-chat/status returns availability."""
+class TestWebChatChatAPI:
+    """Verify POST /apps/web-chat/api/chat accepts messages.
 
-    def test_status_returns_200(self, webchat_client: TestClient):
-        response = webchat_client.get("/apps/web-chat/status")
-        assert response.status_code == 200
-
-    def test_status_returns_available_bool(self, webchat_client: TestClient):
-        data = webchat_client.get("/apps/web-chat/status").json()
-        assert "available" in data
-        assert isinstance(data["available"], bool)
-
-
-class TestWebChatNotInstalled:
-    """Verify behavior when amplifier-web is not installed.
-
-    Antagonist note: In test environments, amplifier-web is typically
-    not installed. The app must gracefully handle this and provide
-    clear installation instructions.
+    Antagonist note: Even without a connected session, the chat
+    endpoint must accept messages and return a well-formed response
+    so the UI can display feedback.
     """
 
-    def test_not_installed_includes_install_hint(self, webchat_client: TestClient):
-        """When amplifier-web is not installed, install_hint should be present."""
-        from amplifier_distro.server.apps.web_chat import _web_available
+    def test_chat_returns_200(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello"},
+        )
+        assert response.status_code == 200
 
-        if _web_available:
-            pytest.skip("amplifier-web is installed; cannot test not_installed path")
-        data = webchat_client.get("/apps/web-chat/").json()
-        assert data["status"] == "not_installed"
-        assert "install_hint" in data
+    def test_chat_returns_response_text(self, webchat_client: TestClient):
+        data = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello"},
+        ).json()
+        assert "response" in data
+        assert isinstance(data["response"], str)
+        assert len(data["response"]) > 0
 
-    def test_not_installed_status_is_false(self, webchat_client: TestClient):
-        from amplifier_distro.server.apps.web_chat import _web_available
+    def test_chat_echoes_message(self, webchat_client: TestClient):
+        data = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "test message"},
+        ).json()
+        assert data.get("echo") == "test message"
 
-        if _web_available:
-            pytest.skip("amplifier-web is installed; cannot test not_installed path")
-        data = webchat_client.get("/apps/web-chat/status").json()
-        assert data["available"] is False
+    def test_chat_reports_session_not_connected(self, webchat_client: TestClient):
+        data = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello"},
+        ).json()
+        assert data.get("session_connected") is False
 
 
 class TestAppDiscovery:
