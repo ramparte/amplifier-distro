@@ -1,15 +1,18 @@
 """Slack Bridge Setup Module - guided installation and configuration.
 
+Follows Opinion #11: secrets in keys.yaml, config in distro.yaml.
+
 Provides API routes for:
 - Checking setup status (what's configured, what's missing)
 - Validating tokens against the Slack API
 - Discovering channels for hub selection
-- Persisting configuration to ~/.amplifier/slack.yaml
+- Persisting secrets to ~/.amplifier/keys.yaml (chmod 600)
+- Persisting config to ~/.amplifier/distro.yaml (slack: section)
 - Returning the Slack App Manifest for one-click app creation
 - End-to-end connectivity test
 
 The setup flow:
-1. User creates Slack app (using manifest or manually)
+1. User creates Slack app (using manifest)
 2. POST /setup/validate with bot_token + app_token
 3. GET /setup/channels to pick the hub channel
 4. POST /setup/configure to persist everything
@@ -28,13 +31,11 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from amplifier_distro.conventions import AMPLIFIER_HOME
+from amplifier_distro.conventions import AMPLIFIER_HOME, KEYS_FILENAME
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/setup", tags=["slack-setup"])
-
-SLACK_CONFIG_FILENAME = "slack.yaml"
 
 # --- The Slack App Manifest (for one-click app creation) ---
 
@@ -100,33 +101,74 @@ class TestRequest(BaseModel):
     channel_id: str = ""
 
 
-# --- Config file helpers ---
+# --- Persistence helpers (Opinion #11 pattern) ---
 
 
-def _config_path() -> Path:
-    return Path(AMPLIFIER_HOME).expanduser() / SLACK_CONFIG_FILENAME
+def _amplifier_home() -> Path:
+    return Path(AMPLIFIER_HOME).expanduser()
 
 
-def load_slack_config() -> dict[str, Any]:
-    """Load Slack config from ~/.amplifier/slack.yaml."""
-    path = _config_path()
+def _keys_path() -> Path:
+    return _amplifier_home() / KEYS_FILENAME
+
+
+def _distro_config_path() -> Path:
+    return _amplifier_home() / "distro.yaml"
+
+
+def load_keys() -> dict[str, Any]:
+    """Load ~/.amplifier/keys.yaml."""
+    path = _keys_path()
     if not path.exists():
         return {}
     try:
         data = yaml.safe_load(path.read_text())
         return data if isinstance(data, dict) else {}
     except Exception:
-        logger.warning("Failed to read slack.yaml", exc_info=True)
+        logger.warning("Failed to read keys.yaml", exc_info=True)
         return {}
 
 
-def save_slack_config(config: dict[str, Any]) -> Path:
-    """Save Slack config to ~/.amplifier/slack.yaml (chmod 600)."""
-    path = _config_path()
+def _save_keys(updates: dict[str, str]) -> None:
+    """Merge updates into keys.yaml (chmod 600)."""
+    path = _keys_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+
+    existing: dict[str, str] = {}
+    if path.exists():
+        existing = yaml.safe_load(path.read_text()) or {}
+
+    existing.update({k: v for k, v in updates.items() if v})
+    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False))
     path.chmod(0o600)
-    return path
+
+
+def load_distro_slack() -> dict[str, Any]:
+    """Load the slack: section from distro.yaml."""
+    path = _distro_config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("slack"), dict):
+            return data["slack"]
+        return {}
+    except Exception:
+        logger.warning("Failed to read distro.yaml slack section", exc_info=True)
+        return {}
+
+
+def _save_distro_slack(slack_config: dict[str, Any]) -> None:
+    """Merge slack config into distro.yaml (preserves other sections)."""
+    path = _distro_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict[str, Any] = {}
+    if path.exists():
+        existing = yaml.safe_load(path.read_text()) or {}
+
+    existing["slack"] = slack_config
+    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False))
 
 
 # --- Slack API helpers ---
@@ -165,7 +207,6 @@ async def _validate_app_token(token: str) -> dict[str, Any]:
     data = await _slack_api("apps.connections.open", token)
     if not data.get("ok"):
         return {"valid": False, "error": data.get("error", "unknown")}
-    # We got a WebSocket URL, meaning the token works. We don't connect.
     return {"valid": True}
 
 
@@ -198,29 +239,27 @@ async def _list_channels(token: str, *, limit: int = 200) -> list[dict[str, Any]
 
 @router.get("/status")
 async def setup_status() -> dict[str, Any]:
-    """Check what's configured and what's missing.
+    """Check what's configured and what's missing."""
+    keys = load_keys()
+    cfg = load_distro_slack()
 
-    Returns a checklist of setup steps with pass/fail status.
-    """
-    config = load_slack_config()
-    env_bot = os.environ.get("SLACK_BOT_TOKEN", "")
-    env_app = os.environ.get("SLACK_APP_TOKEN", "")
-
-    bot_token = config.get("bot_token", "") or env_bot
-    app_token = config.get("app_token", "") or env_app
-    hub_channel_id = config.get("hub_channel_id", "") or os.environ.get(
-        "SLACK_HUB_CHANNEL_ID", ""
+    bot_token = os.environ.get("SLACK_BOT_TOKEN", "") or keys.get("SLACK_BOT_TOKEN", "")
+    app_token = os.environ.get("SLACK_APP_TOKEN", "") or keys.get("SLACK_APP_TOKEN", "")
+    hub_channel_id = os.environ.get("SLACK_HUB_CHANNEL_ID", "") or cfg.get(
+        "hub_channel_id", ""
     )
-    socket_mode = config.get("socket_mode", False) or os.environ.get(
-        "SLACK_SOCKET_MODE", ""
-    ).lower() in ("1", "true", "yes")
+    socket_mode = bool(
+        os.environ.get("SLACK_SOCKET_MODE", "").lower() in ("1", "true", "yes")
+        or cfg.get("socket_mode", False)
+    )
 
     steps = {
         "bot_token": bool(bot_token),
         "app_token": bool(app_token),
         "hub_channel": bool(hub_channel_id),
         "socket_mode": socket_mode,
-        "config_persisted": _config_path().exists(),
+        "keys_persisted": bool(keys.get("SLACK_BOT_TOKEN")),
+        "config_persisted": bool(cfg.get("hub_channel_id")),
     }
     all_required = steps["bot_token"] and steps["hub_channel"]
     if socket_mode:
@@ -229,7 +268,8 @@ async def setup_status() -> dict[str, Any]:
     return {
         "configured": all_required,
         "steps": steps,
-        "config_path": str(_config_path()),
+        "keys_path": str(_keys_path()),
+        "config_path": str(_distro_config_path()),
         "mode": "socket"
         if socket_mode and app_token
         else "events-api"
@@ -240,11 +280,7 @@ async def setup_status() -> dict[str, Any]:
 
 @router.post("/validate")
 async def validate_tokens(req: ValidateRequest) -> dict[str, Any]:
-    """Validate Slack tokens against the API.
-
-    Tests bot token via auth.test and app token via apps.connections.open.
-    Returns detailed info about what the tokens can do.
-    """
+    """Validate Slack tokens against the API."""
     if not req.bot_token.startswith("xoxb-"):
         raise HTTPException(
             status_code=400,
@@ -253,11 +289,8 @@ async def validate_tokens(req: ValidateRequest) -> dict[str, Any]:
         )
 
     result: dict[str, Any] = {}
-
-    # Validate bot token
     result["bot_token"] = await _validate_bot_token(req.bot_token)
 
-    # Validate app token if provided
     if req.app_token:
         if not req.app_token.startswith("xapp-"):
             raise HTTPException(
@@ -279,14 +312,12 @@ async def validate_tokens(req: ValidateRequest) -> dict[str, Any]:
 
 @router.get("/channels")
 async def list_channels(bot_token: str = "") -> dict[str, Any]:
-    """List channels visible to the bot for hub channel selection.
-
-    Pass bot_token as query param, or it will read from saved config / env.
-    """
+    """List channels visible to the bot for hub channel selection."""
+    keys = load_keys()
     token = (
         bot_token
-        or load_slack_config().get("bot_token", "")
         or os.environ.get("SLACK_BOT_TOKEN", "")
+        or keys.get("SLACK_BOT_TOKEN", "")
     )
     if not token:
         raise HTTPException(
@@ -295,7 +326,6 @@ async def list_channels(bot_token: str = "") -> dict[str, Any]:
         )
 
     channels = await _list_channels(token)
-    # Sort: channels the bot is a member of first, then by name
     channels.sort(key=lambda c: (not c["is_member"], c["name"]))
 
     return {
@@ -308,28 +338,30 @@ async def list_channels(bot_token: str = "") -> dict[str, Any]:
 
 @router.post("/configure")
 async def configure(req: ConfigureRequest) -> dict[str, Any]:
-    """Save Slack configuration to ~/.amplifier/slack.yaml.
+    """Save Slack secrets to keys.yaml and config to distro.yaml.
 
-    Also sets environment variables for the current process so the
-    bridge can pick them up without restart.
+    Follows Opinion #11: secrets and config in standard locations.
+    Also sets environment variables for the current process.
     """
-    # Build config dict (only include non-empty values)
-    config: dict[str, Any] = {}
-    if req.bot_token:
-        config["bot_token"] = req.bot_token
-    if req.app_token:
-        config["app_token"] = req.app_token
-    if req.signing_secret:
-        config["signing_secret"] = req.signing_secret
+    # 1. Persist secrets to keys.yaml
+    _save_keys(
+        {
+            "SLACK_BOT_TOKEN": req.bot_token,
+            "SLACK_APP_TOKEN": req.app_token,
+            "SLACK_SIGNING_SECRET": req.signing_secret,
+        }
+    )
+
+    # 2. Persist config to distro.yaml slack: section
+    slack_cfg: dict[str, Any] = {
+        "hub_channel_name": req.hub_channel_name,
+        "socket_mode": req.socket_mode,
+    }
     if req.hub_channel_id:
-        config["hub_channel_id"] = req.hub_channel_id
-    config["hub_channel_name"] = req.hub_channel_name
-    config["socket_mode"] = req.socket_mode
+        slack_cfg["hub_channel_id"] = req.hub_channel_id
+    _save_distro_slack(slack_cfg)
 
-    # Persist to disk
-    path = save_slack_config(config)
-
-    # Set env vars for current process (bridge reads from env)
+    # 3. Set env vars for current process (bridge reads from env)
     env_map = {
         "SLACK_BOT_TOKEN": req.bot_token,
         "SLACK_APP_TOKEN": req.app_token,
@@ -344,24 +376,23 @@ async def configure(req: ConfigureRequest) -> dict[str, Any]:
 
     return {
         "status": "saved",
-        "config_path": str(path),
+        "keys_path": str(_keys_path()),
+        "config_path": str(_distro_config_path()),
         "mode": "socket" if req.socket_mode else "events-api",
     }
 
 
 @router.post("/test")
 async def test_connection(req: TestRequest) -> dict[str, Any]:
-    """Send a test message to verify end-to-end connectivity.
+    """Send a test message to verify end-to-end connectivity."""
+    keys = load_keys()
+    cfg = load_distro_slack()
 
-    Posts a message to the hub channel (or specified channel) and
-    confirms it was delivered.
-    """
-    config = load_slack_config()
-    token = config.get("bot_token", "") or os.environ.get("SLACK_BOT_TOKEN", "")
+    token = os.environ.get("SLACK_BOT_TOKEN", "") or keys.get("SLACK_BOT_TOKEN", "")
     channel = (
         req.channel_id
-        or config.get("hub_channel_id", "")
         or os.environ.get("SLACK_HUB_CHANNEL_ID", "")
+        or cfg.get("hub_channel_id", "")
     )
 
     if not token:
@@ -369,7 +400,6 @@ async def test_connection(req: TestRequest) -> dict[str, Any]:
     if not channel:
         raise HTTPException(status_code=400, detail="No channel specified")
 
-    # Post a test message
     data = await _slack_api(
         "chat.postMessage",
         token,
@@ -403,11 +433,7 @@ async def test_connection(req: TestRequest) -> dict[str, Any]:
 
 @router.get("/manifest")
 async def get_manifest() -> dict[str, Any]:
-    """Return the Slack App Manifest for one-click app creation.
-
-    Users can paste this YAML into https://api.slack.com/apps > Create New App
-    > From a manifest, to get all scopes and events pre-configured.
-    """
+    """Return the Slack App Manifest for one-click app creation."""
     manifest_yaml = yaml.dump(
         SLACK_APP_MANIFEST, default_flow_style=False, sort_keys=False
     )
@@ -426,5 +452,5 @@ async def get_manifest() -> dict[str, Any]:
             "   > App-Level Tokens (create one with 'connections:write')\n"
             "9. Use /setup/configure to save both tokens"
         ),
-        "create_url": ("https://api.slack.com/apps?new_app=1"),
+        "create_url": "https://api.slack.com/apps?new_app=1",
     }

@@ -50,6 +50,21 @@ class InterfacesConfig(BaseModel):
     gui: InterfaceEntry = Field(default_factory=InterfaceEntry)
 
 
+class SlackConfig(BaseModel):
+    """Slack bridge settings (non-secret).
+
+    Secrets (bot_token, app_token) live in keys.yaml per Opinion #11.
+    """
+
+    hub_channel_id: str = ""
+    hub_channel_name: str = "amplifier"
+    socket_mode: bool = True
+    thread_per_session: bool = True
+    allow_breakout: bool = True
+    channel_prefix: str = "amp-"
+    bot_name: str = "slackbridge"
+
+
 class DistroConfig(BaseModel):
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
@@ -58,3 +73,4 @@ class DistroConfig(BaseModel):
     preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     interfaces: InterfacesConfig = Field(default_factory=InterfacesConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    slack: SlackConfig = Field(default_factory=SlackConfig)

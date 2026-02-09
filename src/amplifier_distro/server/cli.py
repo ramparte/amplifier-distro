@@ -27,6 +27,12 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -
     import uvicorn
 
     from amplifier_distro.server.app import create_server
+    from amplifier_distro.server.services import init_services
+
+    # Initialize shared services BEFORE creating the server.
+    # All apps will use these via get_services().
+    services = init_services(dev_mode=dev)
+    click.echo(f"Services: backend={type(services.backend).__name__}")
 
     server = create_server(dev_mode=dev)
 

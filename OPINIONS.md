@@ -356,6 +356,57 @@ prerequisites, success criteria for each step).
 
 ---
 
+## 11. Integration Credentials
+
+### The Opinion
+
+Integration secrets (Slack tokens, webhook URLs, service API keys) go
+in `keys.yaml` alongside provider keys. Integration *config* (channel
+names, modes, behavior settings) goes in `distro.yaml`. One pattern
+for all integrations, no per-integration config files.
+
+### What This Means
+
+- **All secrets in one place.** `keys.yaml` is chmod 600, excluded
+  from backup, and is the single file a user needs to protect. Slack
+  bot tokens sit next to Anthropic API keys. One file to audit.
+- **All config in one place.** `distro.yaml` already has identity,
+  bundle, interfaces. Adding `slack:` (and future `teams:`, `discord:`)
+  keeps everything in the same file that `amp distro status` reads.
+- **No per-integration config files.** No `slack.yaml`, no `teams.yaml`.
+  These fragment the config surface and force users to remember which
+  file holds what. One secrets file, one config file.
+- **Setup pages follow the quickstart pattern.** Each integration gets
+  a setup page at `/static/<name>-setup.html` that guides token
+  collection, validates against the service API, and persists to the
+  standard locations. Same design tokens as quickstart.html.
+- **Minimize user steps.** Provide a Slack App Manifest so app
+  creation is paste-and-click. Auto-detect channels. Validate tokens
+  live. The user should go from zero to working bridge in under 3
+  minutes.
+
+### The Convention
+
+Secrets in `~/.amplifier/keys.yaml`:
+```yaml
+ANTHROPIC_API_KEY: sk-ant-...
+SLACK_BOT_TOKEN: xoxb-...
+SLACK_APP_TOKEN: xapp-...
+```
+
+Config in `~/.amplifier/distro.yaml`:
+```yaml
+slack:
+  hub_channel_id: C07XXXXXXXX
+  hub_channel_name: amplifier
+  socket_mode: true
+```
+
+Setup page at: `/static/slack-setup.html`
+Setup API at: `/apps/slack/setup/*`
+
+---
+
 ## What These Opinions Replace
 
 | Before (Many Choices) | After (One Choice) |

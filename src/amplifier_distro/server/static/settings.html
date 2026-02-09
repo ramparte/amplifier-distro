@@ -604,6 +604,8 @@ function render() {
     + renderTierAction(2, tier2)
     + '<hr class="section-divider">'
     + renderEnvironment(detect)
+    + '<hr class="section-divider">'
+    + renderIntegrations()
     + renderFooter();
 
   bindEvents();
@@ -739,6 +741,24 @@ function renderEnvironment(detect) {
 
   html += '</div></div>';
   return html;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Integrations                                                       */
+/* ------------------------------------------------------------------ */
+function renderIntegrations() {
+  return '<div class="section">'
+    + '<div class="section-title">Integrations</div>'
+    + '<div class="feature-list">'
+    + '<a href="/static/slack-setup.html" style="text-decoration: none; color: inherit;">'
+    + '<div class="feature-row" style="cursor: pointer;">'
+    + '<div class="feature-info">'
+    + '<div class="feature-name">Slack Bridge</div>'
+    + '<div class="feature-desc">Connect a Slack workspace to Amplifier sessions</div>'
+    + '</div>'
+    + '<span style="color: var(--accent); font-size: 13px;">Configure &rarr;</span>'
+    + '</div></a>'
+    + '</div></div>';
 }
 
 /* ------------------------------------------------------------------ */

@@ -7,7 +7,8 @@ Architecture:
     DistroServer
         /api/health          - Health check
         /api/config          - Distro configuration
-        /api/bridge          - Amplifier Bridge API (session management)
+        /api/sessions        - Unified session list (all apps)
+        /api/bridge          - Amplifier Bridge API (session creation)
         /apps/<name>/...     - Mounted app routes
 
 Apps are Python modules that expose:
@@ -16,6 +17,9 @@ Apps are Python modules that expose:
     - description: str     - Human-readable description
     - on_startup()         - Optional async startup hook
     - on_shutdown()        - Optional async shutdown hook
+
+Shared services (session backend, etc.) are available to all apps
+via `from amplifier_distro.server.services import get_services`.
 """
 
 from __future__ import annotations
@@ -225,25 +229,46 @@ class DistroServer:
     def _setup_bridge_routes(self) -> None:
         """Set up Bridge API routes for session management."""
 
+        @self._core_router.get("/sessions")
+        async def list_sessions() -> list[dict[str, Any]]:
+            """List all active sessions across all apps."""
+            from amplifier_distro.server.services import get_services
+
+            try:
+                services = get_services()
+            except RuntimeError:
+                return []
+
+            return [
+                {
+                    "session_id": s.session_id,
+                    "project_id": s.project_id,
+                    "working_dir": s.working_dir,
+                    "is_active": s.is_active,
+                    "created_by_app": s.created_by_app,
+                    "description": s.description,
+                }
+                for s in services.backend.list_active_sessions()
+            ]
+
         @self._core_router.post("/bridge/session", response_model=None)
         async def create_session(request: Request) -> JSONResponse:
-            """Create an Amplifier session via the Bridge."""
-            from amplifier_distro.bridge import BridgeConfig, LocalBridge
+            """Create an Amplifier session via the shared backend."""
+            from amplifier_distro.server.services import get_services
 
             body = await request.json()
-            bridge = LocalBridge()
-            bridge_config = BridgeConfig(
-                working_dir=Path(body.get("working_dir", ".")),
-                bundle_name=body.get("bundle_name"),
-                run_preflight=body.get("run_preflight", True),
-            )
             try:
-                handle = await bridge.create_session(bridge_config)
+                services = get_services()
+                info = await services.backend.create_session(
+                    working_dir=body.get("working_dir", "."),
+                    bundle_name=body.get("bundle_name"),
+                    description=body.get("description", ""),
+                )
                 return JSONResponse(
                     content={
-                        "session_id": handle.session_id,
-                        "project_id": handle.project_id,
-                        "working_dir": str(handle.working_dir),
+                        "session_id": info.session_id,
+                        "project_id": info.project_id,
+                        "working_dir": info.working_dir,
                     }
                 )
             except Exception as e:
@@ -255,6 +280,8 @@ class DistroServer:
         @self._core_router.post("/bridge/execute")
         async def execute_prompt(request: Request) -> JSONResponse:
             """Execute a prompt on an existing session."""
+            from amplifier_distro.server.services import get_services
+
             body = await request.json()
             session_id = body.get("session_id")
             prompt = body.get("prompt")
@@ -263,15 +290,25 @@ class DistroServer:
                     status_code=400,
                     content={"error": "session_id and prompt are required"},
                 )
-            # Session management (placeholder - needs session store)
-            return JSONResponse(
-                status_code=501,
-                content={
-                    "error": (
-                        "Session execution via HTTP not yet implemented. Use WebSocket."
-                    )
-                },
-            )
+            try:
+                services = get_services()
+                response = await services.backend.send_message(session_id, prompt)
+                return JSONResponse(
+                    content={
+                        "session_id": session_id,
+                        "response": response,
+                    }
+                )
+            except ValueError as e:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": str(e)},
+                )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
 
     def _setup_root_redirect(self) -> None:
         """Phase-aware root redirect: quickstart, web-chat, or settings."""

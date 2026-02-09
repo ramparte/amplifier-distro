@@ -1,14 +1,18 @@
 """Web Chat App Acceptance Tests
 
 These tests validate the web-chat server app which serves a
-self-contained chat UI and provides API endpoints.
+self-contained chat UI and provides API endpoints backed by the
+shared server session backend.
 
 Exit criteria verified:
 1. Manifest has correct name, description, and router
 2. Index endpoint serves HTML chat interface
-3. API session endpoint returns connection status
-4. API chat endpoint accepts messages and returns responses
-5. Server discovers both web-chat and install-wizard apps
+3. Session status reports not-connected before session creation
+4. Session creation works via POST /api/session
+5. Chat endpoint sends messages through the backend
+6. Chat endpoint rejects messages when no session exists
+7. End session endpoint works
+8. Server discovers web-chat app
 """
 
 from pathlib import Path
@@ -18,11 +22,30 @@ from fastapi import APIRouter
 from starlette.testclient import TestClient
 
 from amplifier_distro.server.app import AppManifest, DistroServer
+from amplifier_distro.server.services import (
+    init_services,
+    reset_services,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_services():
+    """Ensure services are reset between tests."""
+    reset_services()
+    yield
+    reset_services()
 
 
 @pytest.fixture
 def webchat_client() -> TestClient:
-    """Create a TestClient with the web-chat app registered."""
+    """Create a TestClient with web-chat app and services initialized."""
+    # Reset module-level state in web_chat
+    import amplifier_distro.server.apps.web_chat as wc
+
+    wc._active_session_id = None
+
+    init_services(dev_mode=True)
+
     from amplifier_distro.server.apps.web_chat import manifest
 
     server = DistroServer()
@@ -95,70 +118,116 @@ class TestWebChatIndexEndpoint:
 
 
 class TestWebChatSessionAPI:
-    """Verify GET /apps/web-chat/api/session returns status."""
+    """Verify session management endpoints."""
 
-    def test_session_returns_200(self, webchat_client: TestClient):
+    def test_session_status_returns_200(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/api/session")
         assert response.status_code == 200
 
-    def test_session_returns_connected_bool(self, webchat_client: TestClient):
-        data = webchat_client.get("/apps/web-chat/api/session").json()
-        assert "connected" in data
-        assert isinstance(data["connected"], bool)
-
-    def test_session_not_connected_by_default(self, webchat_client: TestClient):
+    def test_session_status_not_connected_by_default(self, webchat_client: TestClient):
         data = webchat_client.get("/apps/web-chat/api/session").json()
         assert data["connected"] is False
 
-    def test_session_returns_message(self, webchat_client: TestClient):
+    def test_session_status_has_message(self, webchat_client: TestClient):
         data = webchat_client.get("/apps/web-chat/api/session").json()
         assert "message" in data
         assert len(data["message"]) > 0
 
+    def test_create_session(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/session",
+            json={"working_dir": "/tmp"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "session_id" in data
+        assert data["session_id"].startswith("mock-session-")
+
+    def test_session_status_connected_after_create(self, webchat_client: TestClient):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        data = webchat_client.get("/apps/web-chat/api/session").json()
+        assert data["connected"] is True
+        assert data["session_id"] is not None
+
 
 class TestWebChatChatAPI:
-    """Verify POST /apps/web-chat/api/chat accepts messages.
+    """Verify POST /apps/web-chat/api/chat with backend integration.
 
-    Antagonist note: Even without a connected session, the chat
-    endpoint must accept messages and return a well-formed response
-    so the UI can display feedback.
+    Antagonist note: The chat endpoint requires an active session.
+    Without a session, it returns 409. With a session, messages
+    go through the shared backend.
     """
 
-    def test_chat_returns_200(self, webchat_client: TestClient):
+    def test_chat_without_session_returns_409(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello"},
+        )
+        assert response.status_code == 409
+        data = response.json()
+        assert data["session_connected"] is False
+
+    def test_chat_empty_message_returns_400(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": ""},
+        )
+        assert response.status_code == 400
+
+    def test_chat_with_session_returns_response(self, webchat_client: TestClient):
+        # Create session first
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        # Now chat
         response = webchat_client.post(
             "/apps/web-chat/api/chat",
             json={"message": "hello"},
         )
         assert response.status_code == 200
-
-    def test_chat_returns_response_text(self, webchat_client: TestClient):
-        data = webchat_client.post(
-            "/apps/web-chat/api/chat",
-            json={"message": "hello"},
-        ).json()
+        data = response.json()
         assert "response" in data
         assert isinstance(data["response"], str)
         assert len(data["response"]) > 0
+        assert data["session_connected"] is True
 
-    def test_chat_echoes_message(self, webchat_client: TestClient):
+    def test_chat_response_contains_original_message(self, webchat_client: TestClient):
+        """MockBackend echoes the message back."""
+        webchat_client.post("/apps/web-chat/api/session", json={})
         data = webchat_client.post(
             "/apps/web-chat/api/chat",
             json={"message": "test message"},
         ).json()
-        assert data.get("echo") == "test message"
+        assert "test message" in data["response"]
 
-    def test_chat_reports_session_not_connected(self, webchat_client: TestClient):
-        data = webchat_client.post(
-            "/apps/web-chat/api/chat",
-            json={"message": "hello"},
-        ).json()
-        assert data.get("session_connected") is False
+
+class TestWebChatEndSession:
+    """Verify POST /apps/web-chat/api/end endpoint."""
+
+    def test_end_without_session(self, webchat_client: TestClient):
+        response = webchat_client.post("/apps/web-chat/api/end")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ended"] is False
+
+    def test_end_with_session(self, webchat_client: TestClient):
+        # Create and then end
+        create = webchat_client.post("/apps/web-chat/api/session", json={}).json()
+        response = webchat_client.post("/apps/web-chat/api/end")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ended"] is True
+        assert data["session_id"] == create["session_id"]
+
+    def test_session_disconnected_after_end(self, webchat_client: TestClient):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        webchat_client.post("/apps/web-chat/api/end")
+        data = webchat_client.get("/apps/web-chat/api/session").json()
+        assert data["connected"] is False
 
 
 class TestAppDiscovery:
     """Verify the server discovers apps from the apps directory.
 
-    Antagonist note: Both web-chat and install-wizard must be
+    Antagonist note: web-chat and install-wizard must be
     discoverable from the apps directory so the server can
     auto-register them at startup.
     """
@@ -187,6 +256,18 @@ class TestAppDiscovery:
         found = server.discover_apps(apps_dir)
         assert "web-chat" in found
 
+    def test_discover_finds_voice(self):
+        apps_dir = (
+            Path(__file__).parent.parent
+            / "src"
+            / "amplifier_distro"
+            / "server"
+            / "apps"
+        )
+        server = DistroServer()
+        found = server.discover_apps(apps_dir)
+        assert "voice" in found
+
     def test_both_apps_mount_at_expected_paths(self):
         apps_dir = (
             Path(__file__).parent.parent
@@ -199,8 +280,9 @@ class TestAppDiscovery:
         server.discover_apps(apps_dir)
         assert server.apps["install-wizard"].mount_path == "/apps/install-wizard"
         assert server.apps["web-chat"].mount_path == "/apps/web-chat"
+        assert server.apps["voice"].mount_path == "/apps/voice"
 
-    def test_both_apps_accessible_via_http(self):
+    def test_apps_accessible_via_http(self):
         apps_dir = (
             Path(__file__).parent.parent
             / "src"
@@ -212,9 +294,12 @@ class TestAppDiscovery:
         server.discover_apps(apps_dir)
         client = TestClient(server.app)
 
-        # install-wizard has no index route; /status is the canonical endpoint
+        # install-wizard /status is the canonical endpoint
         wiz = client.get("/apps/install-wizard/status")
         assert wiz.status_code == 200
 
         chat = client.get("/apps/web-chat/")
         assert chat.status_code == 200
+
+        voice = client.get("/apps/voice/")
+        assert voice.status_code == 200

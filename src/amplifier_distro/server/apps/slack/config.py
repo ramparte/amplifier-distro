@@ -1,15 +1,10 @@
 """Configuration for the Slack bridge.
 
-Loaded from ~/.amplifier/slack.yaml (persisted config) with environment
-variable overrides. The bridge can operate in three modes:
-
-- Events API mode: Slack sends webhooks to our endpoint (needs public URL)
-- Socket Mode: We open a WebSocket to Slack (no public URL needed)
-- Simulator mode: No real Slack, uses in-memory client (testing)
+Follows Opinion #11: secrets in keys.yaml, config in distro.yaml.
 
 Priority order (highest wins):
 1. Environment variables (SLACK_BOT_TOKEN, etc.)
-2. Config file (~/.amplifier/slack.yaml)
+2. keys.yaml for secrets, distro.yaml for config
 3. Dataclass defaults
 """
 
@@ -23,52 +18,76 @@ from typing import Any
 
 import yaml
 
-from amplifier_distro.conventions import AMPLIFIER_HOME
+from amplifier_distro.conventions import AMPLIFIER_HOME, KEYS_FILENAME
 
 logger = logging.getLogger(__name__)
 
-SLACK_CONFIG_FILENAME = "slack.yaml"
+
+def _amplifier_home() -> Path:
+    return Path(AMPLIFIER_HOME).expanduser()
 
 
-def _load_config_file() -> dict[str, Any]:
-    """Load ~/.amplifier/slack.yaml if it exists."""
-    path = Path(AMPLIFIER_HOME).expanduser() / SLACK_CONFIG_FILENAME
+def _load_keys() -> dict[str, Any]:
+    """Load ~/.amplifier/keys.yaml if it exists."""
+    path = _amplifier_home() / KEYS_FILENAME
     if not path.exists():
         return {}
     try:
         data = yaml.safe_load(path.read_text())
         return data if isinstance(data, dict) else {}
     except Exception:
-        logger.warning("Failed to read slack.yaml", exc_info=True)
+        logger.warning("Failed to read keys.yaml", exc_info=True)
         return {}
 
 
-def _str_val(
-    env_key: str, file_data: dict[str, Any], file_key: str, default: str = ""
+def _load_distro_slack() -> dict[str, Any]:
+    """Load the slack: section from ~/.amplifier/distro.yaml."""
+    path = _amplifier_home() / "distro.yaml"
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("slack"), dict):
+            return data["slack"]
+        return {}
+    except Exception:
+        logger.warning("Failed to read distro.yaml", exc_info=True)
+        return {}
+
+
+def _str(
+    env_key: str,
+    keys: dict[str, Any],
+    config: dict[str, Any],
+    config_key: str,
+    default: str = "",
 ) -> str:
-    """Get a string value: env > file > default."""
+    """Get string: env > keys.yaml > distro.yaml > default."""
     env = os.environ.get(env_key, "")
     if env:
         return env
-    file_val = file_data.get(file_key, "")
-    if file_val:
-        return str(file_val)
+    k = keys.get(env_key, "")
+    if k:
+        return str(k)
+    c = config.get(config_key, "")
+    if c:
+        return str(c)
     return default
 
 
-def _bool_val(
+def _bool(
     env_key: str,
-    file_data: dict[str, Any],
-    file_key: str,
+    config: dict[str, Any],
+    config_key: str,
     default: bool = False,
 ) -> bool:
-    """Get a bool value: env > file > default."""
+    """Get bool: env > distro.yaml > default."""
     env = os.environ.get(env_key, "")
     if env:
         return env.lower() in ("1", "true", "yes")
-    file_val = file_data.get(file_key)
-    if file_val is not None:
-        return bool(file_val)
+    val = config.get(config_key)
+    if val is not None:
+        return bool(val)
     return default
 
 
@@ -76,56 +95,57 @@ def _bool_val(
 class SlackConfig:
     """Slack bridge configuration."""
 
-    # --- Slack API Credentials ---
+    # --- Slack API Credentials (from keys.yaml) ---
     bot_token: str = ""  # xoxb-... (Bot User OAuth Token)
     app_token: str = ""  # xapp-... (for Socket Mode)
-    signing_secret: str = ""  # For Events API signature verification
+    signing_secret: str = ""  # For Events API verification
 
-    # --- Channel Configuration ---
-    hub_channel_id: str = ""  # Channel ID for the main hub
-    hub_channel_name: str = "amplifier"  # Channel name (used for creation)
+    # --- Channel Configuration (from distro.yaml) ---
+    hub_channel_id: str = ""
+    hub_channel_name: str = "amplifier"
 
-    # --- Behavior ---
-    thread_per_session: bool = True  # New sessions start as threads
-    allow_breakout: bool = True  # Allow promoting threads to channels
-    channel_prefix: str = "amp-"  # Prefix for breakout channel names
-    bot_name: str = "slackbridge"  # Name the bot responds to
+    # --- Behavior (from distro.yaml) ---
+    thread_per_session: bool = True
+    allow_breakout: bool = True
+    channel_prefix: str = "amp-"
+    bot_name: str = "slackbridge"
 
     # --- Session Defaults ---
-    default_bundle: str | None = None  # Override distro.yaml default
-    default_working_dir: str = "~"  # Default cwd for new sessions
+    default_bundle: str | None = None
+    default_working_dir: str = "~"
 
     # --- Limits ---
-    max_message_length: int = 3900  # Slack limit is 4000, leave margin
-    max_sessions_per_user: int = 10  # Concurrent sessions per user
-    response_timeout: int = 300  # Seconds before timing out a response
+    max_message_length: int = 3900
+    max_sessions_per_user: int = 10
+    response_timeout: int = 300
 
     # --- Mode ---
-    simulator_mode: bool = False  # Use in-memory client (no real Slack)
-    socket_mode: bool = False  # Use Socket Mode instead of Events API
+    simulator_mode: bool = False
+    socket_mode: bool = False
 
     @classmethod
     def from_env(cls) -> SlackConfig:
-        """Load config from config file + environment overrides.
+        """Load config from keys.yaml + distro.yaml + env overrides.
 
-        Despite the name (kept for backward compat), this now reads
-        from ~/.amplifier/slack.yaml first, then overrides with any
-        environment variables that are set.
+        Priority: env vars > keys.yaml (secrets) > distro.yaml (config)
+        > dataclass defaults.
         """
-        f = _load_config_file()
+        keys = _load_keys()
+        cfg = _load_distro_slack()
         return cls(
-            bot_token=_str_val("SLACK_BOT_TOKEN", f, "bot_token"),
-            app_token=_str_val("SLACK_APP_TOKEN", f, "app_token"),
-            signing_secret=_str_val("SLACK_SIGNING_SECRET", f, "signing_secret"),
-            hub_channel_id=_str_val("SLACK_HUB_CHANNEL_ID", f, "hub_channel_id"),
-            hub_channel_name=_str_val(
+            bot_token=_str("SLACK_BOT_TOKEN", keys, cfg, "bot_token"),
+            app_token=_str("SLACK_APP_TOKEN", keys, cfg, "app_token"),
+            signing_secret=_str("SLACK_SIGNING_SECRET", keys, cfg, "signing_secret"),
+            hub_channel_id=_str("SLACK_HUB_CHANNEL_ID", {}, cfg, "hub_channel_id"),
+            hub_channel_name=_str(
                 "SLACK_HUB_CHANNEL_NAME",
-                f,
+                {},
+                cfg,
                 "hub_channel_name",
                 "amplifier",
             ),
-            simulator_mode=_bool_val("SLACK_SIMULATOR_MODE", f, "simulator_mode"),
-            socket_mode=_bool_val("SLACK_SOCKET_MODE", f, "socket_mode"),
+            simulator_mode=_bool("SLACK_SIMULATOR_MODE", cfg, "simulator_mode"),
+            socket_mode=_bool("SLACK_SOCKET_MODE", cfg, "socket_mode"),
         )
 
     @property

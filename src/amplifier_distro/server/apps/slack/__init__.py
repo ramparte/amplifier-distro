@@ -63,6 +63,11 @@ def initialize(
 
     This is separated from on_startup() so it can be called directly
     in tests with injected dependencies.
+
+    Backend resolution order:
+    1. Explicit backend parameter (tests)
+    2. Shared server services backend (production)
+    3. Fallback: create own MockBackend/BridgeBackend (standalone)
     """
     if config is None:
         config = SlackConfig.from_env()
@@ -81,14 +86,22 @@ def initialize(
 
             client = HttpSlackClient(config.bot_token)
 
-    # Select backend implementation
+    # Select backend: prefer shared server backend
     if backend is None:
-        if config.simulator_mode:
-            backend = MockBackend()
-        else:
-            from .backend import BridgeBackend
+        try:
+            from amplifier_distro.server.services import get_services
 
-            backend = BridgeBackend()
+            backend = get_services().backend
+            logger.info("Slack bridge using shared server backend")
+        except RuntimeError:
+            # Services not initialized (standalone mode or tests)
+            if config.simulator_mode:
+                backend = MockBackend()
+            else:
+                from .backend import BridgeBackend
+
+                backend = BridgeBackend()
+            logger.info("Slack bridge using own backend (standalone mode)")
 
     session_manager = SlackSessionManager(client, backend, config)
     command_handler = CommandHandler(session_manager, discovery, config)
