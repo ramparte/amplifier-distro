@@ -46,7 +46,7 @@ PROVIDERS: dict[str, Provider] = {
         id="openai",
         name="OpenAI",
         description="GPT models (GPT-4o, o3, Codex)",
-        include="foundation:providers/openai-gpt4o",
+        include="foundation:providers/openai-gpt",
         key_prefix="sk-",
         env_var="OPENAI_API_KEY",
         default_model="gpt-4o",
@@ -90,10 +90,7 @@ FEATURES: dict[str, Feature] = {
         name="Recipes",
         description="Multi-step workflow orchestration with approval gates",
         tier=2,
-        includes=[
-            "git+https://github.com/microsoft/amplifier-bundle-recipes@main"
-            "#subdirectory=behaviors/recipes.yaml"
-        ],
+        includes=["git+https://github.com/microsoft/amplifier-bundle-recipes@main"],
         category="workflow",
     ),
     "stories": Feature(
@@ -101,7 +98,7 @@ FEATURES: dict[str, Feature] = {
         name="Content Studio",
         description="10 specialist agents for docs, presentations, and communications",
         tier=2,
-        includes=["git+https://github.com/ramparte/amplifier-stories@master"],
+        includes=["git+https://github.com/microsoft/amplifier-bundle-stories@main"],
         category="content",
     ),
     "session-discovery": Feature(

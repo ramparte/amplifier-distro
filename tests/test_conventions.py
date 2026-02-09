@@ -69,7 +69,7 @@ class TestCanonicalValues:
         assert conventions.HANDOFF_FILENAME == "handoff.md"
 
     def test_keys_filename(self):
-        assert conventions.KEYS_FILENAME == "keys.env"
+        assert conventions.KEYS_FILENAME == "keys.yaml"
 
     def test_bundle_registry_filename(self):
         assert conventions.BUNDLE_REGISTRY_FILENAME == "bundle-registry.yaml"

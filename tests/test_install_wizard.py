@@ -242,8 +242,21 @@ class TestQuickstartEndpoint:
             "/apps/install-wizard/quickstart",
             json={"api_key": "sk-ant-test123"},
         )
-        keys_path = wizard_home / "keys.env"
+        keys_path = wizard_home / "keys.yaml"
         assert keys_path.exists()
+
+    def test_keys_file_has_yaml_format(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        wizard_client.post(
+            "/apps/install-wizard/quickstart",
+            json={"api_key": "sk-ant-test123"},
+        )
+        import yaml
+
+        keys_path = wizard_home / "keys.yaml"
+        data = yaml.safe_load(keys_path.read_text())
+        assert data["ANTHROPIC_API_KEY"] == "sk-ant-test123"
 
     def test_sets_env_var(self, wizard_client: TestClient):
         wizard_client.post(

@@ -89,22 +89,22 @@ def compute_phase() -> str:
     return "ready"
 
 
-def _write_key_to_env(provider_id: str, api_key: str) -> None:
-    """Write an API key to keys.env (append/update, chmod 600)."""
+def _persist_api_key(provider_id: str, api_key: str) -> None:
+    """Write an API key to keys.yaml (merge/update, chmod 600)."""
     provider = PROVIDERS[provider_id]
     keys_path = _keys_path()
     keys_path.parent.mkdir(parents=True, exist_ok=True)
 
-    lines: list[str] = []
+    # Load existing keys (or start fresh)
+    keys: dict[str, str] = {}
     if keys_path.exists():
-        lines = keys_path.read_text().splitlines()
+        keys = yaml.safe_load(keys_path.read_text()) or {}
 
-    # Remove existing line for this key, then append
+    # Set/update the key
     key_name = provider.env_var
-    lines = [line for line in lines if not line.startswith(f"{key_name}=")]
-    lines.append(f"{key_name}={api_key}")
+    keys[key_name] = api_key
 
-    keys_path.write_text("\n".join(lines) + "\n")
+    keys_path.write_text(yaml.dump(keys, default_flow_style=False, sort_keys=False))
     keys_path.chmod(0o600)
 
     # Also set in current process
@@ -276,7 +276,7 @@ async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
     provider = PROVIDERS[provider_id]
 
     # Steps 1-3: Write key to disk and environment
-    _write_key_to_env(provider_id, req.api_key)
+    _persist_api_key(provider_id, req.api_key)
 
     # Step 4: Generate Tier 0 bundle
     bp = bundle_composer.write(provider_id)
@@ -338,7 +338,7 @@ async def change_provider(req: ProviderRequest) -> dict[str, Any]:
     provider = PROVIDERS[provider_id]
 
     # Write key and set env
-    _write_key_to_env(provider_id, req.api_key)
+    _persist_api_key(provider_id, req.api_key)
 
     # Regenerate bundle with new provider, preserving enabled features
     enabled_features = bundle_composer.get_enabled_features()

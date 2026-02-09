@@ -52,7 +52,7 @@ class TestProviders:
         assert p.id == "openai"
         assert p.name == "OpenAI"
         assert isinstance(p.description, str) and len(p.description) > 0
-        assert p.include == "foundation:providers/openai-gpt4o"
+        assert p.include == "foundation:providers/openai-gpt"
         assert p.key_prefix == "sk-"
         assert p.env_var == "OPENAI_API_KEY"
         assert p.default_model == "gpt-4o"

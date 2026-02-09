@@ -52,7 +52,7 @@ HANDOFF_FILENAME = "handoff.md"
 # Also optionally in project working directory for cross-session context
 
 # --- Bundle ---
-KEYS_FILENAME = "keys.env"
+KEYS_FILENAME = "keys.yaml"
 BUNDLE_REGISTRY_FILENAME = "bundle-registry.yaml"
 SETTINGS_FILENAME = "settings.yaml"
 CACHE_DIR = "cache"  # relative to AMPLIFIER_HOME
