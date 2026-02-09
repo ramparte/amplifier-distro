@@ -59,12 +59,21 @@ RUN mkdir -p \
     /home/testuser/.amplifier/memory \
     /home/testuser/dev
 
+# Create a persistent venv for the project (survives bind-mount overlay)
+RUN python3 -m venv /home/testuser/.distro-venv
+
 # Environment variables
 ENV HOME=/home/testuser
-ENV PATH="/home/testuser/.local/bin:${PATH}"
+ENV PATH="/home/testuser/.distro-venv/bin:/home/testuser/.local/bin:${PATH}"
+ENV VIRTUAL_ENV=/home/testuser/.distro-venv
 ENV UV_CACHE_DIR=/tmp/uv-cache
+ENV PYTHONPATH="/workspace/src"
 
 WORKDIR /workspace
+
+# Entrypoint: install project into venv on first run, then exec command
+COPY --chown=testuser:testuser scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Default: interactive shell
 CMD ["bash"]

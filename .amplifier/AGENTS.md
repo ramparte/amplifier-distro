@@ -7,7 +7,7 @@ docs are in `planning/`, design decisions in `OPINIONS.md`, roadmap in `ROADMAP.
 full implementation spec in `IMPLEMENTATION.md`, and session-resumption context in
 `context/DISTRO-PROJECT-CONTEXT.md`. Read that context file first.
 
-**Status:** Pre-Phase-0. Research/design complete, transitioning to building.
+**Status:** Phase 0 IN PROGRESS. Core architecture built, quickstart flow working.
 
 ---
 
