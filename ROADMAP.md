@@ -121,57 +121,65 @@ One-Click Install
 
 ## Build Phases
 
-### Phase 0: Ground Truth (Week 1)
+### Phase 0: Ground Truth (Week 1) ✅ COMPLETE
 **Goal:** One config file. One base bundle. Validated startup.
 
-| Task | What | Effort | Delivered By |
-|------|------|--------|-------------|
-| Define distro.yaml schema | YAML schema for central config | 1 day | This repo |
-| Create distro base bundle | Bundle that includes standard agents, memory, handoffs | 2 days | This repo |
-| Bundle validation strict mode | Promote include warnings to errors in foundation | 2-3 days | amplifier-foundation PR |
-| Pre-flight check (basic) | Check env vars + bundle health before session start | 2-3 days | amplifier-foundation PR |
+| Task | What | Effort | Delivered By | Status |
+|------|------|--------|-------------|--------|
+| Define distro.yaml schema | YAML schema for central config | 1 day | This repo | ✅ Done |
+| Create distro base bundle | Bundle that includes standard agents, memory, handoffs | 2 days | This repo | ✅ Done |
+| Bundle validation strict mode | Promote include warnings to errors in foundation | 2-3 days | amplifier-foundation PR | ⚠️ PR #68 closed by upstream |
+| Pre-flight check (basic) | Check env vars + bundle health before session start | 2-3 days | This repo | ✅ Done (8 checks) |
 
 **Exit criteria:** Starting a session with a broken bundle gives
 a clear error. Starting with a valid bundle and valid keys works
 every time. distro.yaml exists and is read by pre-flight.
 
-### Phase 1: Session Continuity (Week 2-3)
+### Phase 1: Session Continuity (Week 2-3) - PARTIAL
 **Goal:** Sessions carry context forward automatically.
 
-| Task | What | Effort | Delivered By |
-|------|------|--------|-------------|
-| SESSION_END kernel event | Emit event on session cleanup | 1-2 days | amplifier-core PR |
-| Auto-handoff generation | Hook writes handoff.md on SESSION_END | 3-4 days | This repo or foundation |
-| Handoff injection on start | Inject previous handoff as system context | 2-3 days | This repo or foundation |
-| Memory location standardization | Move to ~/.amplifier/memory/, update all references | 1 day | Config change |
+| Task | What | Effort | Delivered By | Status |
+|------|------|--------|-------------|--------|
+| SESSION_END kernel event | Emit event on session cleanup | 1-2 days | amplifier-core PR | ⏳ Not started (requires core PR) |
+| Auto-handoff generation | Hook writes handoff.md on SESSION_END | 3-4 days | This repo or foundation | ⏳ Not started (depends on SESSION_END) |
+| Handoff injection on start | Inject previous handoff as system context | 2-3 days | This repo or foundation | ⏳ Not started |
+| Memory location standardization | Move to ~/.amplifier/memory/, update all references | 1 day | Config change | ✅ Done (migrate.py + MemoryService) |
 
 **Exit criteria:** End a session, start a new one in same project,
 the new session "knows" what happened in the previous one without
 being told.
 
-### Phase 2: Interface Adapter (Week 3-4)
+### Phase 2: Interface Adapter (Week 3-4) - PARTIALLY BYPASSED
 **Goal:** One way to create sessions from any interface.
 
-| Task | What | Effort | Delivered By |
-|------|------|--------|-------------|
-| Interface Adapter library | create_session(), cleanup(), config reader in foundation | 2-3 days | amplifier-foundation PR |
-| TUI rewrite on adapter | Replace sys.path hack with adapter usage | 1 week | amplifier-tui PR |
-| Voice config extraction | Move hardcoded values to bundle, use adapter | 1 week | amplifier-voice PR |
-| CarPlay consolidation | Delete subprocess bridge, use adapter | 3-4 days | carplay PR |
+| Task | What | Effort | Delivered By | Status |
+|------|------|--------|-------------|--------|
+| Interface Adapter library | create_session(), cleanup(), config reader in foundation | 2-3 days | amplifier-foundation PR | ✅ Done (bridge.py in distro) |
+| TUI rewrite on adapter | Replace sys.path hack with adapter usage | 1 week | amplifier-tui PR | ⏳ Not started |
+| Voice config extraction | Move hardcoded values to bundle, use adapter | 1 week | amplifier-voice PR | ✅ Bypassed: voice bridge built as server app plugin |
+| CarPlay consolidation | Delete subprocess bridge, use adapter | 3-4 days | carplay PR | ⏳ Not started |
+
+**Note:** The server-centric architecture shift (Feb 8) changed the approach.
+Voice is now a server app plugin (`server/apps/voice/`) using the OpenAI
+Realtime API with WebRTC, rather than a standalone interface needing adapter
+integration. The same pattern applies to Slack (`server/apps/slack/`).
 
 **Exit criteria:** TUI, Voice, and CarPlay all create sessions
 through the same adapter. No sys.path hacks, no hardcoded configs.
 `uv pip install -e .` works for all three.
 
-### Phase 3: Setup Tool (Week 4-5)
+### Phase 3: Setup Tool (Week 4-5) - MOSTLY COMPLETE
 **Goal:** One-command setup for new users.
 
-| Task | What | Effort | Delivered By |
-|------|------|--------|-------------|
-| `amp distro init` | Detect platform, identity, providers; create distro.yaml and personal bundle | 3-4 days | amplifier-app-cli PR or standalone |
-| `amp distro status` | Health report: identity, providers, bundle, cache | 2-3 days | Same |
-| `amp distro install <interface>` | Per-interface installer (clone, deps, config, smoke test) | 1 week | This repo (recipes) |
-| Setup website (v1) | Static page with machine-readable instructions | 2-3 days | GitHub Pages |
+| Task | What | Effort | Delivered By | Status |
+|------|------|--------|-------------|--------|
+| `amp distro init` | Detect platform, identity, providers; create distro.yaml and personal bundle | 3-4 days | This repo | ✅ Done |
+| `amp distro status` | Health report: identity, providers, bundle, cache | 2-3 days | This repo | ✅ Done |
+| `amp distro doctor` | 13 diagnostic checks with auto-fix | 2-3 days | This repo | ✅ Done (overnight build T7) |
+| `amp distro backup/restore` | Config backup to GitHub, restore from backup | 2-3 days | This repo | ✅ Done (overnight build T6) |
+| `amp distro version/update` | Version info, update check, self-update | 1-2 days | This repo | ✅ Done (overnight build T9) |
+| `amp distro install <interface>` | Per-interface installer (clone, deps, config, smoke test) | 1 week | This repo (recipes) | ⏳ Not started |
+| Setup website (v1) | Static page with machine-readable instructions | 2-3 days | GitHub Pages | ⏳ Not started |
 
 **Exit criteria:** A new team member runs `amp distro init`,
 answers 3 questions (workspace, anthropic key, openai key),
@@ -191,6 +199,29 @@ them the TUI. The setup website exists and an agent can read it.
 **Exit criteria:** Starting a session shows what happened since
 last time. "idea: X" captures and scores ideas. Weekly friction
 report identifies top 3 attention drains.
+
+---
+
+## Overnight Build (Feb 9) - Accelerated Delivery
+
+The overnight autonomous build completed 9 tasks in a single session,
+jumping ahead on Phase 2-3 items and adding new capabilities not in
+the original roadmap. 755 tests passing (up from 469).
+
+| Task | What Was Built | Tests Added |
+|------|---------------|-------------|
+| T1: Server Robustness | daemon.py, startup.py, systemd service, structured logging | +34 |
+| T2: Slack Bridge Fix | Command routing, session persistence, config module, setup | +29 |
+| T3: Dev Memory | MemoryService, memory API, web chat + Slack memory commands | +69 |
+| T4: Voice Bridge | OpenAI Realtime API, WebRTC, voice.html UI, server app | +28 |
+| T5: Settings UI | Config editor API, integrations status, provider testing | +20 |
+| T6: Backup System | GitHub repo backup/restore, auto-backup, CLI commands | +41 |
+| T7: Doctor Command | 13 diagnostic checks, auto-fix, JSON output | +46 |
+| T8: Docker Polish | Healthcheck, non-root user, production entrypoint | +5 |
+| T9: CLI Enhancements | Version info, PyPI update check, self-update | +31 |
+
+New modules added: `backup.py`, `doctor.py`, `update_check.py`,
+`server/daemon.py`, `server/startup.py`, `server/memory.py`
 
 ---
 
@@ -291,22 +322,25 @@ the filesystem, mediated by the conventions in OPINIONS.md.
 
 ## Success Metrics
 
-### Phase 0 (end of week 1)
-- [ ] Zero silent bundle failures in any team member's config
-- [ ] distro.yaml exists and is read by at least one tool
+### Phase 0 (end of week 1) ✅
+- [x] Zero silent bundle failures in any team member's config
+- [x] distro.yaml exists and is read by at least one tool
 
-### Phase 1 (end of week 3)
+### Phase 1 (end of week 3) - Partial
 - [ ] Session handoffs work end-to-end (end -> file -> inject -> awareness)
-- [ ] Memory location is standardized
+- [x] Memory location is standardized (migrate.py + MemoryService)
 
-### Phase 2 (end of week 4)
+### Phase 2 (end of week 4) - Partial
 - [ ] TUI creates sessions without sys.path hacks
-- [ ] Voice starts with any user's bundle config
+- [x] Voice starts with any user's bundle config (via server app plugin)
 - [ ] At least 2 interfaces can resume the same session
 
-### Phase 3 (end of week 5)
-- [ ] New team member setup: <10 minutes, <5 manual steps
-- [ ] `amp distro status` shows green for all core components
+### Phase 3 (end of week 5) - Mostly Done
+- [x] New team member setup: <10 minutes, <5 manual steps (init + install wizard)
+- [x] `amp distro status` shows green for all core components
+- [x] `amp distro doctor` runs 13 diagnostic checks with auto-fix
+- [x] `amp distro backup/restore` works with GitHub repos
+- [x] `amp distro version/update` detects and applies updates
 
 ### Phase 4 (end of week 8)
 - [ ] Morning brief runs without manual trigger

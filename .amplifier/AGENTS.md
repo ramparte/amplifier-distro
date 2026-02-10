@@ -7,7 +7,8 @@ docs are in `planning/`, design decisions in `OPINIONS.md`, roadmap in `ROADMAP.
 full implementation spec in `IMPLEMENTATION.md`, and session-resumption context in
 `context/DISTRO-PROJECT-CONTEXT.md`. Read that context file first.
 
-**Status:** Phase 0 COMPLETE. Quickstart-to-hello-world flow working end-to-end in Docker. 409 tests pass.
+**Status:** Overnight build COMPLETE (Feb 9). Server fully operational with Slack bridge,
+voice bridge, memory, backup, diagnostics, and CLI tooling. **755 tests pass.**
 
 ---
 
@@ -144,10 +145,81 @@ to produce structured JSON descriptions of what's on screen.
 
 ---
 
+## Source Modules
+
+### Core (`src/amplifier_distro/`)
+
+| Module | Purpose |
+|--------|---------|
+| `conventions.py` | IMMUTABLE naming standards (filenames, paths, ports) |
+| `schema.py` | distro.yaml Pydantic models |
+| `config.py` | Config load/save |
+| `preflight.py` | Pre-flight health checks (8 checks) |
+| `bridge.py` | AmplifierBridge protocol + LocalBridge implementation |
+| `bridge_protocols.py` | Bridge protocol type definitions |
+| `cli.py` | CLI commands: init, status, validate, doctor, backup, restore, version, update |
+| `backup.py` | Backup/restore to GitHub repo with auto-backup |
+| `doctor.py` | 13 diagnostic checks with auto-fix mode |
+| `update_check.py` | Version detection, PyPI update check, self-update |
+| `migrate.py` | Memory location migration helper |
+| `bundle_composer.py` | Bundle composition helpers |
+| `features.py` | Feature flags |
+| `deploy.py` | Cloud deployment configuration |
+| `docs_config.py` | Documentation configuration |
+
+### Server (`src/amplifier_distro/server/`)
+
+| Module | Purpose |
+|--------|---------|
+| `app.py` | DistroServer + plugin system + all API routes |
+| `cli.py` | `amp-distro-server` entry point (host/port/reload) |
+| `daemon.py` | PID file management, daemonize, stop process |
+| `startup.py` | Structured JSON logging, key export, startup checks |
+| `memory.py` | MemoryService (remember, recall, work-status) |
+| `services.py` | Shared server services layer |
+| `session_backend.py` | Session backend for bridges |
+
+### Server Apps (`src/amplifier_distro/server/apps/`)
+
+| App | Purpose |
+|-----|---------|
+| `example/` | Example plugin demonstrating the app pattern |
+| `install_wizard/` | Guided setup wizard |
+| `slack/` | Slack bridge (Socket Mode, commands, events, sessions, setup, simulator) |
+| `voice/` | Voice bridge (OpenAI Realtime API, WebRTC, voice.html UI) |
+| `web_chat/` | Web chat interface with polished UI |
+
+---
+
 ## Build Order (from ROADMAP.md)
 
-Phase 0: distro.yaml schema -> base bundle -> amp-distro init/status -> pre-flight
-Phase 1: Bundle validation strict mode -> handoff hooks -> memory standardization
-Phase 2: Interface installers (TUI, Web, Voice)
-Phase 3: Backup/restore/update/doctor
-Phase 4: Setup website, containers, workflows
+Phase 0: ✅ distro.yaml schema -> base bundle -> amp-distro init/status -> pre-flight
+Phase 1: ⚡ Memory standardization done. Handoff hooks need core PR.
+Phase 2: ⚡ Bridge built in distro. Voice built as server app. TUI adapter pending.
+Phase 3: ✅ Backup/restore/update/doctor/version all implemented.
+Phase 4: ⏳ Setup website, containers, workflows
+
+---
+
+## Development Patterns
+
+### Testing
+- **755 tests**, all passing in ~13s
+- Test runner: `uv run python -m pytest tests/ -x -q`
+- Each new module gets a corresponding `tests/test_<name>.py`
+- FastAPI apps tested via `TestClient` (no real server needed)
+- Mocking pattern: `unittest.mock.patch` for external dependencies (git, gh, subprocess)
+
+### Server App Plugin Pattern
+New server apps follow this pattern:
+1. Create `server/apps/<name>/__init__.py`
+2. Define a `manifest` (AppManifest) with name, prefix, version, description
+3. Create a FastAPI router
+4. The server auto-discovers and mounts at `/apps/<name>/`
+
+### CLI Command Pattern
+CLI uses `click.Group` with individual commands. Each command:
+1. Reads config via `config.py`
+2. Performs its action
+3. Outputs via `click.echo()` with Rich formatting where appropriate
+4. Returns exit code 0 on success, 1 on failure

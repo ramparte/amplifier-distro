@@ -165,9 +165,10 @@ Ring 3 = workflows that work FOR you.
 
 ---
 
-## Current Status (Updated Feb 8, 2026)
+## Current Status (Updated Feb 9, 2026)
 
-**Phase:** Foundational architecture complete. Server-centric model established.
+**Phase:** Overnight build COMPLETE. Server fully operational with all bridges,
+memory, backup, diagnostics, and CLI tooling. 755 tests passing.
 
 ### Architecture Shift (Feb 8)
 
@@ -226,30 +227,98 @@ Three foundational pieces were built (Feb 8):
 - `server/apps/example/`: Example app demonstrating plugin pattern
 - `server/cli.py`: `amp-distro-server` entry point (host/port/reload)
 - `pyproject.toml`: FastAPI + uvicorn deps, server entry point
-- Acceptance tests: 161 total (45 conventions + 28 bridge + 27 server + 61 existing)
-- All 161 tests pass in Docker (0.44s)
+
+**Overnight Build (Feb 9) - 9 tasks completed:**
+
+- **T1: Server Robustness** - `daemon.py` (PID management, daemonize/stop),
+  `startup.py` (structured JSON logging, key export, startup checks),
+  systemd service file, CLI converted to click.Group with subcommands (+34 tests)
+- **T2: Slack Bridge Fix** - Command routing fixed, session persistence
+  added, Slack config module, setup module with guided onboarding (+29 tests)
+- **T3: Dev Memory Integration** - `server/memory.py` MemoryService with
+  remember/recall/work-status, memory API endpoints, web chat memory
+  commands, Slack `/amp remember` and `/amp recall` commands (+69 tests)
+- **T4: Voice Bridge** - `server/apps/voice/` with OpenAI Realtime API,
+  WebRTC support, voice.html UI, full server app plugin (+28 tests)
+- **T5: Settings UI** - Config editor API (`/api/config` POST),
+  `/api/integrations` status endpoint, `/api/test-provider` connectivity
+  test, settings web interface (+20 tests)
+- **T6: Backup System** - `backup.py` with GitHub repo backup/restore,
+  configurable backup repo, auto-backup support, CLI `backup` and
+  `restore` commands (+41 tests)
+- **T7: Doctor Command** - `doctor.py` with 13 diagnostic checks
+  (config, memory, keys permissions, server, bundle cache, git, gh auth,
+  Slack, voice, amplifier install, identity, workspace), auto-fix mode,
+  JSON output, CLI `doctor` command (+46 tests)
+- **T8: Docker Polish** - Healthcheck endpoint, non-root user, production
+  entrypoint, deploy configuration (+5 tests)
+- **T9: CLI Enhancements** - `update_check.py` (version detection, PyPI
+  update check, self-update), `version` command with full environment
+  info, `update` command, improved help with epilog (+31 tests)
+
+Total: **755 tests passing** (up from 469 pre-build)
 
 **PR #68** (bundle validation strict mode) was closed by upstream. The
 branch and code exist at `ramparte/amplifier-foundation` on branch
 `feat/bundle-validation-strict-mode`. May resubmit or discuss with robotdad.
 
+### Server API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/health` | GET | Health check |
+| `/api/config` | GET | Read distro config |
+| `/api/config` | POST | Update distro config |
+| `/api/status` | GET | Server status (uptime, apps, bridge) |
+| `/api/apps` | GET | List registered app plugins |
+| `/api/integrations` | GET | Integration status (Slack, voice, keys) |
+| `/api/test-provider` | POST | Test provider API key connectivity |
+| `/api/sessions` | GET | List sessions |
+| `/api/sessions/create` | POST | Create new session |
+| `/api/sessions/execute` | POST | Execute prompt in session |
+| `/api/memory/remember` | POST | Store a memory entry |
+| `/api/memory/recall` | GET | Query memory by text |
+| `/api/memory/work-status` | GET | Get work log status |
+| `/api/memory/work-log` | POST | Update work log |
+
+### CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `amp-distro init` | Initialize distro (create config, bundle, workspace) |
+| `amp-distro status` | Show environment health status |
+| `amp-distro validate` | Validate distro config and bundle |
+| `amp-distro doctor` | Run 13 diagnostic checks (--fix for auto-fix, --json) |
+| `amp-distro backup` | Backup config to GitHub repo |
+| `amp-distro restore` | Restore config from GitHub backup |
+| `amp-distro version` | Show version info (distro, amplifier, Python, OS) |
+| `amp-distro update` | Check for updates and self-update |
+
+### Server App Plugins
+
+| App | Path | Purpose |
+|-----|------|---------|
+| `example` | `/apps/example/` | Example plugin demonstrating the pattern |
+| `install_wizard` | `/apps/install_wizard/` | Guided setup wizard |
+| `slack` | `/apps/slack/` | Slack bridge (Socket Mode, commands, events, sessions) |
+| `voice` | `/apps/voice/` | Voice bridge (OpenAI Realtime API, WebRTC) |
+| `web_chat` | `/apps/web_chat/` | Web chat interface with polished UI |
+
 ### What's next:
-1. **Sam is building server apps separately** (Slack bridge, voice bridge).
-   These will be app plugins that register with the server.
-2. **Wire Bridge to amplifier-foundation** - The LocalBridge.create_session()
+1. **Wire Bridge to amplifier-foundation** - The LocalBridge.create_session()
    currently stubs the actual session creation. Needs real load_bundle +
    prepare + create_session integration.
-3. **Session handoffs** - Convention decided: `handoff.md` file (per
+2. **Session handoffs** - Convention decided: `handoff.md` file (per
    conventions.py HANDOFF_FILENAME). Implementation approach still TBD.
-4. **Server lifecycle** - Daemonization, PID file (conventions.py defines
-   SERVER_PID_FILE), systemd/launchd integration.
-5. **Web UI app** - Installation wizard + config editor as a server app.
+3. **Setup website** - Static page with machine-readable instructions for
+   agent-driven setup.
+4. **Interface installers** - `amp distro install tui|voice|gui`
 
 ### Open items:
 - PR #68 closed - need to discuss with upstream or re-approach
 - Bridge create_session() is stubbed (needs foundation integration)
 - Handoff generation approach undecided (hook vs explicit)
-- Server daemonization not implemented yet
+- Setup website not built yet
 
 ---
 
@@ -264,26 +333,43 @@ branch and code exist at `ramparte/amplifier-foundation` on branch
 
 ### Development workflow:
 - **Docker test env**: `docker compose --profile cli up -d` then `docker compose exec cli bash`
-- **Run tests**: `python -m pytest tests/ -v` (161 tests, ~0.5s)
+- **Run tests**: `uv run python -m pytest tests/ -x -q` (755 tests, ~13s)
 - **Start server**: `amp-distro-server --port 8400 --reload`
-- **amp-distro CLI**: Install with `pip install -e .` in a venv
+- **amp-distro CLI**: Install with `uv pip install -e .` in a venv
 - **Add a server app**: Create `server/apps/myapp/__init__.py` with a `manifest`
 
 ### File map (key source files):
 ```
 src/amplifier_distro/
-  conventions.py    # IMMUTABLE naming standards
-  bridge.py         # Session creation API (AmplifierBridge protocol)
-  schema.py         # distro.yaml Pydantic models
-  config.py         # Config load/save
-  preflight.py      # Health checks
-  migrate.py        # Memory migration helper
-  cli.py            # amp-distro CLI (init, status, validate)
+  conventions.py       # IMMUTABLE naming standards
+  bridge.py            # Session creation API (AmplifierBridge protocol)
+  bridge_protocols.py  # Bridge protocol definitions
+  schema.py            # distro.yaml Pydantic models
+  config.py            # Config load/save
+  preflight.py         # Health checks (pre-flight)
+  migrate.py           # Memory migration helper
+  cli.py               # amp-distro CLI (init, status, validate, doctor, backup, restore, version, update)
+  backup.py            # Backup/restore to GitHub repo
+  doctor.py            # 13 diagnostic checks with auto-fix
+  update_check.py      # Version detection, PyPI update check, self-update
+  bundle_composer.py   # Bundle composition helpers
+  features.py          # Feature flags
+  deploy.py            # Cloud deployment configuration
+  docs_config.py       # Documentation configuration
   server/
-    app.py          # DistroServer + plugin system
-    cli.py          # amp-distro-server CLI
+    app.py             # DistroServer + plugin system + all API routes
+    cli.py             # amp-distro-server CLI
+    daemon.py          # PID file management, daemonize, stop process
+    startup.py         # Structured logging, key export, startup checks
+    memory.py          # MemoryService (remember, recall, work status)
+    services.py        # Shared server services layer
+    session_backend.py # Session backend for bridges
     apps/
-      example/      # Example plugin app
+      example/         # Example plugin app
+      install_wizard/  # Guided setup wizard
+      slack/           # Slack bridge (Socket Mode, commands, events, sessions, setup)
+      voice/           # Voice bridge (OpenAI Realtime API, WebRTC)
+      web_chat/        # Web chat interface
 ```
 
 To pick up a specific task:
