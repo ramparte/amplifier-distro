@@ -12,6 +12,28 @@ This document argues that these eigenvectors form something coherent: an **Agent
 
 ---
 
+## The Disease: Human as Integration Layer
+
+Before getting into what agents need, it's worth naming what's broken today.
+
+Every tool has its own interface. Every interface has its own rules. And you -- the human -- become the integration layer. You copy data from one app into another. You translate between formats. You remember what lives where. You are the glue between systems that don't talk to each other.
+
+The interface evolution tells the story:
+
+```
+Command Line → GUI → Mobile → Voice → Intent
+```
+
+Each step reduced the distance between what you want and what you have to say to get it. Command lines required you to know the system's language. GUIs required you to navigate the system's spatial layout. Mobile required you to find the right app. Voice required you to speak the right command.
+
+The next step -- **intent** -- eliminates the translation entirely. You say what you want: "organize my downloads," "find the PDF from last month," "show me what's eating disk space." The system figures out how to execute.
+
+This is the Agent-shaped OS from the human's perspective. The human stops being the integration layer. The agent becomes the integration layer instead -- and unlike the human, the agent doesn't mind. Integration is what agents are good at: reading structured data, calling APIs, transforming formats, coordinating between systems. The human provides intent and judgment. The agent handles everything between intent and outcome.
+
+The distro's One Rule -- minimize human attentional load -- is this same idea expressed as a design goal. The Agent OS is the architecture that makes the goal achievable.
+
+---
+
 ## Why Agents Need Different Primitives
 
 Traditional operating systems were designed around a core assumption: **the user is a human sitting at a screen.** Everything flows from that. Windows, icons, menus, pointers. Visual file managers. Interactive terminals with color and cursor positioning. Drag-and-drop. Undo buttons. Tooltips.
@@ -62,6 +84,8 @@ The stories bundle passes every test. Git is text-native (diffs are text), zero-
 
 The TUI's SVG test system passes too. Visual state captured as SVG gets parsed into structured YAML -- text-native, diffable, deterministic. The agent never needs to "see" anything. It reads structured data about what's on screen.
 
+**An important distinction:** The eigenvector test applies to the **primitives**, not to the **world the primitives act on.** Agents frequently work with non-text artifacts -- images, audio, compiled binaries. The command `convert image.png -resize 50% image_small.png` is text-native. The image it operates on isn't. The shell command is the eigenvector; the image is the operand. This prevents the test from being read too narrowly. The Agent OS doesn't require a text-only world. It requires text-native _tools_ for interacting with whatever the world contains.
+
 ---
 
 ## The Seven Eigenvectors
@@ -111,7 +135,18 @@ For agents, git is even better. An agent can create a branch, make changes, comm
 - Every major coding agent uses git as its primary coordination mechanism: Devin creates branches, Codex produces patches, Copilot opens draft PRs
 - SWE-bench's output format is literally a git diff
 
-Block (Square) found that when building 60+ MCP servers, git remained the coordination backbone. The emerging tension point is scale -- at thousands of agents producing commits simultaneously, merge conflicts become the bottleneck. But for the distro's scale (single user, handful of concurrent agents), git is ideal.
+Block (Square) found that when building 60+ MCP servers, git remained the coordination backbone.
+
+**The coordination spectrum.** Git is the right default, but coordination scales with context. For a single user running a single agent on a laptop, branches and PRs can be heavier ceremony than the task warrants. The Agent OS should work naturally across the full range:
+
+| Scale | Natural Coordination |
+|-------|---------------------|
+| Single-user, single-agent | Shared filesystem + memory state |
+| Single-user, multi-agent | SQLite + JSONL event streams |
+| Multi-user / team | Git branches + PRs |
+| Enterprise | Git + policy mesh + approval gates |
+
+The distro defaults to git -- the benefits are real even at small scale (undo, audit, publishing). But the architecture shouldn't require a PR to save a memory.
 
 ---
 
@@ -263,15 +298,25 @@ And they're orthogonal. Git tells you nothing about HTML. SQL tells you nothing 
 These seven eigenvectors organize into a coherent stack. Each layer builds on the ones below, and each is constructed entirely from the seven primitives:
 
 ```
+ Layer 8 : Intent            Natural language → structured dispatch (the intent kernel)
  Layer 7 : Workflows         Recipes, multi-agent pipelines, approval gates
  Layer 6 : Applications      Slack bridge, voice, web chat, vibe coder
- Layer 5 : Services          Memory, backup, diagnostics, policy enforcement
+ Layer 5 : Services          Memory, backup, diagnostics, policy, model routing
  Layer 4 : Presentation      HTML generation, SVG testing, dashboards
  Layer 3 : Coordination      Git (branches, PRs, diffs), MCP, A2A
  Layer 2 : State             SQLite (structured), YAML (config), JSONL (events)
  Layer 1 : Execution         Shell/Bash, sandboxes (Docker/microVM)
  Layer 0 : Foundation        Text files on a filesystem
 ```
+
+Layer 8 is the newest idea and the most important from the human's perspective. Everything below it is infrastructure -- how agents work. Layer 8 is the interface -- how humans _use_ agents. The user says what they want. The intent kernel decides where it goes. The stack executes. The result comes back as HTML, a Slack message, a committed diff, or a voice response.
+
+This is different from Layer 7 (Workflows). Workflows are multi-step orchestrated pipelines defined in advance. The intent kernel is single-turn dispatch: classify what the user wants, route to the right agent or tool, return the result. It's the thin reasoning layer between natural language and OS capability.
+
+Some design questions the intent kernel raises:
+- **Model sizing.** Classification doesn't need a frontier model. A small, fast model (~1B parameters, ~100ms) handles "is this a file question or a code question?" The execution agent behind it can use whatever model the task demands. Speed changes the feel of the system -- sub-second classification makes the OS feel responsive rather than deliberative.
+- **Escape hatches.** Sometimes you know where you want to go. Slash commands (`/terminal`, `/memory`, `/voice`) should bypass classification entirely. The intent kernel should be the default path, not the only path.
+- **Confidence routing.** Low classification confidence should trigger clarification, not a guess. "Did you mean X or Y?" is better than silently doing the wrong thing.
 
 The traditional OS has the same layered structure -- kernel, drivers, system services, window manager, applications. The difference is what's natural at each layer:
 
@@ -282,9 +327,10 @@ The traditional OS has the same layered structure -- kernel, drivers, system ser
 | State | RAM, virtual memory, databases | SQLite, YAML, JSONL |
 | Coordination | IPC, sockets, shared memory | Git, MCP, A2A |
 | Presentation | Pixels, windows, GPU rendering | HTML, SVG, Markdown |
-| Services | System daemons, control panel | Memory, backup, policy hooks |
+| Services | System daemons, control panel | Memory, backup, policy, model routing |
 | Applications | GUI apps with menus and windows | Bridges (Slack, voice, web) |
 | Workflows | Cron, task scheduler, automations | Recipes, agent pipelines |
+| Intent | App launcher, Spotlight, Start menu | LLM-as-router, natural language dispatch |
 
 ---
 
@@ -315,15 +361,25 @@ The foundation is strong. The gaps are specific and addressable.
 
 **The plan.**
 
-1. **Add a `MemoryDB` layer** that wraps SQLite with the same interface as the current YAML-based `MemoryService`. Memories stored as rows with full-text search. The YAML file becomes a human-readable export, not the source of truth.
+1. **Tiered memory architecture.** Not a flat table swap from YAML, but a system designed with retrieval tiers from the start:
 
-2. **Migrate the attention firewall pattern.** The `topic_tracker.py` + `notifications.db` pattern already works. The memory service should follow the same shape: SQLite for queries, Python helper for typed access.
+    | Tier | Storage | Window | Access Pattern | Purpose |
+    |------|---------|--------|----------------|---------|
+    | **Hot** | In-memory | Current session + last ~20 interactions | O(1), instant | Immediate context |
+    | **Warm** | SQLite with FTS | Last ~500 interactions | Temporal scan + full-text | Recent history, "what was I doing last week?" |
+    | **Cold** | SQLite with vector extension | Unbounded | Semantic search | Long-term recall, "anything I've done related to auth?" |
+
+    Every query hits both warm (last 5 entries for recency) and cold (top 3 matches for relevance) and injects both into the agent's context. This dual-retrieval -- temporal + semantic -- is simple but meaningfully better than either alone.
+
+2. **Migrate the attention firewall pattern.** The `topic_tracker.py` + `notifications.db` pattern already works. The memory service should follow the same shape: SQLite for queries, Python helper for typed access. The YAML file becomes a human-readable export, not the source of truth.
 
 3. **Agent-queryable memory.** Expose a `query_memory(sql)` tool that lets agents write SQL against their memory store. Block proved this pattern: agents are excellent at writing SQL. Don't force them through a fixed API when a query language is more expressive.
 
 4. **Portable state.** Following Turso's AgentFS concept: one `.db` file per project context. Copy it to move the agent's memory. Back it up by copying a file.
 
-**Effort:** Medium. The MemoryService abstraction already exists. This is a backend swap plus a new tool.
+5. **From database to relationship.** The deeper ambition beyond storage is **user modeling**. Over time, the memory layer should synthesize not just "what did I say?" (retrieval) but "what kind of user am I?" -- preferences, working patterns, vocabulary, project rhythms. That's the difference between a database and a relationship. The tiered architecture makes this possible because the cold tier accumulates enough history for pattern extraction.
+
+**Effort:** Medium. The MemoryService abstraction already exists. The warm tier is a backend swap. The cold tier (vector search) adds a dependency but SQLite extensions like `sqlite-vec` keep it single-file.
 
 ---
 
@@ -377,6 +433,8 @@ The foundation is strong. The gaps are specific and addressable.
 
 4. **Eval-driven description refinement.** Following Anthropic's loop: write description, run evals, read agent transcripts to find rough edges, revise description, repeat. The descriptions aren't documentation -- they're an interface, and they need the same iterative refinement as any interface.
 
+5. **Error-as-teacher pattern.** When a command fails, don't just return the error. Make a second LLM call to explain what went wrong and suggest a fix. This is cheap (error text is small, explanation is fast) and valuable at two levels: the agent explains the error to the human _now_, and the error + resolution gets stored in memory so the agent (or a future agent) avoids repeating it. Over time, the system learns from its own mistakes. The memory tier makes this practical -- errors go into the warm tier, solutions go into cold for semantic retrieval when similar errors recur.
+
 **Effort:** Low to medium. Mostly writing and testing, not engineering. But the payoff is large: better tool descriptions measurably improve agent success rates.
 
 ---
@@ -396,6 +454,83 @@ The foundation is strong. The gaps are specific and addressable.
 4. **Graduated trust.** New agents start with minimal permissions. As they demonstrate reliability (measured by audit trails in JSONL), permissions expand. This mirrors how organizations manage human access -- except it can be automated because agent behavior is fully observable.
 
 **Effort:** Medium. The m365 hooks provide the implementation pattern. The work is generalizing them into configurable, composable policy primitives.
+
+---
+
+### Gap 6: Daemon Agents
+
+**The problem.** The planning doc covers triggered workflows (recipes) and reactive tools. But there's a missing pattern: agents that **watch, decide, and act on their own schedule** without being asked. The distro's watchdog service is an early form of this. Cron jobs are an older form. But a daemon agent is neither -- it combines scheduled triggers with LLM reasoning.
+
+"Check disk usage every 5 minutes, and if it's above 80%, identify the largest recent files and suggest cleanup" is not a cron job. A cron job can check disk usage. It can't reason about what to do. A daemon agent can.
+
+**The plan.**
+
+1. **Named daemon pattern.** A daemon agent is defined by: a trigger schedule (cron-like), an observation function (what to check), a reasoning step (what to do about it), and an action space (what it's allowed to do). All four are declarative -- YAML config, not custom code.
+
+2. **JSONL trail for everything.** Every daemon cycle produces a JSONL event: what was observed, what was decided, what was done. This is non-negotiable. Proactive agents that act without being asked need the strongest audit trail. The human should be able to review "what did my agents do while I was asleep?" as a simple log query.
+
+3. **Graduated autonomy.** Start with observe-and-report (no autonomous action). Graduate to observe-and-suggest (propose an action, wait for approval). Graduate to observe-and-act (execute autonomously within policy bounds). The policy mesh (Gap 5) controls which level a daemon agent operates at.
+
+4. **Concrete first daemons.** Start with the obvious ones:
+   - **Backup daemon** -- already exists as `amp-distro backup`, make it schedule-aware
+   - **Health daemon** -- already exists as the watchdog, add reasoning about what to do when checks fail
+   - **Tidy daemon** -- watch for accumulated temp files, stale branches, orphaned containers
+   - **Update daemon** -- check for new versions of distro, modules, models; suggest or auto-apply
+
+**This sits between Layer 5 (Services) and Layer 7 (Workflows)** and neither fully captures it today. It might deserve its own position in the stack, or it might be a pattern that uses both layers -- services for the scheduling and observation, workflows for the multi-step response when something needs action.
+
+**Effort:** Medium. The scheduling infrastructure exists (cron, launchd). The reasoning pattern exists (agent sessions). The work is connecting them with the right abstraction and the right audit trail.
+
+---
+
+### Gap 7: Model Routing as an OS Concern
+
+**The problem.** The Agent OS runs many different tasks with wildly different complexity. Intent classification takes ~100 tokens. Error explanation takes ~500 tokens. Multi-file code generation takes ~100,000 tokens. Using a frontier model for all of them is wasteful; using a small model for all of them is incapable. The OS needs a **model routing policy** -- the system-level decision of which model to use for which task.
+
+This matters especially for latency. When responses arrive in under a second, the OS feels like part of the interface. When they take 5 seconds, it feels like a tool. Small models are fast. Fast changes behavior.
+
+**The plan.**
+
+1. **Task-to-model mapping.** Define categories of work and their model requirements:
+
+    | Task Type | Model Size | Latency Target | Examples |
+    |-----------|-----------|----------------|---------|
+    | Classification / routing | Tiny (~1B) | <200ms | Intent kernel, error detection |
+    | Structured extraction | Small (~3-7B) | <500ms | JSON parsing, index merging, date conversion |
+    | Code generation | Medium-Large (~30-70B) | <5s | Feature implementation, bug fixes |
+    | Complex reasoning | Frontier (cloud) | <30s | Architecture design, multi-file analysis |
+
+2. **Provider cascade.** Try local first, fall back to cloud. For classification: local 1B model → if confidence too low → local 7B → if still too low → cloud API. For generation: local 30B if available → cloud if not. The policy is configurable per-user based on their hardware and preferences.
+
+3. **GPU memory management.** On a single machine, you can't keep a 70B model loaded while also running a fast classifier. The model router needs to manage model loading and unloading, keeping hot models in GPU memory and cold models on disk. This is the agent equivalent of virtual memory -- the OS manages a scarce resource (GPU RAM) so applications don't have to.
+
+4. **Integration with cost control.** The policy mesh (Gap 5) already tracks spend. Model routing is the mechanism that makes cost control intelligent -- instead of blocking when budget is low, route to cheaper models. Graceful degradation instead of hard stops.
+
+**Effort:** Medium-high. The provider abstraction in amplifier-core already supports multiple backends. The routing logic and GPU memory management are new. But the local-model ecosystem (Ollama, vLLM, llama.cpp) provides the serving layer.
+
+---
+
+### Design Axis: Local-First vs. Cloud-Hybrid
+
+The seven eigenvectors are neutral on where computation happens. But the deployment model has real architectural consequences that deserve acknowledgment.
+
+**The spectrum:**
+
+| Position | Characteristics | Who Wants This |
+|----------|----------------|----------------|
+| **100% local** | No API keys, no data leaves machine, constrained by local GPU | Privacy-maximizing users, air-gapped environments |
+| **Local-first, cloud-fallback** | Local for most tasks, cloud for frontier capability | Most power users. Best balance of privacy and capability. |
+| **Cloud-first, local-cache** | Cloud models primary, local for speed-sensitive tasks | Teams prioritizing capability over privacy |
+| **100% cloud** | All computation remote, thin local client | Enterprise managed environments |
+
+The distro should support the full spectrum, but **default to local-first, cloud-fallback.** This means:
+
+- **Model routing (Gap 7) is essential**, not optional. Local-first requires knowing which tasks can run locally and which need cloud.
+- **GPU memory is a managed resource.** The OS needs to know what's loaded, what can be loaded, and what requires eviction. This is analogous to virtual memory management.
+- **Embedding models need local options.** The cold memory tier (Gap 1) uses vector search. If the embedding model requires a cloud API, every memory query leaks data. Local embeddings (all-MiniLM, nomic-embed) keep the memory system fully local.
+- **The eigenvectors hold.** Text files, git, shell, HTML, SQLite, HTTP, JSONL -- all work identically whether the LLM is local or remote. The primitives don't care. Only the model routing layer changes.
+
+The distro already supports Ollama for local models. Making local-first a design principle -- not just a supported option -- means testing with local models first, ensuring the full stack works without any API keys, and treating cloud as an enhancement rather than a requirement.
 
 ---
 
