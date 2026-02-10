@@ -1,9 +1,12 @@
 """amp-distro CLI - Amplifier Distribution management tool."""
 
+import json
 import sys
+from pathlib import Path
 
 import click
 
+from . import conventions
 from .config import (
     config_path,
     detect_github_identity,
@@ -11,6 +14,7 @@ from .config import (
     load_config,
     save_config,
 )
+from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
 from .schema import IdentityConfig
@@ -206,6 +210,76 @@ def restore_cmd(name: str | None) -> None:
     else:
         click.echo(f"Restore failed: {result.message}", err=True)
         sys.exit(1)
+
+
+@main.command()
+@click.option("--fix", is_flag=True, help="Auto-fix issues that can be resolved.")
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON.")
+def doctor(fix: bool, as_json: bool) -> None:
+    """Diagnose and auto-fix common problems.
+
+    Runs a comprehensive suite of checks against the local Amplifier
+    installation.  Use --fix to automatically resolve fixable issues
+    (missing directories, wrong permissions, stale PID files).
+    """
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
+    report = run_diagnostics(amplifier_home)
+
+    # Apply fixes if requested
+    fixes_applied: list[str] = []
+    if fix:
+        fixes_applied = run_fixes(amplifier_home, report)
+        # Re-run diagnostics to show updated state
+        if fixes_applied:
+            report = run_diagnostics(amplifier_home)
+
+    if as_json:
+        _print_doctor_json(report, fixes_applied)
+    else:
+        _print_doctor_report(report, fixes_applied)
+
+    # Exit non-zero if any errors remain
+    if report.summary["error"] > 0:
+        sys.exit(1)
+
+
+def _print_doctor_report(report: DoctorReport, fixes: list[str]) -> None:
+    """Format and print a doctor report with coloured status markers."""
+    click.echo("Amplifier Distro - Doctor\n")
+
+    for check in report.checks:
+        if check.status == CheckStatus.ok:
+            mark = click.style("\u2714", fg="green")  # checkmark
+        elif check.status == CheckStatus.warning:
+            mark = click.style("!", fg="yellow")
+        else:
+            mark = click.style("\u2718", fg="red")  # X
+
+        click.echo(f"  {mark} {check.name}: {check.message}")
+
+        # Show fix suggestion for non-ok checks that have a fix
+        if check.status != CheckStatus.ok and check.fix_available:
+            click.echo(click.style(f"    fix: {check.fix_description}", fg="cyan"))
+
+    # Summary
+    s = report.summary
+    click.echo(f"\n  {s['ok']} ok, {s['warning']} warning(s), {s['error']} error(s)")
+
+    if fixes:
+        click.echo("\nFixes applied:")
+        checkmark = click.style("\u2714", fg="green")
+        for f in fixes:
+            click.echo(f"  {checkmark} {f}")
+
+
+def _print_doctor_json(report: DoctorReport, fixes: list[str]) -> None:
+    """Print the doctor report as machine-readable JSON."""
+    data = {
+        "checks": [c.model_dump() for c in report.checks],
+        "summary": report.summary,
+        "fixes_applied": fixes,
+    }
+    click.echo(json.dumps(data, indent=2))
 
 
 def _print_report(report: PreflightReport) -> None:
