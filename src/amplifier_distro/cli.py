@@ -18,15 +18,48 @@ from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
 from .schema import IdentityConfig
+from .update_check import check_for_updates, get_version_info, run_self_update
 
 
-@click.group()
+class _EpilogGroup(click.Group):
+    """Click group that preserves epilog formatting."""
+
+    def format_epilog(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        if self.epilog:
+            formatter.write("\n")
+            for line in self.epilog.splitlines():
+                formatter.write(f"{line}\n")
+
+
+EPILOG = """\
+Quick-start examples:
+
+  amp-distro init        Set up identity, workspace, and config
+  amp-distro status      Check that everything is healthy
+  amp-distro doctor      Diagnose problems (add --fix to auto-repair)
+  amp-distro version     Show version and environment info
+  amp-distro update      Self-update to the latest release"""
+
+
+@click.group(
+    cls=_EpilogGroup,
+    epilog=EPILOG,
+    help="Amplifier Distribution management tool.\n\n"
+    "Manages configuration, health checks, backups, and updates for "
+    "the Amplifier ecosystem.",
+)
 @click.version_option(package_name="amplifier-distro")
 def main() -> None:
     """Amplifier Distribution management tool."""
 
 
-@main.command()
+# ── Core commands ────────────────────────────────────────────────
+
+
+@main.command(
+    help="Initialize the Amplifier Distribution. Detects identity, "
+    "sets workspace root, and creates distro.yaml."
+)
 def init() -> None:
     """Initialize the Amplifier Distribution.
 
@@ -97,7 +130,7 @@ def init() -> None:
         )
 
 
-@main.command()
+@main.command(help="Show environment health and check for updates.")
 def status() -> None:
     """Show environment health."""
     click.echo("Amplifier Distro - Status\n")
@@ -109,10 +142,15 @@ def status() -> None:
     else:
         failed = [c for c in report.checks if not c.passed and c.severity == "error"]
         click.echo(f"\n{len(failed)} check(s) failed.")
+
+    # Show update notice (non-blocking)
+    _show_update_notice()
+
+    if not report.passed:
         sys.exit(1)
 
 
-@main.command()
+@main.command(help="Validate distro.yaml schema and bundle configuration.")
 def validate() -> None:
     """Validate distro.yaml and bundle configuration."""
     click.echo("Validating distro.yaml...\n")
@@ -136,7 +174,44 @@ def validate() -> None:
         sys.exit(1)
 
 
-@main.command("backup")
+@main.command(
+    help="Diagnose and auto-fix common problems. Runs comprehensive "
+    "checks against the local Amplifier installation."
+)
+@click.option("--fix", is_flag=True, help="Auto-fix issues that can be resolved.")
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON.")
+def doctor(fix: bool, as_json: bool) -> None:
+    """Diagnose and auto-fix common problems.
+
+    Runs a comprehensive suite of checks against the local Amplifier
+    installation.  Use --fix to automatically resolve fixable issues
+    (missing directories, wrong permissions, stale PID files).
+    """
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
+    report = run_diagnostics(amplifier_home)
+
+    # Apply fixes if requested
+    fixes_applied: list[str] = []
+    if fix:
+        fixes_applied = run_fixes(amplifier_home, report)
+        # Re-run diagnostics to show updated state
+        if fixes_applied:
+            report = run_diagnostics(amplifier_home)
+
+    if as_json:
+        _print_doctor_json(report, fixes_applied)
+    else:
+        _print_doctor_report(report, fixes_applied)
+
+    # Exit non-zero if any errors remain
+    if report.summary["error"] > 0:
+        sys.exit(1)
+
+
+# ── Data commands ────────────────────────────────────────────────
+
+
+@main.command("backup", help="Back up Amplifier state to a private GitHub repo.")
 @click.option("--name", default=None, help="Override backup repo name for this run.")
 def backup_cmd(name: str | None) -> None:
     """Back up Amplifier state to a private GitHub repo."""
@@ -174,7 +249,7 @@ def backup_cmd(name: str | None) -> None:
         sys.exit(1)
 
 
-@main.command("restore")
+@main.command("restore", help="Restore Amplifier state from a private GitHub repo.")
 @click.option("--name", default=None, help="Restore from a specific backup repo name.")
 def restore_cmd(name: str | None) -> None:
     """Restore Amplifier state from a private GitHub repo."""
@@ -212,35 +287,68 @@ def restore_cmd(name: str | None) -> None:
         sys.exit(1)
 
 
-@main.command()
-@click.option("--fix", is_flag=True, help="Auto-fix issues that can be resolved.")
-@click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON.")
-def doctor(fix: bool, as_json: bool) -> None:
-    """Diagnose and auto-fix common problems.
+# ── Info commands ────────────────────────────────────────────────
 
-    Runs a comprehensive suite of checks against the local Amplifier
-    installation.  Use --fix to automatically resolve fixable issues
-    (missing directories, wrong permissions, stale PID files).
-    """
-    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
-    report = run_diagnostics(amplifier_home)
 
-    # Apply fixes if requested
-    fixes_applied: list[str] = []
-    if fix:
-        fixes_applied = run_fixes(amplifier_home, report)
-        # Re-run diagnostics to show updated state
-        if fixes_applied:
-            report = run_diagnostics(amplifier_home)
+@main.command(help="Show version, platform, and environment information.")
+def version() -> None:
+    """Show version information."""
+    info = get_version_info()
 
-    if as_json:
-        _print_doctor_json(report, fixes_applied)
+    click.echo("Amplifier Distro - Version\n")
+    click.echo(f"  amplifier-distro:  {info.distro_version}")
+    if info.amplifier_version:
+        click.echo(f"  amplifier:         {info.amplifier_version}")
     else:
-        _print_doctor_report(report, fixes_applied)
+        click.echo("  amplifier:         not installed")
+    click.echo(f"  Python:            {info.python_version}")
+    click.echo(f"  Platform:          {info.platform}")
+    click.echo(f"  Install method:    {info.install_method}")
 
-    # Exit non-zero if any errors remain
-    if report.summary["error"] > 0:
+
+@main.command(help="Self-update amplifier-distro to the latest release.")
+def update() -> None:
+    """Self-update amplifier-distro."""
+    click.echo("Checking for updates...")
+
+    update_info = check_for_updates()
+    if update_info is None:
+        info = get_version_info()
+        click.echo(f"Already at latest version ({info.distro_version}).")
+        return
+
+    click.echo(
+        f"Update available: v{update_info.current_version} -> "
+        f"v{update_info.latest_version}"
+    )
+    click.echo("Updating...")
+
+    success, message = run_self_update()
+    if success:
+        click.echo(message)
+    else:
+        click.echo(f"Update failed: {message}", err=True)
         sys.exit(1)
+
+
+# ── Internal helpers ─────────────────────────────────────────────
+
+
+def _show_update_notice() -> None:
+    """Show an update notice if a newer version is available.
+
+    Non-blocking: any failure is silently ignored.
+    """
+    try:
+        info = check_for_updates()
+        if info is not None:
+            click.echo(
+                f"\nUpdate available: v{info.current_version} -> "
+                f"v{info.latest_version}. "
+                "Run `amp-distro update` to upgrade."
+            )
+    except Exception:
+        pass  # Never let update check crash the status command
 
 
 def _print_doctor_report(report: DoctorReport, fixes: list[str]) -> None:

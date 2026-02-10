@@ -91,6 +91,13 @@ BACKUP_EXCLUDE = [
     SERVER_DIR,  # Runtime state, not config
 ]
 
+# --- Update Check ---
+UPDATE_CHECK_CACHE_FILENAME = "update-check.json"  # relative to CACHE_DIR
+# Full path: ~/.amplifier/cache/update-check.json
+UPDATE_CHECK_TTL_HOURS = 24  # Don't re-check more than once per day
+PYPI_PACKAGE_NAME = "amplifier-distro"
+GITHUB_REPO = "microsoft/amplifier-distro"
+
 # --- Project-Level Conventions ---
 # These files may appear in a project's working directory
 PROJECT_AGENTS_FILENAME = "AGENTS.md"
