@@ -69,6 +69,7 @@ SERVER_SOCKET = "server.sock"  # Unix socket for local IPC
 SERVER_PID_FILE = "server.pid"
 SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
+SLACK_SESSIONS_FILENAME = "slack-sessions.json"  # Slack bridge session mappings
 
 # --- Interface Registry ---
 # When an interface is installed, it registers here

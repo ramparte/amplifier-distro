@@ -56,14 +56,17 @@ class CommandHandler:
 
     COMMANDS: dict[str, str] = {
         "list": "List recent Amplifier sessions",
+        "sessions": "List active bridge sessions",
         "projects": "List known projects",
         "new": "Start a new Amplifier session",
         "connect": "Connect to an existing session",
+        "disconnect": "Disconnect from the current session",
         "status": "Show current session status",
         "breakout": "Move session to its own channel",
         "end": "End the current session",
         "help": "Show help",
         "discover": "Discover local sessions on this machine",
+        "config": "Show bridge configuration",
     }
 
     def __init__(
@@ -87,10 +90,12 @@ class CommandHandler:
             "<@U123> connect abc123" -> ("connect", ["abc123"])
             "new my cool session" -> ("new", ["my", "cool", "session"])
         """
-        # Strip bot mention
+        # Strip bot mention (handles both <@U123> and <@U123|displayname>)
         cleaned = text.strip()
         if bot_user_id:
-            cleaned = re.sub(rf"<@{re.escape(bot_user_id)}>", "", cleaned).strip()
+            cleaned = re.sub(
+                rf"<@{re.escape(bot_user_id)}(?:\|[^>]*)?>", "", cleaned
+            ).strip()
 
         # Also strip the bot name
         if self._config.bot_name:
@@ -107,11 +112,11 @@ class CommandHandler:
         # Normalize aliases
         aliases = {
             "ls": "list",
-            "sessions": "list",
             "start": "new",
             "create": "new",
             "attach": "connect",
             "join": "connect",
+            "disconnect": "end",
             "info": "status",
             "quit": "end",
             "stop": "end",
@@ -349,4 +354,43 @@ class CommandHandler:
                 line += f" | _{s.name}_"
             lines.append(line)
 
+        return CommandResult(text="\n".join(lines))
+
+    async def cmd_sessions(self, args: list[str], ctx: CommandContext) -> CommandResult:
+        """List active bridge sessions (Slack-to-Amplifier mappings)."""
+        active = self._sessions.list_active()
+        if not active:
+            return CommandResult(text="_No active bridge sessions._")
+
+        lines = [f"*Active Bridge Sessions* ({len(active)}):\n"]
+        for m in active:
+            short_id = m.session_id[:8]
+            channel_ref = f"<#{m.channel_id}>"
+            line = f"• `{short_id}` in {channel_ref}"
+            if m.description:
+                line += f" - {m.description}"
+            lines.append(line)
+
+        return CommandResult(text="\n".join(lines))
+
+    async def cmd_config(self, args: list[str], ctx: CommandContext) -> CommandResult:
+        """Show current bridge configuration."""
+        lines = [
+            "*Bridge Configuration:*\n",
+            f"• *Bot name:* {self._config.bot_name}",
+        ]
+        if self._config.hub_channel_id:
+            lines.append(f"• *Hub channel:* <#{self._config.hub_channel_id}>")
+        else:
+            lines.append("• *Hub channel:* _not set_")
+        lines.extend(
+            [
+                f"• *Thread per session:* {self._config.thread_per_session}",
+                f"• *Allow breakout:* {self._config.allow_breakout}",
+                f"• *Channel prefix:* `{self._config.channel_prefix}`",
+                f"• *Mode:* {self._config.mode}",
+            ]
+        )
+        if self._config.default_bundle:
+            lines.append(f"• *Default bundle:* {self._config.default_bundle}")
         return CommandResult(text="\n".join(lines))

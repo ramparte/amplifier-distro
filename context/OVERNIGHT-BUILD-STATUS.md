@@ -3,11 +3,11 @@
 This file tracks progress through the overnight build tasks.
 Updated by the orchestrator after each task.
 
-## Overall Status: NOT STARTED
+## Overall Status: IN PROGRESS
 
 | Task | Name | Status | Tests Added | Notes |
 |------|------|--------|-------------|-------|
-| T1 | Server Robustness | PENDING | - | |
+| T1 | Server Robustness | DONE | +34 | daemon.py, startup.py, CLI subcommands, systemd service |
 | T2 | Slack Bridge Fix | PENDING | - | |
 | T3 | Dev Memory | PENDING | - | |
 | T4 | Voice Bridge | PENDING | - | |
@@ -21,8 +21,14 @@ Updated by the orchestrator after each task.
 ## Test Count Tracking
 
 - Starting: 469
-- Current: 469
+- After T1: 503
+- Current: 503
 
 ## Task Details
 
-(Updated as tasks complete)
+### T1: Server Robustness - DONE
+- Commit: 671cc22
+- Files created: daemon.py, startup.py, amplifier-distro.service, install-service.sh, test_daemon.py
+- Files modified: conventions.py (+SERVER_LOG_FILE), cli.py (click.group with subcommands)
+- All 4 sub-tasks complete (T1.1-T1.4)
+- 34 new tests, 0 regressions

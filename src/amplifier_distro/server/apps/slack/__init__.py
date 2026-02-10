@@ -103,7 +103,13 @@ def initialize(
                 backend = BridgeBackend()
             logger.info("Slack bridge using own backend (standalone mode)")
 
-    session_manager = SlackSessionManager(client, backend, config)
+    # Enable session persistence in production (not simulator/test mode)
+    from .sessions import _default_persistence_path
+
+    persistence_path = (
+        _default_persistence_path() if not config.simulator_mode else None
+    )
+    session_manager = SlackSessionManager(client, backend, config, persistence_path)
     command_handler = CommandHandler(session_manager, discovery, config)
     event_handler = SlackEventHandler(client, session_manager, command_handler, config)
 

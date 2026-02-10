@@ -11,12 +11,25 @@ Conversation model:
 
 The conversation_key is "channel_id:thread_ts" for threads, or just
 "channel_id" for top-level channel conversations.
+
+Persistence:
+- Session mappings are persisted to a JSON file so they survive restarts.
+- The file path comes from conventions.py (SLACK_SESSIONS_FILENAME).
+- Mappings are loaded on startup and saved on every change.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
+
+from amplifier_distro.conventions import (
+    AMPLIFIER_HOME,
+    SERVER_DIR,
+    SLACK_SESSIONS_FILENAME,
+)
 
 from .backend import SessionBackend
 from .client import SlackClient
@@ -26,12 +39,21 @@ from .models import SessionMapping, SlackChannel, SlackMessage
 logger = logging.getLogger(__name__)
 
 
+def _default_persistence_path() -> Path:
+    """Return the default path for session persistence file."""
+    return Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / SLACK_SESSIONS_FILENAME
+
+
 class SlackSessionManager:
     """Manages Slack-to-Amplifier session mappings.
 
     This is the core routing table. When a message comes in from Slack,
     the manager looks up which Amplifier session it belongs to and
     routes the message through the backend.
+
+    Session mappings are optionally persisted to disk as JSON so they
+    survive server restarts. Pass persistence_path=None to disable
+    persistence (useful in tests).
     """
 
     def __init__(
@@ -39,13 +61,67 @@ class SlackSessionManager:
         client: SlackClient,
         backend: SessionBackend,
         config: SlackConfig,
+        persistence_path: Path | None = None,
     ) -> None:
         self._client = client
         self._backend = backend
         self._config = config
+        self._persistence_path = persistence_path
         self._mappings: dict[str, SessionMapping] = {}
         # Track which channels are breakout channels
         self._breakout_channels: dict[str, str] = {}  # channel_id -> session_id
+        # Load persisted sessions on startup
+        self._load_sessions()
+
+    def _load_sessions(self) -> None:
+        """Load session mappings from the persistence file."""
+        if self._persistence_path is None or not self._persistence_path.exists():
+            return
+        try:
+            data = json.loads(self._persistence_path.read_text())
+            for entry in data:
+                mapping = SessionMapping(
+                    session_id=entry["session_id"],
+                    channel_id=entry["channel_id"],
+                    thread_ts=entry.get("thread_ts"),
+                    project_id=entry.get("project_id", ""),
+                    description=entry.get("description", ""),
+                    created_by=entry.get("created_by", ""),
+                    created_at=entry.get("created_at", ""),
+                    last_active=entry.get("last_active", ""),
+                    is_active=entry.get("is_active", True),
+                )
+                key = mapping.conversation_key
+                self._mappings[key] = mapping
+            logger.info(
+                f"Loaded {len(data)} session mappings from {self._persistence_path}"
+            )
+        except Exception:
+            logger.warning("Failed to load session mappings", exc_info=True)
+
+    def _save_sessions(self) -> None:
+        """Save session mappings to the persistence file."""
+        if self._persistence_path is None:
+            return
+        try:
+            self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
+            data = [
+                {
+                    "session_id": m.session_id,
+                    "channel_id": m.channel_id,
+                    "thread_ts": m.thread_ts,
+                    "project_id": m.project_id,
+                    "description": m.description,
+                    "created_by": m.created_by,
+                    "created_at": m.created_at,
+                    "last_active": m.last_active,
+                    "is_active": m.is_active,
+                }
+                for m in self._mappings.values()
+            ]
+            self._persistence_path.write_text(json.dumps(data, indent=2))
+        except Exception:
+            logger.warning("Failed to save session mappings", exc_info=True)
 
     @property
     def mappings(self) -> dict[str, SessionMapping]:
@@ -129,6 +205,7 @@ class SlackSessionManager:
             last_active=now,
         )
         self._mappings[key] = mapping
+        self._save_sessions()
         logger.info(f"Created session {info.session_id} mapped to {key}")
         return mapping
 
@@ -144,6 +221,7 @@ class SlackSessionManager:
 
         # Update activity timestamp
         mapping.last_active = datetime.now(UTC).isoformat()
+        self._save_sessions()
 
         # Send to backend
         try:
@@ -165,6 +243,7 @@ class SlackSessionManager:
             return False
 
         mapping.is_active = False
+        self._save_sessions()
         try:
             await self._backend.end_session(mapping.session_id)
         except Exception:
@@ -210,6 +289,7 @@ class SlackSessionManager:
         mapping.thread_ts = None  # Now it's channel-level
         self._mappings[new_channel.id] = mapping
         self._breakout_channels[new_channel.id] = mapping.session_id
+        self._save_sessions()
 
         # Notify in the new channel
         await self._client.post_message(

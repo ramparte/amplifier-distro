@@ -1198,3 +1198,411 @@ class TestSocketModeDedup:
         assert adapter._is_duplicate("C1:1.0") is False
         assert adapter._is_duplicate("C1:2.0") is False
         assert adapter._is_duplicate("C2:1.0") is False
+
+
+# --- Command Routing Fix Tests ---
+
+
+class TestCommandRoutingFix:
+    """Test that command routing works for all mention formats.
+
+    The bug: Slack sends mentions as <@U123> or <@U123|displayname>.
+    The old regex only matched <@U123>, so <@U123|name> commands
+    were not stripped, causing all commands to appear "unknown".
+    """
+
+    def test_parse_command_with_display_name_mention(self, command_handler):
+        """<@U_BOT|amp> list should parse correctly."""
+        cmd, args = command_handler.parse_command("<@U_BOT|amp> list", "U_BOT")
+        assert cmd == "list"
+        assert args == []
+
+    def test_parse_command_with_display_name_and_args(self, command_handler):
+        """<@U_BOT|SlackBridge> connect abc123 should parse correctly."""
+        cmd, args = command_handler.parse_command(
+            "<@U_BOT|SlackBridge> connect abc123", "U_BOT"
+        )
+        assert cmd == "connect"
+        assert args == ["abc123"]
+
+    def test_parse_command_display_name_only(self, command_handler):
+        """Just mentioning <@U_BOT|amp> with no command should default to help."""
+        cmd, args = command_handler.parse_command("<@U_BOT|amp>", "U_BOT")
+        assert cmd == "help"
+        assert args == []
+
+    def test_parse_command_standard_mention(self, command_handler):
+        """Standard <@U_BOT> still works (regression guard)."""
+        cmd, args = command_handler.parse_command("<@U_BOT> status", "U_BOT")
+        assert cmd == "status"
+        assert args == []
+
+    def test_disconnect_alias(self, command_handler):
+        """disconnect should alias to end."""
+        cmd, _ = command_handler.parse_command("<@U_BOT> disconnect", "U_BOT")
+        assert cmd == "end"
+
+
+# --- Integration Tests: Full Event Pipeline ---
+
+
+class TestEventPipelineIntegration:
+    """Integration tests routing each command through the full event pipeline.
+
+    Each test sends a Slack event payload through handle_event_payload()
+    and verifies the bridge responds correctly.
+    """
+
+    def _make_handler(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        from amplifier_distro.server.apps.slack.events import SlackEventHandler
+
+        return SlackEventHandler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+
+    def _app_mention_payload(self, text, channel="C_HUB", user="U1", ts="1.0"):
+        """Build an app_mention event payload."""
+        return {
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": text,
+                "user": user,
+                "channel": channel,
+                "ts": ts,
+            },
+        }
+
+    def test_help_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(self._app_mention_payload("<@U_AMP_BOT> help"))
+        )
+        assert len(slack_client.sent_messages) >= 1
+        # Help response uses blocks
+        sent = slack_client.sent_messages[0]
+        assert sent.channel == "C_HUB"
+
+    def test_list_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(self._app_mention_payload("<@U_AMP_BOT> list"))
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+    def test_new_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> new my test session")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+        text = slack_client.sent_messages[0].text
+        assert "Started" in text or "session" in text.lower()
+
+    def test_status_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> status")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+    def test_discover_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> discover")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+    def test_sessions_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> sessions")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+    def test_config_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> config")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+        text = slack_client.sent_messages[0].text
+        assert "Configuration" in text
+
+    def test_connect_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> connect abc123")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+    def test_disconnect_via_event(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT> disconnect")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+        text = slack_client.sent_messages[0].text
+        assert "No active session" in text
+
+    def test_display_name_mention_routes_correctly(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        """Slack mentions with |displayname should route to the right command."""
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload("<@U_AMP_BOT|amp> list")
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1
+
+
+# --- Edge Case Tests ---
+
+
+class TestCommandEdgeCases:
+    """Test edge cases in command parsing and handling."""
+
+    def test_empty_message_text(self, command_handler):
+        """Empty text should parse to help."""
+        cmd, args = command_handler.parse_command("", "U_BOT")
+        assert cmd == "help"
+        assert args == []
+
+    def test_whitespace_only_message(self, command_handler):
+        """Whitespace-only text should parse to help."""
+        cmd, args = command_handler.parse_command("   ", "U_BOT")
+        assert cmd == "help"
+        assert args == []
+
+    def test_unknown_command_response(self, command_handler):
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(command_handler.handle("xyzzy", [], ctx))
+        assert "Unknown command" in result.text
+        assert "help" in result.text.lower()
+
+    def test_malformed_mention_treated_as_text(self, command_handler):
+        """Partial mentions like <@U_BOT should not crash."""
+        cmd, args = command_handler.parse_command("<@U_BOT list", "U_BOT")
+        # The regex won't match a malformed mention, so it becomes the first word
+        assert cmd is not None  # Should not crash
+
+    def test_mention_with_extra_spaces(self, command_handler):
+        """Extra spaces between mention and command should work."""
+        cmd, args = command_handler.parse_command("<@U_BOT>   list  ", "U_BOT")
+        assert cmd == "list"
+        assert args == []
+
+    def test_cmd_sessions_empty(self, command_handler):
+        """Sessions command with no active sessions."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(command_handler.handle("sessions", [], ctx))
+        assert "No active" in result.text
+
+    def test_cmd_config_shows_bot_name(self, command_handler):
+        """Config command includes bot name."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(command_handler.handle("config", [], ctx))
+        assert "amp" in result.text  # bot_name from slack_config fixture
+
+
+# --- Session Persistence Tests ---
+
+
+class TestSessionPersistence:
+    """Test session persistence to JSON file."""
+
+    def test_save_and_load_round_trip(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Sessions saved to disk are loaded back on new manager creation."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+
+        # Create manager with persistence, add a session
+        mgr1 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr1.create_session("C1", "t1", "U1", "persisted session"))
+
+        # Verify file was written
+        assert persist_path.exists()
+        data = json.loads(persist_path.read_text())
+        assert len(data) == 1
+        assert data[0]["channel_id"] == "C1"
+        assert data[0]["thread_ts"] == "t1"
+        assert data[0]["description"] == "persisted session"
+
+        # Create a NEW manager pointing at same file - should load the session
+        mgr2 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr2.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.description == "persisted session"
+        assert loaded.channel_id == "C1"
+        assert loaded.is_active is True
+
+    def test_persistence_survives_end_session(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Ending a session is persisted (is_active=False)."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr.create_session("C1", "t1", "U1"))
+        asyncio.run(mgr.end_session("C1", "t1"))
+
+        # Reload and verify
+        mgr2 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr2.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.is_active is False
+
+    def test_persistence_no_file_on_startup(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Manager starts cleanly when no persistence file exists."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "nonexistent" / "slack-sessions.json"
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        assert mgr.list_active() == []
+
+    def test_persistence_disabled_when_none(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """When persistence_path is None, no file operations occur."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=None
+        )
+        asyncio.run(mgr.create_session("C1", "t1", "U1"))
+        # No file should be created anywhere in tmp_path
+        assert list(tmp_path.iterdir()) == []
+
+    def test_persistence_includes_all_fields(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Persisted JSON includes all required session fields."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr.create_session("C1", "t1", "U1", "full fields test"))
+
+        data = json.loads(persist_path.read_text())
+        record = data[0]
+        required_fields = {
+            "session_id",
+            "channel_id",
+            "thread_ts",
+            "created_at",
+            "last_active",
+        }
+        for field in required_fields:
+            assert field in record, f"Missing field: {field}"
+
+    def test_persistence_handles_corrupt_file(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Manager handles corrupt persistence file gracefully."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        persist_path.write_text("NOT VALID JSON {{{{")
+
+        # Should not raise, just log a warning and start empty
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        assert mgr.list_active() == []
+
+    def test_default_persistence_path_uses_conventions(self):
+        """The default persistence path is built from conventions constants."""
+        from amplifier_distro.conventions import (
+            AMPLIFIER_HOME,
+            SERVER_DIR,
+            SLACK_SESSIONS_FILENAME,
+        )
+        from amplifier_distro.server.apps.slack.sessions import (
+            _default_persistence_path,
+        )
+
+        path = _default_persistence_path()
+        assert (
+            path
+            == Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / SLACK_SESSIONS_FILENAME
+        )

@@ -164,8 +164,9 @@ class SlackEventHandler:
         )
 
         # Check if this is a command (mentions bot or starts with bot name)
+        # Slack sends mentions as <@U123> or <@U123|displayname> - match both
         is_command = (
-            f"<@{bot_user_id}>" in text
+            f"<@{bot_user_id}" in text
             or text.lower().startswith(f"@{self._config.bot_name}")
             or text.lower().startswith(f"{self._config.bot_name} ")
         )
