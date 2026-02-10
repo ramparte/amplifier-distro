@@ -71,6 +71,10 @@ SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
 SLACK_SESSIONS_FILENAME = "slack-sessions.json"  # Slack bridge session mappings
 
+# --- Crash logs ---
+CRASH_LOG_FILE = "crash.log"  # relative to SERVER_DIR
+WATCHDOG_CRASH_LOG_FILE = "watchdog-crash.log"  # relative to SERVER_DIR
+
 # --- Watchdog ---
 WATCHDOG_PID_FILE = "watchdog.pid"  # relative to SERVER_DIR
 WATCHDOG_LOG_FILE = "watchdog.log"  # relative to SERVER_DIR

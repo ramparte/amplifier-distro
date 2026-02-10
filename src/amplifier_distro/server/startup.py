@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from amplifier_distro import conventions
@@ -40,9 +41,7 @@ class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Format a log record as a JSON string."""
         entry: dict[str, object] = {
-            "timestamp": datetime.fromtimestamp(
-                record.created, tz=UTC
-            ).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -77,10 +76,71 @@ def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> No
     )
     root.addHandler(console_handler)
 
-    # File handler: JSON structured
-    file_handler = logging.FileHandler(str(log_file))
+    # File handler: JSON structured (with rotation)
+    file_handler = RotatingFileHandler(
+        str(log_file), maxBytes=10 * 1024 * 1024, backupCount=3
+    )
     file_handler.setFormatter(JSONFormatter())
     root.addHandler(file_handler)
+
+
+def env_file_paths() -> list[Path]:
+    """Return .env file search paths in priority order."""
+    paths = [Path(conventions.AMPLIFIER_HOME).expanduser() / ".env"]
+    # Also check the distro project directory (editable install)
+    try:
+        import amplifier_distro
+
+        pkg_dir = Path(amplifier_distro.__file__).parent.parent.parent
+        project_env = pkg_dir / ".env"
+        if project_env.exists():
+            paths.append(project_env)
+    except Exception:
+        pass
+    return paths
+
+
+def load_env_file(env_file: Path | None = None) -> list[str]:
+    """Load environment variables from a .env file.
+
+    Parses simple ``KEY=value`` lines (with optional quoting) and sets
+    them via ``os.environ.setdefault`` so existing env vars take
+    precedence.  Comments (``#``) and blank lines are skipped.
+
+    Args:
+        env_file: Explicit path to a ``.env`` file.  When *None*, both
+            ``~/.amplifier/.env`` and the project directory ``.env``
+            are checked (first found wins per variable).
+
+    Returns:
+        List of variable names that were loaded.
+    """
+    files = [env_file] if env_file is not None else env_file_paths()
+    loaded: list[str] = []
+
+    for path in files:
+        if path is None or not path.exists():
+            continue
+        try:
+            for raw_line in path.read_text().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                # Strip matching quotes
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                if key:
+                    os.environ.setdefault(key, value)
+                    loaded.append(key)
+        except OSError:
+            continue
+
+    return loaded
 
 
 def export_keys(keys_file: Path | None = None) -> list[str]:

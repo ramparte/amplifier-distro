@@ -160,9 +160,31 @@ class TestStartCommand:
 
         pid_file = tmp_path / "test.pid"
 
-        with patch(
-            "amplifier_distro.server.daemon.pid_file_path",
-            return_value=pid_file,
+        # Create the server dir so crash log can be opened
+        srv_dir = tmp_path / "server"
+        srv_dir.mkdir()
+
+        with (
+            patch(
+                "amplifier_distro.server.daemon.pid_file_path",
+                return_value=pid_file,
+            ),
+            patch(
+                "amplifier_distro.server.daemon.server_dir",
+                return_value=srv_dir,
+            ),
+            patch(
+                "amplifier_distro.server.daemon.is_port_in_use",
+                return_value=False,
+            ),
+            patch(
+                "amplifier_distro.server.daemon.wait_for_health",
+                return_value=True,
+            ),
+            patch(
+                "amplifier_distro.server.startup.load_env_file",
+                return_value=[],
+            ),
         ):
             from amplifier_distro.server.cli import serve
 

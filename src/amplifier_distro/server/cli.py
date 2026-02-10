@@ -85,17 +85,41 @@ def serve(
 )
 def start(host: str, port: int, apps_dir: str | None, dev: bool) -> None:
     """Start the server as a background daemon."""
-    from amplifier_distro.server.daemon import daemonize, is_running, pid_file_path
+    from amplifier_distro.server.daemon import (
+        daemonize,
+        is_running,
+        pid_file_path,
+        wait_for_health,
+    )
+    from amplifier_distro.server.startup import load_env_file
 
     pid_file = pid_file_path()
     if is_running(pid_file):
         click.echo("Server is already running.", err=True)
         raise SystemExit(1)
 
-    pid = daemonize(host=host, port=port, apps_dir=apps_dir, dev=dev)
-    click.echo(f"Server started (PID {pid})")
-    click.echo(f"  URL: http://{host}:{port}")
-    click.echo(f"  PID file: {pid_file}")
+    # Load .env files so daemon inherits env vars
+    loaded = load_env_file()
+    if loaded:
+        click.echo(f"Loaded env: {', '.join(loaded)}")
+
+    try:
+        pid = daemonize(host=host, port=port, apps_dir=apps_dir, dev=dev)
+    except RuntimeError as e:
+        click.echo(f"Cannot start: {e}", err=True)
+        raise SystemExit(1) from None
+
+    click.echo(f"Server starting (PID {pid})...")
+
+    # Wait for health
+    if wait_for_health(host=host, port=port, timeout=15):
+        click.echo("Server is healthy!")
+        click.echo(f"  URL: http://{host}:{port}")
+        click.echo(f"  PID file: {pid_file}")
+    else:
+        click.echo("Warning: Server started but health check not responding yet.")
+        click.echo("  Check logs: ~/.amplifier/server/server.log")
+        click.echo("  Crash log:  ~/.amplifier/server/crash.log")
 
 
 @serve.command()
@@ -325,6 +349,7 @@ def _run_foreground(
     from amplifier_distro.server.services import init_services
     from amplifier_distro.server.startup import (
         export_keys,
+        load_env_file,
         log_startup_info,
         run_startup_checks,
         setup_logging,
@@ -333,6 +358,13 @@ def _run_foreground(
     # Set up structured logging first
     setup_logging()
     logger = logging.getLogger("amplifier_distro.server")
+
+    # Load .env files
+    loaded_env = load_env_file()
+    if loaded_env:
+        logger.info(
+            "Loaded %d var(s) from .env: %s", len(loaded_env), ", ".join(loaded_env)
+        )
 
     # Export keys from keys.yaml
     exported = export_keys()

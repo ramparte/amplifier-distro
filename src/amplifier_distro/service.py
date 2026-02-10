@@ -202,6 +202,7 @@ def _generate_systemd_server_unit(server_bin: str) -> str:
     """
     path_env = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     port = conventions.SERVER_DEFAULT_PORT
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
     return dedent(f"""\
         [Unit]
         Description=Amplifier Distro Server
@@ -210,10 +211,15 @@ def _generate_systemd_server_unit(server_bin: str) -> str:
         [Service]
         Type=simple
         ExecStart={server_bin} --host 127.0.0.1 --port {port}
-        Restart=on-failure
+        Restart=always
         RestartSec=5
+        StartLimitIntervalSec=60
+        StartLimitBurst=5
         WorkingDirectory=%h
         Environment=PATH={path_env}
+        EnvironmentFile=-{amplifier_home}/.env
+        StandardOutput=journal
+        StandardError=journal
 
         [Install]
         WantedBy=default.target
@@ -224,7 +230,8 @@ def _generate_systemd_watchdog_unit(server_bin: str) -> str:
     """Generate the systemd unit file for the watchdog.
 
     The watchdog unit uses ``Restart=always`` so it is always running.
-    It depends on the server unit via ``Wants=`` and ``After=``.
+    It uses ``Wants=`` (not ``BindsTo=``) so the watchdog survives
+    server death -- that's its whole purpose: detect failure and restart.
 
     Args:
         server_bin: Absolute path to the amp-distro-server binary.
@@ -238,6 +245,7 @@ def _generate_systemd_watchdog_unit(server_bin: str) -> str:
     path_env = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     port = conventions.SERVER_DEFAULT_PORT
     service_name = conventions.SERVICE_NAME
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
     exec_start = (
         f"{python_bin} -m amplifier_distro.server.watchdog"
         f" --host 127.0.0.1 --port {port}"
@@ -253,8 +261,13 @@ def _generate_systemd_watchdog_unit(server_bin: str) -> str:
         ExecStart={exec_start}
         Restart=always
         RestartSec=10
+        StartLimitIntervalSec=300
+        StartLimitBurst=3
         WorkingDirectory=%h
         Environment=PATH={path_env}
+        EnvironmentFile=-{amplifier_home}/.env
+        StandardOutput=journal
+        StandardError=journal
 
         [Install]
         WantedBy=default.target
@@ -343,6 +356,14 @@ def _install_systemd(include_watchdog: bool) -> ServiceResult:
             details.append(
                 f"Warning: could not enable {service_name}-watchdog.service: {output}"
             )
+
+    # Enable linger for WSL2 (user services start at boot without login)
+    ok, output = _run_cmd(["loginctl", "enable-linger", os.environ.get("USER", "")])
+    if ok:
+        details.append("Enabled linger (services start at boot)")
+    else:
+        details.append(f"Note: loginctl enable-linger failed: {output}")
+        details.append("Services will start on first login instead of boot")
 
     return ServiceResult(
         success=True,

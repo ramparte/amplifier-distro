@@ -79,11 +79,52 @@ def cleanup_pid(pid_file: Path) -> None:
         pass
 
 
+def is_port_in_use(host: str, port: int) -> bool:
+    """Check if a port is already in use."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except (ConnectionRefusedError, TimeoutError, OSError):
+        return False
+
+
+def wait_for_health(
+    host: str = "127.0.0.1",
+    port: int = conventions.SERVER_DEFAULT_PORT,
+    timeout: float = 15.0,
+    interval: float = 0.5,
+) -> bool:
+    """Wait for the server health endpoint to respond after startup.
+
+    Polls http://{host}:{port}/api/health until it returns 200 or timeout.
+
+    Returns:
+        True if server became healthy within timeout.
+    """
+    import urllib.error
+    import urllib.request
+
+    url = f"http://{host}:{port}/api/health"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            resp = urllib.request.urlopen(url, timeout=2)  # noqa: S310
+            if resp.status == 200:
+                return True
+        except (urllib.error.URLError, OSError, ValueError):
+            pass
+        time.sleep(interval)
+    return False
+
+
 def daemonize(
     host: str = "127.0.0.1",
     port: int = conventions.SERVER_DEFAULT_PORT,
     apps_dir: str | None = None,
     dev: bool = False,
+    check_port: bool = True,
 ) -> int:
     """Spawn the server as a detached background process.
 
@@ -95,10 +136,17 @@ def daemonize(
         port: Bind port number.
         apps_dir: Optional apps directory path.
         dev: Enable dev mode.
+        check_port: If True, raise RuntimeError when the port is busy.
 
     Returns:
         The PID of the spawned background process.
+
+    Raises:
+        RuntimeError: If *check_port* is True and the port is in use.
     """
+    if check_port and is_port_in_use(host, port):
+        raise RuntimeError(f"Port {port} is already in use")
+
     cmd = [
         sys.executable,
         "-m",
@@ -113,12 +161,17 @@ def daemonize(
     if dev:
         cmd.append("--dev")
 
+    crash_log = server_dir() / conventions.CRASH_LOG_FILE
+    crash_log.parent.mkdir(parents=True, exist_ok=True)
+    crash_fh = open(crash_log, "a")  # noqa: SIM115
+
     process = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=crash_fh,
+        stderr=crash_fh,
         start_new_session=True,
     )
+    crash_fh.close()  # Parent doesn't need the fd
 
     pid_file = pid_file_path()
     write_pid(pid_file, process.pid)

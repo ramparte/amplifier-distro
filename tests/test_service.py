@@ -78,9 +78,9 @@ class TestSystemdServerUnit:
         assert "Service" in parser
         assert "Install" in parser
 
-    def test_restart_on_failure(self) -> None:
+    def test_restart_always(self) -> None:
         parser = self._parse(self._generate())
-        assert parser["Service"]["Restart"] == "on-failure"
+        assert parser["Service"]["Restart"] == "always"
 
     def test_after_network(self) -> None:
         parser = self._parse(self._generate())

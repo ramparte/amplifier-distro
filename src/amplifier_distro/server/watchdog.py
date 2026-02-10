@@ -18,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from amplifier_distro import conventions
@@ -99,7 +100,9 @@ def _setup_watchdog_logging() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = logging.FileHandler(str(log_file))
+    file_handler = RotatingFileHandler(
+        str(log_file), maxBytes=5 * 1024 * 1024, backupCount=2
+    )
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
 
@@ -304,12 +307,17 @@ def start_watchdog(
     if dev:
         cmd.append("--dev")
 
+    crash_log = server_dir() / conventions.WATCHDOG_CRASH_LOG_FILE
+    crash_log.parent.mkdir(parents=True, exist_ok=True)
+    crash_fh = open(crash_log, "a")  # noqa: SIM115
+
     process = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=crash_fh,
+        stderr=crash_fh,
         start_new_session=True,
     )
+    crash_fh.close()  # Parent doesn't need the fd
 
     wd_pid_file = watchdog_pid_file_path()
     write_pid(wd_pid_file, process.pid)
