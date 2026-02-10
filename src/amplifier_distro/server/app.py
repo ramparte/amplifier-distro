@@ -9,6 +9,7 @@ Architecture:
         /api/config          - Distro configuration
         /api/sessions        - Unified session list (all apps)
         /api/bridge          - Amplifier Bridge API (session creation)
+        /api/memory          - Memory storage and retrieval
         /apps/<name>/...     - Mounted app routes
 
 Apps are Python modules that expose:
@@ -87,6 +88,7 @@ class DistroServer:
         self._core_router = APIRouter(prefix="/api", tags=["core"])
         self._setup_core_routes()
         self._setup_bridge_routes()
+        self._setup_memory_routes()
         self._setup_root_redirect()
         self._app.include_router(self._core_router)
         self._mount_static_files()
@@ -304,6 +306,83 @@ class DistroServer:
                     status_code=404,
                     content={"error": str(e)},
                 )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+    def _setup_memory_routes(self) -> None:
+        """Set up Memory API routes for cross-interface memory storage."""
+
+        @self._core_router.post("/memory/remember")
+        async def memory_remember(request: Request) -> JSONResponse:
+            """Store a memory with auto-categorization."""
+            from amplifier_distro.server.memory import get_memory_service
+
+            body = await request.json()
+            text = body.get("text", "")
+            if not text:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "text is required"},
+                )
+            try:
+                service = get_memory_service()
+                result = service.remember(text)
+                return JSONResponse(content=result)
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+        @self._core_router.get("/memory/recall")
+        async def memory_recall(q: str = "") -> JSONResponse:
+            """Search memories by content, tags, and category."""
+            from amplifier_distro.server.memory import get_memory_service
+
+            if not q:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "q query parameter is required"},
+                )
+            try:
+                service = get_memory_service()
+                results = service.recall(q)
+                return JSONResponse(content={"matches": results, "count": len(results)})
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+        @self._core_router.get("/memory/work-status")
+        async def memory_work_status() -> JSONResponse:
+            """Read the current work log."""
+            from amplifier_distro.server.memory import get_memory_service
+
+            try:
+                service = get_memory_service()
+                result = service.work_status()
+                return JSONResponse(content=result)
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+        @self._core_router.post("/memory/work-log")
+        async def memory_update_work_log(request: Request) -> JSONResponse:
+            """Update the work log."""
+            from amplifier_distro.server.memory import get_memory_service
+
+            body = await request.json()
+            items = body.get("items", [])
+            try:
+                service = get_memory_service()
+                result = service.update_work_log(items)
+                return JSONResponse(content=result)
             except Exception as e:
                 return JSONResponse(
                     status_code=500,

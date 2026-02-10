@@ -67,6 +67,9 @@ class CommandHandler:
         "help": "Show help",
         "discover": "Discover local sessions on this machine",
         "config": "Show bridge configuration",
+        "remember": "Store a memory (e.g., `remember prefer tabs over spaces`)",
+        "recall": "Search memories (e.g., `recall architecture decisions`)",
+        "work-status": "Show current work log",
     }
 
     def __init__(
@@ -122,6 +125,7 @@ class CommandHandler:
             "stop": "end",
             "close": "end",
             "?": "help",
+            "work-status": "work_status",
         }
         command = aliases.get(command, command)
 
@@ -393,4 +397,72 @@ class CommandHandler:
         )
         if self._config.default_bundle:
             lines.append(f"• *Default bundle:* {self._config.default_bundle}")
+        return CommandResult(text="\n".join(lines))
+
+    # --- Memory commands ---
+
+    async def cmd_remember(self, args: list[str], ctx: CommandContext) -> CommandResult:
+        """Store a memory via the shared memory service."""
+        if not args:
+            return CommandResult(
+                text="Usage: `remember <text>`\n"
+                "Example: `remember prefer tabs over spaces`"
+            )
+
+        from amplifier_distro.server.memory import get_memory_service
+
+        text = " ".join(args)
+        service = get_memory_service()
+        result = service.remember(text)
+
+        return CommandResult(
+            text=(
+                f"Remembered `{result['id']}` "
+                f"(category: _{result['category']}_, "
+                f"tags: {', '.join(result['tags'])})\n"
+                f"> {result['content']}"
+            )
+        )
+
+    async def cmd_recall(self, args: list[str], ctx: CommandContext) -> CommandResult:
+        """Search memories via the shared memory service."""
+        if not args:
+            return CommandResult(
+                text="Usage: `recall <query>`\nExample: `recall architecture decisions`"
+            )
+
+        from amplifier_distro.server.memory import get_memory_service
+
+        query = " ".join(args)
+        service = get_memory_service()
+        results = service.recall(query)
+
+        if not results:
+            return CommandResult(text=f"_No memories found matching '{query}'._")
+
+        lines = [f"*Found {len(results)} memory(ies):*\n"]
+        for m in results:
+            lines.append(f"- `{m['id']}` ({m['category']}) {m['content']}")
+
+        return CommandResult(text="\n".join(lines))
+
+    async def cmd_work_status(
+        self, args: list[str], ctx: CommandContext
+    ) -> CommandResult:
+        """Show the current work log."""
+        from amplifier_distro.server.memory import get_memory_service
+
+        service = get_memory_service()
+        result = service.work_status()
+
+        items = result.get("items", [])
+        if not items:
+            return CommandResult(text="_No work log entries._")
+
+        lines = ["*Work Log:*\n"]
+        for item in items:
+            status_val = item.get("status", "pending")
+            task = item.get("task", "")
+            lines.append(f"- [{status_val}] {task}")
+
         return CommandResult(text="\n".join(lines))

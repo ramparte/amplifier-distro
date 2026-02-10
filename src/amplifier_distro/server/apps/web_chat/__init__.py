@@ -4,6 +4,10 @@ Serves a self-contained chat UI and provides API endpoints for
 session management and chat. Uses the shared server backend to
 create and interact with Amplifier sessions.
 
+Memory-aware: recognizes "remember this: ..." and "what do you remember
+about ..." patterns and routes them through the memory service instead of
+(or before) the Amplifier backend.
+
 Routes:
     GET  /              - Serves the chat HTML page
     GET  /api/session   - Session connection status
@@ -15,7 +19,9 @@ Routes:
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -31,6 +37,84 @@ _static_dir = Path(__file__).parent / "static"
 # Per-connection session tracking (simple: one active session for web-chat)
 # In the future this becomes per-user via auth tokens.
 _active_session_id: str | None = None
+
+# --- Memory pattern matching ---
+
+# Patterns for "remember this: <text>" style messages
+_REMEMBER_PATTERNS = [
+    re.compile(r"^remember\s+this:\s*(.+)", re.IGNORECASE | re.DOTALL),
+    re.compile(r"^remember\s+that\s+(.+)", re.IGNORECASE | re.DOTALL),
+    re.compile(r"^remember:\s*(.+)", re.IGNORECASE | re.DOTALL),
+]
+
+# Patterns for "what do you remember about <query>" style messages
+_RECALL_PATTERNS = [
+    re.compile(r"^what\s+do\s+you\s+remember\s+about\s+(.+)", re.IGNORECASE),
+    re.compile(r"^recall\s+(.+)", re.IGNORECASE),
+    re.compile(r"^search\s+memory\s+(?:for\s+)?(.+)", re.IGNORECASE),
+]
+
+
+def check_memory_intent(message: str) -> tuple[str, str] | None:
+    """Check if a message is a memory command.
+
+    Returns:
+        A (action, text) tuple if it's a memory command, or None.
+        action is 'remember' or 'recall'.
+    """
+    stripped = message.strip()
+    for pattern in _REMEMBER_PATTERNS:
+        match = pattern.match(stripped)
+        if match:
+            return ("remember", match.group(1).strip())
+    for pattern in _RECALL_PATTERNS:
+        match = pattern.match(stripped)
+        if match:
+            return ("recall", match.group(1).strip())
+    return None
+
+
+def _handle_memory_command(action: str, text: str) -> dict[str, Any]:
+    """Handle a memory command and return a chat-style response.
+
+    Args:
+        action: 'remember' or 'recall'.
+        text: The memory content or search query.
+
+    Returns:
+        Dict with 'response' key suitable for chat response.
+    """
+    from amplifier_distro.server.memory import get_memory_service
+
+    service = get_memory_service()
+
+    if action == "remember":
+        result = service.remember(text)
+        return {
+            "response": (
+                f"Remembered! Stored as {result['id']} "
+                f"(category: {result['category']}, "
+                f"tags: {', '.join(result['tags'])})"
+            ),
+            "memory_action": "remember",
+            "memory_result": result,
+        }
+    else:  # recall
+        results = service.recall(text)
+        if not results:
+            return {
+                "response": f"No memories found matching '{text}'.",
+                "memory_action": "recall",
+                "memory_result": [],
+            }
+        lines = [f"Found {len(results)} memory(ies):\n"]
+        for m in results:
+            lines.append(f"- [{m['id']}] ({m['category']}) {m['content']}")
+        return {
+            "response": "\n".join(lines),
+            "memory_action": "recall",
+            "memory_result": results,
+        }
 
 
 def _get_backend():
@@ -148,6 +232,10 @@ async def create_session(request: Request) -> JSONResponse:
 async def chat(request: Request) -> JSONResponse:
     """Chat endpoint - send a message to the active session.
 
+    Memory-aware: intercepts "remember this: ..." and "what do you
+    remember about ..." patterns and routes them through the memory
+    service. Memory commands work even without an active session.
+
     Body:
         message: str - The user's message
     """
@@ -161,6 +249,20 @@ async def chat(request: Request) -> JSONResponse:
             status_code=400,
             content={"error": "message is required"},
         )
+
+    # Check for memory commands first - these work without a session
+    memory_intent = check_memory_intent(user_message)
+    if memory_intent is not None:
+        action, text = memory_intent
+        try:
+            result = _handle_memory_command(action, text)
+            result["session_connected"] = _active_session_id is not None
+            return JSONResponse(content=result)
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={"error": str(e), "type": type(e).__name__},
+            )
 
     if _active_session_id is None:
         return JSONResponse(
