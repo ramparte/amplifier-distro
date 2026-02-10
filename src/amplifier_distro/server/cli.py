@@ -1,50 +1,246 @@
 """CLI entry point for the distro server.
 
 Usage:
-    amp-distro-server [OPTIONS]              # via installed script
-    python -m amplifier_distro.server [OPTIONS]  # via module
+    amp-distro-server [OPTIONS]                # foreground mode (default)
+    amp-distro-server start [OPTIONS]          # start as background daemon
+    amp-distro-server stop                     # stop background daemon
+    amp-distro-server restart [OPTIONS]        # restart background daemon
+    amp-distro-server status                   # check daemon status
+    python -m amplifier_distro.server [OPTIONS]  # via module (foreground)
 """
 
+from __future__ import annotations
+
+import socket
 from pathlib import Path
 
 import click
 
+from amplifier_distro import conventions
 
-@click.command("amp-distro-server")
+
+@click.group("amp-distro-server", invoke_without_command=True)
 @click.option(
-    "--host", default="127.0.0.1", help="Bind host (use 0.0.0.0 for LAN/Tailscale)"
+    "--host",
+    default="127.0.0.1",
+    help="Bind host (use 0.0.0.0 for LAN/Tailscale)",
 )
-@click.option("--port", default=8400, type=int, help="Bind port")
 @click.option(
-    "--apps-dir", default=None, type=click.Path(exists=True), help="Apps directory"
+    "--port",
+    default=conventions.SERVER_DEFAULT_PORT,
+    type=int,
+    help="Bind port",
+)
+@click.option(
+    "--apps-dir",
+    default=None,
+    type=click.Path(exists=True),
+    help="Apps directory",
 )
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
 @click.option(
-    "--dev", is_flag=True, help="Dev mode: skip wizard, use existing environment"
+    "--dev",
+    is_flag=True,
+    help="Dev mode: skip wizard, use existing environment",
 )
-def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -> None:
-    """Start the Amplifier distro server."""
+@click.pass_context
+def serve(
+    ctx: click.Context,
+    host: str,
+    port: int,
+    apps_dir: str | None,
+    reload: bool,
+    dev: bool,
+) -> None:
+    """Amplifier distro server.
+
+    Run without a subcommand for foreground mode, or use
+    start/stop/restart/status for daemon management.
+    """
+    ctx.ensure_object(dict)
+    if ctx.invoked_subcommand is None:
+        _run_foreground(host, port, apps_dir, reload, dev)
+
+
+@serve.command()
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help="Bind host (use 0.0.0.0 for LAN/Tailscale)",
+)
+@click.option(
+    "--port",
+    default=conventions.SERVER_DEFAULT_PORT,
+    type=int,
+    help="Bind port",
+)
+@click.option("--apps-dir", default=None, help="Apps directory")
+@click.option(
+    "--dev",
+    is_flag=True,
+    help="Dev mode: skip wizard, use existing environment",
+)
+def start(host: str, port: int, apps_dir: str | None, dev: bool) -> None:
+    """Start the server as a background daemon."""
+    from amplifier_distro.server.daemon import daemonize, is_running, pid_file_path
+
+    pid_file = pid_file_path()
+    if is_running(pid_file):
+        click.echo("Server is already running.", err=True)
+        raise SystemExit(1)
+
+    pid = daemonize(host=host, port=port, apps_dir=apps_dir, dev=dev)
+    click.echo(f"Server started (PID {pid})")
+    click.echo(f"  URL: http://{host}:{port}")
+    click.echo(f"  PID file: {pid_file}")
+
+
+@serve.command()
+def stop() -> None:
+    """Stop the running server daemon."""
+    from amplifier_distro.server.daemon import pid_file_path, read_pid, stop_process
+
+    pid_file = pid_file_path()
+    pid = read_pid(pid_file)
+    if pid is None:
+        click.echo("No PID file found — server may not be running.")
+        return
+
+    click.echo(f"Stopping server (PID {pid})...")
+    stopped = stop_process(pid_file)
+    if stopped:
+        click.echo("Server stopped.")
+    else:
+        click.echo("Could not stop server.", err=True)
+        raise SystemExit(1)
+
+
+@serve.command()
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help="Bind host (use 0.0.0.0 for LAN/Tailscale)",
+)
+@click.option(
+    "--port",
+    default=conventions.SERVER_DEFAULT_PORT,
+    type=int,
+    help="Bind port",
+)
+@click.option("--apps-dir", default=None, help="Apps directory")
+@click.option(
+    "--dev",
+    is_flag=True,
+    help="Dev mode: skip wizard, use existing environment",
+)
+@click.pass_context
+def restart(
+    ctx: click.Context,
+    host: str,
+    port: int,
+    apps_dir: str | None,
+    dev: bool,
+) -> None:
+    """Restart the server daemon (stop + start)."""
+    ctx.invoke(stop)
+    ctx.invoke(start, host=host, port=port, apps_dir=apps_dir, dev=dev)
+
+
+@serve.command("status")
+def server_status() -> None:
+    """Check server daemon status."""
+    from amplifier_distro.server.daemon import (
+        cleanup_pid,
+        is_running,
+        pid_file_path,
+        read_pid,
+    )
+
+    pid_file = pid_file_path()
+    pid = read_pid(pid_file)
+    running = is_running(pid_file)
+
+    if running and pid is not None:
+        click.echo(f"Server is running (PID {pid})")
+        # Check if port is responsive
+        port = conventions.SERVER_DEFAULT_PORT
+        if _check_port("127.0.0.1", port):
+            click.echo(f"  Port {port}: listening")
+            click.echo(f"  Health: http://127.0.0.1:{port}/api/health")
+        else:
+            click.echo(f"  Port {port}: not responding (server may be starting)")
+    elif pid is not None:
+        click.echo(f"Server is NOT running (stale PID file for PID {pid})")
+        click.echo("  Cleaning up stale PID file...")
+        cleanup_pid(pid_file)
+    else:
+        click.echo("Server is not running (no PID file)")
+
+
+def _check_port(host: str, port: int) -> bool:
+    """Check if a port is accepting connections."""
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except (ConnectionRefusedError, TimeoutError, OSError):
+        return False
+
+
+def _run_foreground(
+    host: str,
+    port: int,
+    apps_dir: str | None,
+    reload: bool,
+    dev: bool,
+) -> None:
+    """Run the server in the foreground (existing behavior + startup improvements)."""
+    import logging
+
     import uvicorn
 
     from amplifier_distro.server.app import create_server
     from amplifier_distro.server.services import init_services
+    from amplifier_distro.server.startup import (
+        export_keys,
+        log_startup_info,
+        run_startup_checks,
+        setup_logging,
+    )
 
-    # Initialize shared services BEFORE creating the server.
-    # All apps will use these via get_services().
+    # Set up structured logging first
+    setup_logging()
+    logger = logging.getLogger("amplifier_distro.server")
+
+    # Export keys from keys.yaml
+    exported = export_keys()
+    if exported:
+        logger.info(
+            "Exported %d key(s) from keys.yaml: %s",
+            len(exported),
+            ", ".join(exported),
+        )
+
+    # Run pre-flight checks
+    run_startup_checks(logger)
+
+    # Initialize shared services
     services = init_services(dev_mode=dev)
     click.echo(f"Services: backend={type(services.backend).__name__}")
 
     server = create_server(dev_mode=dev)
 
     # Auto-discover apps
+    loaded_apps: list[str] = []
     if apps_dir:
         discovered = server.discover_apps(Path(apps_dir))
+        loaded_apps = discovered
         click.echo(f"Discovered {len(discovered)} app(s): {', '.join(discovered)}")
     else:
         # Default: discover from built-in apps directory
         builtin_apps = Path(__file__).parent / "apps"
         if builtin_apps.exists():
             discovered = server.discover_apps(builtin_apps)
+            loaded_apps = discovered
             if discovered:
                 click.echo(f"Loaded {len(discovered)} app(s): {', '.join(discovered)}")
 
@@ -67,6 +263,15 @@ def serve(host: str, port: int, apps_dir: str | None, reload: bool, dev: bool) -
                 _create_default_config()
         except Exception as e:
             click.echo(f"  Config issue: {e}")
+
+    # Log startup info (structured)
+    log_startup_info(
+        host=host,
+        port=port,
+        apps=loaded_apps,
+        dev_mode=dev,
+        logger=logger,
+    )
 
     click.echo(f"Starting Amplifier Distro Server on {host}:{port}")
     if host == "0.0.0.0":

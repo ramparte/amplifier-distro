@@ -67,6 +67,7 @@ DISTRO_BUNDLE_NAME = "amplifier-distro"
 SERVER_DIR = "server"  # relative to AMPLIFIER_HOME
 SERVER_SOCKET = "server.sock"  # Unix socket for local IPC
 SERVER_PID_FILE = "server.pid"
+SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
 
 # --- Interface Registry ---
