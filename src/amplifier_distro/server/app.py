@@ -199,6 +199,11 @@ class DistroServer:
         @self._core_router.get("/status")
         async def status() -> dict[str, Any]:
             """Get distro status (preflight results)."""
+            from amplifier_distro.server.stub import is_stub_mode, stub_preflight_status
+
+            if is_stub_mode():
+                return stub_preflight_status()
+
             from amplifier_distro.preflight import run_preflight
 
             report = run_preflight()
@@ -314,6 +319,11 @@ class DistroServer:
 
             body = await request.json()
             provider = body.get("provider", "")
+
+            from amplifier_distro.server.stub import is_stub_mode, stub_test_provider
+
+            if is_stub_mode():
+                return JSONResponse(content=stub_test_provider(provider))
 
             if provider == "anthropic":
                 api_key = os.environ.get("ANTHROPIC_API_KEY", "")

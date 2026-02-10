@@ -46,6 +46,11 @@ from amplifier_distro import conventions
     is_flag=True,
     help="Dev mode: skip wizard, use existing environment",
 )
+@click.option(
+    "--stub",
+    is_flag=True,
+    help="Stub mode: serve UI with canned data for fast iteration (implies --dev)",
+)
 @click.pass_context
 def serve(
     ctx: click.Context,
@@ -54,6 +59,7 @@ def serve(
     apps_dir: str | None,
     reload: bool,
     dev: bool,
+    stub: bool,
 ) -> None:
     """Amplifier distro server.
 
@@ -61,8 +67,10 @@ def serve(
     start/stop/restart/status for daemon management.
     """
     ctx.ensure_object(dict)
+    if stub:
+        dev = True  # stub implies dev
     if ctx.invoked_subcommand is None:
-        _run_foreground(host, port, apps_dir, reload, dev)
+        _run_foreground(host, port, apps_dir, reload, dev, stub=stub)
 
 
 @serve.command()
@@ -339,6 +347,8 @@ def _run_foreground(
     apps_dir: str | None,
     reload: bool,
     dev: bool,
+    *,
+    stub: bool = False,
 ) -> None:
     """Run the server in the foreground (existing behavior + startup improvements)."""
     import logging
@@ -359,24 +369,37 @@ def _run_foreground(
     setup_logging()
     logger = logging.getLogger("amplifier_distro.server")
 
-    # Load .env files
-    loaded_env = load_env_file()
-    if loaded_env:
-        logger.info(
-            "Loaded %d var(s) from .env: %s", len(loaded_env), ", ".join(loaded_env)
-        )
+    # Stub mode: activate before anything else reads AMPLIFIER_HOME
+    if stub:
+        from amplifier_distro.server.stub import activate_stub_mode
 
-    # Export keys from keys.yaml
-    exported = export_keys()
-    if exported:
-        logger.info(
-            "Exported %d key(s) from keys.yaml: %s",
-            len(exported),
-            ", ".join(exported),
-        )
+        stub_home = activate_stub_mode()
+        click.echo("--- Stub mode: UI iteration with canned data ---")
+        click.echo(f"  Temp home: {stub_home}")
+        click.echo("  No real services, no writes to ~/.amplifier/")
+        click.echo("  Combine with --reload for live HTML editing")
+    else:
+        # Load .env files (skip in stub -- stub seeds its own env)
+        loaded_env = load_env_file()
+        if loaded_env:
+            logger.info(
+                "Loaded %d var(s) from .env: %s",
+                len(loaded_env),
+                ", ".join(loaded_env),
+            )
 
-    # Run pre-flight checks
-    run_startup_checks(logger)
+        # Export keys from keys.yaml
+        exported = export_keys()
+        if exported:
+            logger.info(
+                "Exported %d key(s) from keys.yaml: %s",
+                len(exported),
+                ", ".join(exported),
+            )
+
+    # Run pre-flight checks (skip in stub mode)
+    if not stub:
+        run_startup_checks(logger)
 
     # Initialize shared services
     services = init_services(dev_mode=dev)

@@ -167,6 +167,11 @@ def _build_status() -> dict[str, Any]:
 @router.get("/detect")
 async def detect_environment() -> dict[str, Any]:
     """Auto-detect environment: GitHub, git, Tailscale, API keys, CLI, bundles."""
+    from amplifier_distro.server.stub import is_stub_mode, stub_detect_environment
+
+    if is_stub_mode():
+        return stub_detect_environment()
+
     result: dict[str, Any] = {}
 
     # GitHub

@@ -90,6 +90,11 @@ async def create_session() -> JSONResponse:
     Returns:
         JSON with client_secret.value and client_secret.expires_at
     """
+    from amplifier_distro.server.stub import is_stub_mode, stub_voice_session
+
+    if is_stub_mode():
+        return JSONResponse(content=stub_voice_session())
+
     api_key = _get_openai_api_key()
     if not api_key:
         return JSONResponse(
@@ -170,6 +175,11 @@ async def exchange_sdp(request: Request) -> PlainTextResponse | JSONResponse:
     Returns:
         SDP answer from OpenAI (text/sdp)
     """
+    from amplifier_distro.server.stub import is_stub_mode, stub_voice_sdp
+
+    if is_stub_mode():
+        return PlainTextResponse(content=stub_voice_sdp(), media_type="application/sdp")
+
     auth_header = request.headers.get("authorization", "")
     if not auth_header:
         return JSONResponse(
