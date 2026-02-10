@@ -14,3 +14,7 @@ snapshots/
 
 # OS
 .DS_Store
+
+# Supervisor artifacts
+supervisor.log
+scripts/overnight-supervisor.sh
