@@ -35,7 +35,7 @@ def _load_keys() -> dict[str, Any]:
     try:
         data = yaml.safe_load(path.read_text())
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (OSError, yaml.YAMLError):
         logger.warning("Failed to read keys.yaml", exc_info=True)
         return {}
 
@@ -50,7 +50,7 @@ def _load_distro_slack() -> dict[str, Any]:
         if isinstance(data, dict) and isinstance(data.get("slack"), dict):
             return data["slack"]
         return {}
-    except Exception:
+    except (OSError, yaml.YAMLError):
         logger.warning("Failed to read distro.yaml", exc_info=True)
         return {}
 

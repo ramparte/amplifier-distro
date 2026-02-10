@@ -71,9 +71,18 @@ def detect_github_identity() -> tuple[str, str]:
 def detect_workspace_root() -> str:
     """Detect a reasonable workspace root directory.
 
-    Returns "~/dev" as default if it exists, otherwise "~/dev".
+    Checks common development directory names and returns the first
+    that exists. Falls back to "~/dev" as the convention default.
     """
-    dev = Path("~/dev").expanduser()
-    if dev.is_dir():
-        return "~/dev"
+    candidates = [
+        "~/dev",
+        "~/Development",
+        "~/projects",
+        "~/src",
+        "~/code",
+        "~/workspace",
+    ]
+    for candidate in candidates:
+        if Path(candidate).expanduser().is_dir():
+            return candidate
     return "~/dev"

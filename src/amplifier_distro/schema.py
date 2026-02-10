@@ -88,6 +88,17 @@ class BackupConfig(BaseModel):
     auto: bool = False
 
 
+class ServerConfig(BaseModel):
+    """Server settings including optional API key authentication.
+
+    If api_key is set, mutation endpoints require an
+    Authorization: Bearer <key> header. Read-only endpoints
+    (health, status, apps) remain open.
+    """
+
+    api_key: str = ""
+
+
 class WatchdogConfig(BaseModel):
     """Watchdog settings for server health monitoring.
 
@@ -109,6 +120,7 @@ class DistroConfig(BaseModel):
     interfaces: InterfacesConfig = Field(default_factory=InterfacesConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)

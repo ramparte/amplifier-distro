@@ -31,11 +31,48 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
+
+# Optional bearer token scheme (auto_error=False so missing header
+# doesn't raise before our logic runs).
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _get_configured_api_key() -> str:
+    """Read the server.api_key from distro config. Returns '' if unset."""
+    try:
+        from amplifier_distro.config import load_config
+
+        return load_config().server.api_key
+    except (ImportError, AttributeError, OSError):
+        logger.debug("Could not read API key from config", exc_info=True)
+        return ""
+
+
+_bearer_dependency = Depends(_bearer_scheme)
+
+
+async def verify_api_key(
+    credentials: HTTPAuthorizationCredentials | None = _bearer_dependency,
+) -> None:
+    """FastAPI dependency that enforces bearer-token auth on mutation routes.
+
+    - If no ``server.api_key`` is configured the request passes through
+      (backward-compatible / local-only use).
+    - If a key IS configured the caller must supply an
+      ``Authorization: Bearer <key>`` header that matches.
+    """
+    api_key = _get_configured_api_key()
+    if not api_key:
+        return  # No key configured — open access
+
+    if credentials is None or credentials.credentials != api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 @dataclass
@@ -175,7 +212,7 @@ class DistroServer:
                 else:
                     logger.warning(f"App {app_path.name} missing 'manifest'")
 
-            except Exception:
+            except (ImportError, AttributeError):
                 logger.exception(f"Failed to load app {app_path.name}")
 
         return registered
@@ -233,7 +270,7 @@ class DistroServer:
                 for name, m in self._apps.items()
             }
 
-        @self._core_router.put("/config")
+        @self._core_router.put("/config", dependencies=[Depends(verify_api_key)])
         async def update_config(request: Request) -> JSONResponse:
             """Update distro.yaml with partial config values.
 
@@ -259,7 +296,8 @@ class DistroServer:
 
                 save_config(cfg)
                 return JSONResponse(content=cfg.model_dump())
-            except Exception as e:
+            except (OSError, ValueError, KeyError) as e:
+                logger.warning("Config update failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
@@ -307,7 +345,9 @@ class DistroServer:
             }
             return JSONResponse(content=integrations)
 
-        @self._core_router.post("/test-provider")
+        @self._core_router.post(
+            "/test-provider", dependencies=[Depends(verify_api_key)]
+        )
         async def test_provider(request: Request) -> JSONResponse:
             """Test a provider connection with a minimal API request.
 
@@ -358,7 +398,8 @@ class DistroServer:
                             "status_code": resp.status_code,
                         }
                     )
-                except Exception as e:
+                except (httpx.HTTPError, OSError) as e:
+                    logger.debug("Anthropic provider test failed: %s", e)
                     return JSONResponse(
                         content={
                             "provider": provider,
@@ -393,7 +434,8 @@ class DistroServer:
                             "status_code": resp.status_code,
                         }
                     )
-                except Exception as e:
+                except (httpx.HTTPError, OSError) as e:
+                    logger.debug("OpenAI provider test failed: %s", e)
                     return JSONResponse(
                         content={
                             "provider": provider,
@@ -435,7 +477,11 @@ class DistroServer:
                 for s in services.backend.list_active_sessions()
             ]
 
-        @self._core_router.post("/bridge/session", response_model=None)
+        @self._core_router.post(
+            "/bridge/session",
+            response_model=None,
+            dependencies=[Depends(verify_api_key)],
+        )
         async def create_session(request: Request) -> JSONResponse:
             """Create an Amplifier session via the shared backend."""
             from amplifier_distro.server.services import get_services
@@ -456,12 +502,15 @@ class DistroServer:
                     }
                 )
             except Exception as e:
+                logger.warning("Session creation failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
                 )
 
-        @self._core_router.post("/bridge/execute")
+        @self._core_router.post(
+            "/bridge/execute", dependencies=[Depends(verify_api_key)]
+        )
         async def execute_prompt(request: Request) -> JSONResponse:
             """Execute a prompt on an existing session."""
             from amplifier_distro.server.services import get_services
@@ -489,6 +538,7 @@ class DistroServer:
                     content={"error": str(e)},
                 )
             except Exception as e:
+                logger.warning("Prompt execution failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
@@ -497,7 +547,9 @@ class DistroServer:
     def _setup_memory_routes(self) -> None:
         """Set up Memory API routes for cross-interface memory storage."""
 
-        @self._core_router.post("/memory/remember")
+        @self._core_router.post(
+            "/memory/remember", dependencies=[Depends(verify_api_key)]
+        )
         async def memory_remember(request: Request) -> JSONResponse:
             """Store a memory with auto-categorization."""
             from amplifier_distro.server.memory import get_memory_service
@@ -513,7 +565,8 @@ class DistroServer:
                 service = get_memory_service()
                 result = service.remember(text)
                 return JSONResponse(content=result)
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, KeyError) as e:
+                logger.warning("Memory remember failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
@@ -533,7 +586,8 @@ class DistroServer:
                 service = get_memory_service()
                 results = service.recall(q)
                 return JSONResponse(content={"matches": results, "count": len(results)})
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, KeyError) as e:
+                logger.warning("Memory recall failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
@@ -548,13 +602,16 @@ class DistroServer:
                 service = get_memory_service()
                 result = service.work_status()
                 return JSONResponse(content=result)
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, KeyError) as e:
+                logger.warning("Work status retrieval failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},
                 )
 
-        @self._core_router.post("/memory/work-log")
+        @self._core_router.post(
+            "/memory/work-log", dependencies=[Depends(verify_api_key)]
+        )
         async def memory_update_work_log(request: Request) -> JSONResponse:
             """Update the work log."""
             from amplifier_distro.server.memory import get_memory_service
@@ -565,7 +622,8 @@ class DistroServer:
                 service = get_memory_service()
                 result = service.update_work_log(items)
                 return JSONResponse(content=result)
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, KeyError) as e:
+                logger.warning("Work log update failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
                     content={"error": str(e), "type": type(e).__name__},

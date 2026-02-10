@@ -8,6 +8,7 @@ All paths come from conventions.py.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from . import conventions
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateInfo(BaseModel):
@@ -202,7 +205,7 @@ def check_for_updates() -> UpdateInfo | None:
         data = resp.json()
         latest = data["info"]["version"]
     except Exception:
-        # Non-blocking: any failure means we just don't know
+        logger.debug("Could not check PyPI for updates", exc_info=True)
         return None
 
     update_available = _parse_version(latest) > _parse_version(current)

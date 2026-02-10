@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -224,7 +225,7 @@ class MemoryService:
         try:
             data = yaml.safe_load(self._store_path.read_text()) or {}
             return MemoryStore(**data)
-        except Exception:
+        except (yaml.YAMLError, OSError, ValueError):
             logger.exception("Failed to load memory store from %s", self._store_path)
             return MemoryStore()
 
@@ -241,7 +242,7 @@ class MemoryService:
         try:
             data = yaml.safe_load(self._work_log_path.read_text()) or {}
             return WorkLog(**data)
-        except Exception:
+        except (yaml.YAMLError, OSError, ValueError):
             logger.exception("Failed to load work log from %s", self._work_log_path)
             return WorkLog()
 
@@ -397,6 +398,7 @@ class MemoryService:
 # --- Module-level singleton ---
 
 _instance: MemoryService | None = None
+_instance_lock = threading.Lock()
 
 
 def get_memory_service(memory_dir: Path | None = None) -> MemoryService:
@@ -409,12 +411,14 @@ def get_memory_service(memory_dir: Path | None = None) -> MemoryService:
         The MemoryService instance.
     """
     global _instance
-    if _instance is None:
-        _instance = MemoryService(memory_dir=memory_dir)
-    return _instance
+    with _instance_lock:
+        if _instance is None:
+            _instance = MemoryService(memory_dir=memory_dir)
+        return _instance
 
 
 def reset_memory_service() -> None:
     """Reset the memory service singleton (for testing)."""
     global _instance
-    _instance = None
+    with _instance_lock:
+        _instance = None

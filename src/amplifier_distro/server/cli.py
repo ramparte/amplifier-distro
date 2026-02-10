@@ -439,7 +439,7 @@ def _run_foreground(
                 click.echo(f"  No distro.yaml found at {config_path()}")
                 click.echo("  Creating default config...")
                 _create_default_config()
-        except Exception as e:
+        except (OSError, ValueError, KeyError) as e:
             click.echo(f"  Config issue: {e}")
 
     # Log startup info (structured)
@@ -477,7 +477,7 @@ def _run_foreground(
                 logger.info("Auto-backup: %s", result.message)
             else:
                 logger.warning("Auto-backup failed: %s", result.message)
-    except Exception:
+    except (ImportError, RuntimeError, OSError):
         logger.exception("Auto-backup error")
 
 

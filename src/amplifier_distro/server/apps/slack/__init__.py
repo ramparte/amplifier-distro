@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
@@ -44,13 +45,15 @@ router = APIRouter()
 # --- Global bridge state (initialized on startup) ---
 
 _state: dict[str, Any] = {}
+_state_lock = threading.Lock()
 
 
 def _get_state() -> dict[str, Any]:
     """Get the initialized bridge state."""
-    if not _state:
-        raise RuntimeError("Slack bridge not initialized. Call on_startup() first.")
-    return _state
+    with _state_lock:
+        if not _state:
+            raise RuntimeError("Slack bridge not initialized. Call on_startup() first.")
+        return _state
 
 
 def initialize(
@@ -122,7 +125,8 @@ def initialize(
         "command_handler": command_handler,
         "event_handler": event_handler,
     }
-    _state.update(state)
+    with _state_lock:
+        _state.update(state)
 
     # Wire simulator hub when in simulator mode
     if config.simulator_mode and isinstance(client, MemorySlackClient):
@@ -136,33 +140,42 @@ def initialize(
 async def on_startup() -> None:
     """Initialize the Slack bridge on server startup."""
     initialize()
-    config: SlackConfig = _state["config"]
+    with _state_lock:
+        config: SlackConfig = _state["config"]
     logger.info(f"Slack bridge initialized (mode: {config.mode})")
 
     # Start Socket Mode connection if configured
     if config.socket_mode and config.is_configured:
         from .socket_mode import SocketModeAdapter
 
-        adapter = SocketModeAdapter(config, _state["event_handler"])
-        _state["socket_adapter"] = adapter
+        with _state_lock:
+            adapter = SocketModeAdapter(config, _state["event_handler"])
+            _state["socket_adapter"] = adapter
         await adapter.start()
         logger.info("Socket Mode connection started")
 
 
 async def on_shutdown() -> None:
     """Clean up the Slack bridge on server shutdown."""
-    # Stop Socket Mode connection if running
-    if "socket_adapter" in _state:
-        await _state["socket_adapter"].stop()
+    with _state_lock:
+        socket_adapter = _state.get("socket_adapter")
+        session_manager = _state.get("session_manager")
+        backend = _state.get("backend")
 
-    if "session_manager" in _state:
+    # Stop Socket Mode connection if running
+    if socket_adapter is not None:
+        await socket_adapter.stop()
+
+    if session_manager is not None and backend is not None:
         # End all active sessions
-        for mapping in _state["session_manager"].list_active():
+        for mapping in session_manager.list_active():
             try:
-                await _state["backend"].end_session(mapping.session_id)
-            except Exception:
+                await backend.end_session(mapping.session_id)
+            except (RuntimeError, ValueError, ConnectionError, OSError):
                 logger.exception(f"Error ending session {mapping.session_id}")
-    _state.clear()
+
+    with _state_lock:
+        _state.clear()
     logger.info("Slack bridge shut down")
 
 

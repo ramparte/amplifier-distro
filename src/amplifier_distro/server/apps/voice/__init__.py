@@ -60,7 +60,7 @@ def _get_voice_config() -> dict[str, str]:
             "voice": cfg.voice.voice,
             "model": cfg.voice.model,
         }
-    except Exception:
+    except (ImportError, AttributeError, OSError):
         logger.debug("Could not load voice config, using defaults")
         return {
             "voice": "ash",

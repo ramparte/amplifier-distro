@@ -8,7 +8,8 @@ full implementation spec in `IMPLEMENTATION.md`, and session-resumption context 
 `context/DISTRO-PROJECT-CONTEXT.md`. Read that context file first.
 
 **Status:** Overnight build COMPLETE (Feb 9). Server fully operational with Slack bridge,
-voice bridge, memory, backup, diagnostics, and CLI tooling. **755 tests pass.**
+voice bridge, memory, backup, diagnostics, and CLI tooling. **836 tests pass.**
+Session resume, handoff generation, server auth, and async safety added (Feb 10).
 
 ---
 
@@ -204,7 +205,7 @@ Phase 4: ⏳ Setup website, containers, workflows
 ## Development Patterns
 
 ### Testing
-- **755 tests**, all passing in ~13s
+- **836 tests**, all passing in ~13s
 - Test runner: `uv run python -m pytest tests/ -x -q`
 - Each new module gets a corresponding `tests/test_<name>.py`
 - FastAPI apps tested via `TestClient` (no real server needed)

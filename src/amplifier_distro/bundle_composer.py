@@ -7,6 +7,7 @@ No templates, no complexity -- just list manipulation on a YAML file.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -60,7 +61,7 @@ def write(provider_id: str, feature_ids: list[str] | None = None) -> Path:
     return path
 
 
-def read() -> dict:  # type: ignore[type-arg]
+def read() -> dict[str, Any]:
     """Read and parse the current bundle."""
     path = bundle_path()
     if not path.exists():
@@ -68,7 +69,7 @@ def read() -> dict:  # type: ignore[type-arg]
     return yaml.safe_load(path.read_text()) or {}
 
 
-def get_current_includes(data: dict | None = None) -> list[str]:  # type: ignore[type-arg]
+def get_current_includes(data: dict[str, Any] | None = None) -> list[str]:
     """Extract the list of include URIs from bundle data."""
     if data is None:
         data = read()

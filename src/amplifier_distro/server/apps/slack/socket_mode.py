@@ -92,7 +92,7 @@ class SocketModeAdapter:
                     bot_id = data.get("user_id")
                     logger.info(f"Bot user ID: {bot_id}")
                     return bot_id
-        except Exception:
+        except (httpx.HTTPError, KeyError, ValueError):
             logger.exception("Failed to resolve bot user ID")
         return None
 
@@ -161,7 +161,7 @@ class SocketModeAdapter:
                     frame_type = data.get("type", "?")
                     logger.debug(f"[socket] TEXT frame: {frame_type}")
                     await self._handle_frame(data)
-                except Exception:
+                except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
                     logger.exception("Error handling WebSocket frame")
 
             elif msg.type == aiohttp.WSMsgType.ERROR:
@@ -294,15 +294,15 @@ class SocketModeAdapter:
         if self._ws and not self._ws.closed:
             try:
                 await self._ws.close()
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Error closing WebSocket", exc_info=True)
         self._ws = None
 
         if self._session and not self._session.closed:
             try:
                 await self._session.close()
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Error closing HTTP session", exc_info=True)
         self._session = None
 
     async def stop(self) -> None:

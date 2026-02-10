@@ -256,7 +256,7 @@ Three foundational pieces were built (Feb 8):
   update check, self-update), `version` command with full environment
   info, `update` command, improved help with epilog (+31 tests)
 
-Total: **755 tests passing** (up from 469 pre-build)
+Total: **836 tests passing** (up from 469 pre-build, then 755 after overnight build)
 
 **PR #68** (bundle validation strict mode) was closed by upstream. The
 branch and code exist at `ramparte/amplifier-foundation` on branch
@@ -304,21 +304,31 @@ branch and code exist at `ramparte/amplifier-foundation` on branch
 | `voice` | `/apps/voice/` | Voice bridge (OpenAI Realtime API, WebRTC) |
 | `web_chat` | `/apps/web_chat/` | Web chat interface with polished UI |
 
+### What's done (Feb 10):
+1. **Bridge fully wired** - LocalBridge.create_session() integrates with
+   amplifier-foundation (load_bundle + prepare + create_session).
+2. **Session resume** - resume_session() finds sessions by ID/prefix,
+   loads transcript history, and injects into new session context.
+3. **Session handoffs** - end_session() writes handoff.md with session
+   metadata. create_session() reads and injects previous handoff.
+4. **Server auth** - Bearer token auth via distro.yaml `server.api_key`.
+   Mutation endpoints protected; read-only endpoints open.
+5. **Async safety** - Global mutable state protected with locks
+   (asyncio.Lock for web_chat, threading.Lock for sync singletons).
+6. **Exception handling** - Blind `except Exception: pass` reduced from
+   52 to 14 instances. All remaining have proper logging.
+
 ### What's next:
-1. **Wire Bridge to amplifier-foundation** - The LocalBridge.create_session()
-   currently stubs the actual session creation. Needs real load_bundle +
-   prepare + create_session integration.
-2. **Session handoffs** - Convention decided: `handoff.md` file (per
-   conventions.py HANDOFF_FILENAME). Implementation approach still TBD.
-3. **Setup website** - Static page with machine-readable instructions for
+1. **Setup website** - Static page with machine-readable instructions for
    agent-driven setup.
-4. **Interface installers** - `amp distro install tui|voice|gui`
+2. **Interface installers** - `amp distro install tui|voice|gui`
+3. **Voice bridge session integration** - Wire voice bridge to real
+   Amplifier sessions via the Bridge API.
 
 ### Open items:
 - PR #68 closed - need to discuss with upstream or re-approach
-- Bridge create_session() is stubbed (needs foundation integration)
-- Handoff generation approach undecided (hook vs explicit)
 - Setup website not built yet
+- TUI adapter pending
 
 ---
 
@@ -333,7 +343,7 @@ branch and code exist at `ramparte/amplifier-foundation` on branch
 
 ### Development workflow:
 - **Docker test env**: `docker compose --profile cli up -d` then `docker compose exec cli bash`
-- **Run tests**: `uv run python -m pytest tests/ -x -q` (755 tests, ~13s)
+- **Run tests**: `uv run python -m pytest tests/ -x -q` (836 tests, ~13s)
 - **Start server**: `amp-distro-server --port 8400 --reload`
 - **amp-distro CLI**: Install with `uv pip install -e .` in a venv
 - **Add a server app**: Create `server/apps/myapp/__init__.py` with a `manifest`

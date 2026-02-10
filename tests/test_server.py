@@ -419,3 +419,127 @@ class TestAppRoutesMounting:
         # App health route is separate
         app_response = client.get("/apps/healthapp/health")
         assert app_response.json()["app_health"] is True
+
+
+class TestApiKeyAuth:
+    """Verify bearer-token authentication on mutation endpoints.
+
+    Design contract:
+    - No api_key configured -> all endpoints open (backward compat)
+    - api_key configured -> read-only endpoints open, mutation endpoints
+      require Authorization: Bearer <key>
+    - Wrong/missing token -> 401
+    """
+
+    MUTATION_ENDPOINTS = [
+        ("PUT", "/api/config"),
+        ("POST", "/api/bridge/session"),
+        ("POST", "/api/bridge/execute"),
+        ("POST", "/api/memory/remember"),
+        ("POST", "/api/memory/work-log"),
+        ("POST", "/api/test-provider"),
+    ]
+
+    READ_ONLY_ENDPOINTS = [
+        ("GET", "/api/health"),
+        ("GET", "/api/status"),
+        ("GET", "/api/apps"),
+    ]
+
+    @pytest.fixture
+    def server(self):
+        return DistroServer()
+
+    @pytest.fixture
+    def client(self, server):
+        return TestClient(server.app)
+
+    def _request(self, client, method, path, **kwargs):
+        return getattr(client, method.lower())(path, **kwargs)
+
+    # --- No API key configured (default): everything open ---
+
+    def test_no_key_configured_health_open(self, client):
+        """With no api_key, read-only endpoints are open."""
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+
+    def test_no_key_configured_mutation_open(self, client):
+        """With no api_key, mutation endpoints don't require auth.
+
+        We send minimal bodies; we expect non-401 responses (may be
+        400/500 due to missing services, but NOT 401).
+        """
+        resp = client.put("/api/config", json={})
+        assert resp.status_code != 401
+
+        resp = client.post("/api/test-provider", json={"provider": "unknown"})
+        assert resp.status_code != 401
+
+    # --- API key configured: auth enforced on mutations ---
+
+    def test_mutation_requires_auth_when_key_set(self, client, monkeypatch):
+        """Mutation endpoints return 401 without a token when key is set."""
+        monkeypatch.setattr(
+            "amplifier_distro.server.app._get_configured_api_key",
+            lambda: "test-secret-key",
+        )
+        for method, path in self.MUTATION_ENDPOINTS:
+            resp = self._request(client, method, path, json={})
+            assert resp.status_code == 401, (
+                f"{method} {path} should be 401 without token"
+            )
+
+    def test_mutation_rejects_wrong_token(self, client, monkeypatch):
+        """Mutation endpoints return 401 with an incorrect token."""
+        monkeypatch.setattr(
+            "amplifier_distro.server.app._get_configured_api_key",
+            lambda: "test-secret-key",
+        )
+        headers = {"Authorization": "Bearer wrong-key"}
+        for method, path in self.MUTATION_ENDPOINTS:
+            resp = self._request(client, method, path, json={}, headers=headers)
+            assert resp.status_code == 401, (
+                f"{method} {path} should be 401 with wrong token"
+            )
+
+    def test_mutation_passes_with_correct_token(self, client, monkeypatch):
+        """Mutation endpoints accept the correct bearer token.
+
+        We expect non-401 responses (may be 400/500 due to missing
+        backend services, but auth itself passes).
+        """
+        monkeypatch.setattr(
+            "amplifier_distro.server.app._get_configured_api_key",
+            lambda: "test-secret-key",
+        )
+        headers = {"Authorization": "Bearer test-secret-key"}
+        for method, path in self.MUTATION_ENDPOINTS:
+            resp = self._request(client, method, path, json={}, headers=headers)
+            assert resp.status_code != 401, (
+                f"{method} {path} should NOT be 401 with correct token"
+            )
+
+    def test_read_only_open_when_key_set(self, client, monkeypatch):
+        """Read-only endpoints remain accessible even with auth configured."""
+        monkeypatch.setattr(
+            "amplifier_distro.server.app._get_configured_api_key",
+            lambda: "test-secret-key",
+        )
+        for method, path in self.READ_ONLY_ENDPOINTS:
+            resp = self._request(client, method, path)
+            assert resp.status_code != 401, (
+                f"{method} {path} should be open even with api_key set"
+            )
+
+    def test_401_response_body(self, client, monkeypatch):
+        """The 401 response includes an informative detail message."""
+        monkeypatch.setattr(
+            "amplifier_distro.server.app._get_configured_api_key",
+            lambda: "test-secret-key",
+        )
+        resp = client.put("/api/config", json={})
+        assert resp.status_code == 401
+        body = resp.json()
+        assert "detail" in body
+        assert "API key" in body["detail"]

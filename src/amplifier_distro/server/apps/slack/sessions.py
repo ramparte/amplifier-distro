@@ -96,7 +96,7 @@ class SlackSessionManager:
             logger.info(
                 f"Loaded {len(data)} session mappings from {self._persistence_path}"
             )
-        except Exception:
+        except (json.JSONDecodeError, KeyError, OSError):
             logger.warning("Failed to load session mappings", exc_info=True)
 
     def _save_sessions(self) -> None:
@@ -120,7 +120,7 @@ class SlackSessionManager:
                 for m in self._mappings.values()
             ]
             self._persistence_path.write_text(json.dumps(data, indent=2))
-        except Exception:
+        except OSError:
             logger.warning("Failed to save session mappings", exc_info=True)
 
     @property
@@ -246,7 +246,7 @@ class SlackSessionManager:
         self._save_sessions()
         try:
             await self._backend.end_session(mapping.session_id)
-        except Exception:
+        except (RuntimeError, ValueError, ConnectionError, OSError):
             logger.exception(f"Error ending session {mapping.session_id}")
 
         return True

@@ -1,6 +1,7 @@
 """amp-distro CLI - Amplifier Distribution management tool."""
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
 from .schema import IdentityConfig
 from .update_check import check_for_updates, get_version_info, run_self_update
+
+logger = logging.getLogger(__name__)
 
 
 class _EpilogGroup(click.Group):
@@ -170,7 +173,7 @@ def validate() -> None:
         click.echo(f"  preflight: {config.preflight.mode}")
         click.echo(f"  cache TTL: {config.cache.max_age_hours}h")
         click.echo("\nValid.")
-    except Exception as e:
+    except (OSError, ValueError, KeyError) as e:
         click.echo(f"Invalid: {e}")
         sys.exit(1)
 
@@ -406,7 +409,7 @@ def _show_update_notice() -> None:
                 "Run `amp-distro update` to upgrade."
             )
     except Exception:
-        pass  # Never let update check crash the status command
+        logger.debug("Update check failed", exc_info=True)
 
 
 def _print_doctor_report(report: DoctorReport, fixes: list[str]) -> None:

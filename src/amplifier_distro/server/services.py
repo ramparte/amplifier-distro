@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level singleton
 _instance: ServerServices | None = None
+_instance_lock = threading.Lock()
 
 
 @dataclass
@@ -97,8 +99,9 @@ def init_services(
             backend = BridgeBackend()
             logger.info("Server services: using BridgeBackend (production)")
 
-    _instance = ServerServices(backend=backend, dev_mode=dev_mode)
-    return _instance
+    with _instance_lock:
+        _instance = ServerServices(backend=backend, dev_mode=dev_mode)
+        return _instance
 
 
 def get_services() -> ServerServices:
@@ -106,14 +109,16 @@ def get_services() -> ServerServices:
 
     Raises RuntimeError if services haven't been initialized.
     """
-    if _instance is None:
-        raise RuntimeError(
-            "Server services not initialized. Call init_services() first."
-        )
-    return _instance
+    with _instance_lock:
+        if _instance is None:
+            raise RuntimeError(
+                "Server services not initialized. Call init_services() first."
+            )
+        return _instance
 
 
 def reset_services() -> None:
     """Reset services (for testing). Not for production use."""
     global _instance
-    _instance = None
+    with _instance_lock:
+        _instance = None

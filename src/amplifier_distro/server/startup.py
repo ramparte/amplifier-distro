@@ -15,10 +15,13 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from amplifier_distro import conventions
+
+logger = logging.getLogger(__name__)
 
 
 def log_file_path() -> Path:
@@ -95,8 +98,10 @@ def env_file_paths() -> list[Path]:
         project_env = pkg_dir / ".env"
         if project_env.exists():
             paths.append(project_env)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, OSError):
+        logger.debug(
+            "Could not determine package directory for .env search", exc_info=True
+        )
     return paths
 
 
@@ -167,7 +172,8 @@ def export_keys(keys_file: Path | None = None) -> list[str]:
 
     try:
         data = yaml.safe_load(keys_file.read_text())
-    except Exception:
+    except (yaml.YAMLError, OSError) as e:
+        logger.warning("Failed to parse keys file %s: %s", keys_file, e)
         return []
 
     if not isinstance(data, dict):
@@ -204,7 +210,10 @@ def log_startup_info(
         from importlib.metadata import version as pkg_version
 
         version = pkg_version("amplifier-distro")
-    except Exception:
+    except (ImportError, PackageNotFoundError):
+        logger.debug(
+            "Could not determine package version, using default", exc_info=True
+        )
         version = "0.1.0"
 
     logger.info("Amplifier Distro Server v%s", version)
@@ -240,5 +249,5 @@ def run_startup_checks(logger: logging.Logger) -> None:
             logger.info("Pre-flight checks passed")
         else:
             logger.warning("Pre-flight checks have failures (server will continue)")
-    except Exception:
+    except (ImportError, RuntimeError, OSError):
         logger.exception("Pre-flight checks could not run")

@@ -76,7 +76,8 @@ class SimulatorHub:
         for ws in self.connections:
             try:
                 await ws.send_json(event)
-            except Exception:
+            except (ConnectionError, OSError, RuntimeError):
+                logger.debug("Failed to send to WebSocket client", exc_info=True)
                 dead.append(ws)
         for ws in dead:
             self.disconnect(ws)
@@ -160,7 +161,7 @@ async def simulator_ws(ws: WebSocket) -> None:
                 logger.debug(f"Simulator received unknown event: {event_type}")
     except WebSocketDisconnect:
         _hub.disconnect(ws)
-    except Exception:
+    except (ConnectionError, OSError, RuntimeError):
         logger.exception("Simulator WebSocket error")
         _hub.disconnect(ws)
 

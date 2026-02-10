@@ -264,7 +264,7 @@ class SlackEventHandler:
         """Add a reaction, ignoring failures (already_reacted, etc.)."""
         try:
             await self._client.add_reaction(channel, ts, emoji)
-        except Exception:
+        except (RuntimeError, ConnectionError, OSError, ValueError):
             logger.debug(
                 f"Reaction '{emoji}' failed (likely duplicate event)", exc_info=True
             )

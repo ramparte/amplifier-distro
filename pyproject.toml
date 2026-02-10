@@ -54,7 +54,21 @@ target-version = "py311"
 src = ["src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "C4", "UP"]
+select = ["E", "F", "I", "B", "C4", "UP", "BLE", "S"]
+ignore = [
+    "S101",  # assert used (fine in non-web code and tests)
+    "S104",  # binding to all interfaces (intentional for server)
+    "S603",  # subprocess without shell=True (we validate inputs)
+    "S607",  # partial path to executable (acceptable for gh, git, etc.)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S106", "S108", "BLE001"]  # asserts, hardcoded passwords, temp files OK in tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["slow: marks tests as slow"]
 
 [tool.pyright]
 pythonVersion = "3.11"
