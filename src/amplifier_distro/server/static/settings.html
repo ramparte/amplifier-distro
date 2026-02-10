@@ -6,7 +6,7 @@
 <title>Amplifier - Settings</title>
 <style>
 /* ------------------------------------------------------------------ */
-/*  Design Tokens (shared with wizard.html)                            */
+/*  Design Tokens (shared with wizard.html / quickstart.html)          */
 /* ------------------------------------------------------------------ */
 :root {
   --bg-primary: #111827;
@@ -55,7 +55,7 @@ body {
   border-radius: 12px;
   padding: 40px;
   width: 100%;
-  max-width: 640px;
+  max-width: 720px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -71,6 +71,11 @@ body {
 .header h1 {
   font-size: 24px;
   font-weight: 700;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .header a {
@@ -114,6 +119,78 @@ body {
   border-top: 1px solid var(--border);
   margin: 0 0 32px 0;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Config Fields                                                      */
+/* ------------------------------------------------------------------ */
+.config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-field {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 6px;
+}
+
+.config-field .field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.config-field input[type="text"] {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.config-field input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.config-field .value-display {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
+.btn-save {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-save:hover { background: var(--accent-hover); }
+.btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ------------------------------------------------------------------ */
 /*  Provider Status                                                    */
@@ -160,6 +237,12 @@ body {
   color: var(--text-secondary);
 }
 
+.provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .status-badge {
   font-size: 12px;
   font-weight: 600;
@@ -191,6 +274,29 @@ body {
 .status-badge.loading {
   background: rgba(59,130,246,0.1);
   color: var(--accent);
+}
+
+.btn-test {
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-test:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-test:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ------------------------------------------------------------------ */
@@ -365,6 +471,101 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Integration Rows                                                   */
+/* ------------------------------------------------------------------ */
+.integration-row {
+  background: var(--bg-card);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: background 0.1s ease;
+  text-decoration: none;
+  color: inherit;
+}
+
+.integration-row:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+.integration-row:last-child  { border-radius: 0 0 var(--radius) var(--radius); }
+.integration-row:only-child  { border-radius: var(--radius); }
+
+.integration-row:hover { background: #3f4a5c; }
+
+.integration-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.integration-status.configured {
+  background: rgba(34,197,94,0.15);
+  color: var(--success);
+}
+
+.integration-status.not-configured {
+  background: rgba(107,114,128,0.15);
+  color: var(--text-secondary);
+}
+
+.integration-link {
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Bundle Contents                                                    */
+/* ------------------------------------------------------------------ */
+.bundle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bundle-item {
+  background: var(--bg-card);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Stats Grid                                                         */
+/* ------------------------------------------------------------------ */
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Toast Notification                                                 */
 /* ------------------------------------------------------------------ */
 .toast {
@@ -429,6 +630,7 @@ body {
   justify-content: center;
   gap: 16px;
   font-size: 13px;
+  flex-wrap: wrap;
 }
 
 .footer-links a {
@@ -458,6 +660,11 @@ body {
 const state = {
   status: null,
   detect: null,
+  config: null,
+  integrations: null,
+  memoryCount: null,
+  workStatus: null,
+  serverStatus: null,
   loaded: false,
 };
 
@@ -481,16 +688,41 @@ async function api(method, path, body) {
   }
 }
 
+async function coreApi(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch('/api' + path, opts);
+    if (!res.ok) return { error: 'HTTP ' + res.status };
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 /* ================================================================== */
 /*  Load Data                                                          */
 /* ================================================================== */
 async function loadAll() {
-  const [statusData, detectData] = await Promise.all([
+  const [statusData, detectData, configData, integrationsData, memoryData, workData, serverData] = await Promise.all([
     api('GET', '/status'),
     api('GET', '/detect'),
+    coreApi('GET', '/config'),
+    coreApi('GET', '/integrations'),
+    coreApi('GET', '/memory/recall?q=*').catch(() => ({ error: true })),
+    coreApi('GET', '/memory/work-status'),
+    coreApi('GET', '/status'),
   ]);
   state.status = statusData.error ? null : statusData;
   state.detect = detectData.error ? null : detectData;
+  state.config = configData.error ? null : configData;
+  state.integrations = integrationsData.error ? null : integrationsData;
+  state.memoryCount = (memoryData && !memoryData.error && memoryData.count != null) ? memoryData.count : null;
+  state.workStatus = (workData && !workData.error) ? workData : null;
+  state.serverStatus = (serverData && !serverData.error) ? serverData : null;
   state.loaded = true;
   render();
 }
@@ -498,8 +730,6 @@ async function loadAll() {
 /* ================================================================== */
 /*  Normalize API Data                                                 */
 /* ================================================================== */
-// API returns features as a dict { "dev-memory": { enabled, tier, ... } }
-// Convert to an array of { id, enabled, tier, name, description } for rendering
 function featuresAsArray(featuresObj) {
   if (!featuresObj || Array.isArray(featuresObj)) return featuresObj || [];
   return Object.entries(featuresObj).map(([id, f]) => ({
@@ -521,7 +751,6 @@ async function toggleFeature(featureId, enabled) {
   const res = await api('POST', '/features', { feature_id: featureId, enabled: enabled });
 
   if (res && !res.error) {
-    // Update local state (features may be dict or array)
     if (state.status && state.status.features) {
       if (state.status.features[featureId]) {
         state.status.features[featureId].enabled = enabled;
@@ -549,7 +778,6 @@ async function setTier(tierLevel) {
   const res = await api('POST', '/tier', { tier: tierLevel });
 
   if (res && !res.error) {
-    // Reload status to get updated feature states
     const statusData = await api('GET', '/status');
     if (!statusData.error) state.status = statusData;
     showToast('Tier ' + tierLevel + ' features enabled', 'success');
@@ -561,6 +789,57 @@ async function setTier(tierLevel) {
 }
 
 /* ================================================================== */
+/*  Save Config                                                        */
+/* ================================================================== */
+async function saveConfig(field) {
+  const el = document.getElementById('cfg-' + field);
+  if (!el) return;
+  const value = el.value.trim();
+  let body = {};
+
+  if (field === 'workspace_root') {
+    body = { workspace_root: value };
+  } else if (field === 'github_handle') {
+    body = { identity: { github_handle: value } };
+  } else if (field === 'git_email') {
+    body = { identity: { git_email: value } };
+  }
+
+  const btn = document.getElementById('btn-save-' + field);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+  const res = await coreApi('PUT', '/config', body);
+
+  if (res && !res.error) {
+    state.config = res;
+    showToast('Saved', 'success');
+  } else {
+    showToast('Failed to save', 'error');
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+}
+
+/* ================================================================== */
+/*  Test Provider                                                      */
+/* ================================================================== */
+async function testProvider(providerId) {
+  const btn = document.getElementById('btn-test-' + providerId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing...'; }
+
+  const res = await coreApi('POST', '/test-provider', { provider: providerId });
+
+  if (res && res.ok) {
+    showToast(providerId + ' connection OK', 'success');
+  } else {
+    const msg = (res && res.error) ? res.error : 'Connection failed (status ' + (res && res.status_code) + ')';
+    showToast(msg, 'error');
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Test'; }
+}
+
+/* ================================================================== */
 /*  Toast                                                              */
 /* ================================================================== */
 let toastTimer = null;
@@ -568,11 +847,10 @@ function showToast(msg, type) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'toast ' + type;
-  // Force reflow then show
   void el.offsetWidth;
   el.classList.add('visible');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('visible'), 2000);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 2500);
 }
 
 /* ================================================================== */
@@ -585,16 +863,20 @@ function render() {
 
   const status = state.status || {};
   const detect = state.detect || {};
+  const config = state.config || {};
   const features = featuresAsArray(status.features);
   const tier1 = features.filter(f => f.tier === 1);
   const tier2 = features.filter(f => f.tier === 2);
 
-  // Provider info
   const provider = status.provider || 'unknown';
   const model = status.model || '';
   const connected = status.phase === 'ready' || !!status.provider;
 
   card.innerHTML = renderHeader()
+    + renderServerInfo()
+    + '<hr class="section-divider">'
+    + renderConfigSection(config)
+    + '<hr class="section-divider">'
     + renderProvider(provider, model, connected)
     + '<hr class="section-divider">'
     + renderFeatureSection('Recommended', tier1, features.length > 0)
@@ -603,9 +885,13 @@ function render() {
     + renderFeatureSection('Power User', tier2, features.length > 0)
     + renderTierAction(2, tier2)
     + '<hr class="section-divider">'
-    + renderEnvironment(detect)
+    + renderBundleContents()
+    + '<hr class="section-divider">'
+    + renderMemoryStats()
     + '<hr class="section-divider">'
     + renderIntegrations()
+    + '<hr class="section-divider">'
+    + renderEnvironment(detect)
     + renderFooter();
 
   bindEvents();
@@ -617,8 +903,75 @@ function render() {
 function renderHeader() {
   return '<div class="header">'
     + '<h1>Amplifier Settings</h1>'
+    + '<div class="header-actions">'
     + '<a href="/apps/web-chat/">Back to Chat</a>'
+    + '</div>'
     + '</div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Server Info                                                        */
+/* ------------------------------------------------------------------ */
+function renderServerInfo() {
+  const ss = state.serverStatus || {};
+  const passedCount = ss.checks ? ss.checks.filter(c => c.passed).length : 0;
+  const totalCount = ss.checks ? ss.checks.length : 0;
+  const allPassed = ss.passed !== false;
+
+  return '<div class="section">'
+    + '<div class="section-title">Server</div>'
+    + '<div class="stats-grid">'
+    + '<div class="stat-card">'
+    + '<div class="stat-value" style="color:' + (allPassed ? 'var(--success)' : 'var(--warning)') + ';">'
+    + (allPassed ? 'OK' : 'WARN') + '</div>'
+    + '<div class="stat-label">Preflight</div>'
+    + '</div>'
+    + '<div class="stat-card">'
+    + '<div class="stat-value">' + passedCount + '/' + totalCount + '</div>'
+    + '<div class="stat-label">Checks Passed</div>'
+    + '</div>'
+    + '<div class="stat-card">'
+    + '<div class="stat-value">' + esc(state.status && state.status.phase ? state.status.phase : '--') + '</div>'
+    + '<div class="stat-label">Phase</div>'
+    + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Config Section                                                     */
+/* ------------------------------------------------------------------ */
+function renderConfigSection(config) {
+  const ws = config.workspace_root || '~/dev';
+  const gh = (config.identity && config.identity.github_handle) || '';
+  const ge = (config.identity && config.identity.git_email) || '';
+
+  return '<div class="section">'
+    + '<div class="section-title">Configuration</div>'
+    + '<div class="config-group">'
+
+    + '<div class="config-field">'
+    + '<label>Workspace Root</label>'
+    + '<div class="field-row">'
+    + '<input type="text" id="cfg-workspace_root" value="' + esc(ws) + '" placeholder="~/dev">'
+    + '<button class="btn-save" id="btn-save-workspace_root" onclick="saveConfig(\'workspace_root\')">Save</button>'
+    + '</div></div>'
+
+    + '<div class="config-field">'
+    + '<label>GitHub Handle</label>'
+    + '<div class="field-row">'
+    + '<input type="text" id="cfg-github_handle" value="' + esc(gh) + '" placeholder="your-github-handle">'
+    + '<button class="btn-save" id="btn-save-github_handle" onclick="saveConfig(\'github_handle\')">Save</button>'
+    + '</div></div>'
+
+    + '<div class="config-field">'
+    + '<label>Git Email</label>'
+    + '<div class="field-row">'
+    + '<input type="text" id="cfg-git_email" value="' + esc(ge) + '" placeholder="you@example.com">'
+    + '<button class="btn-save" id="btn-save-git_email" onclick="saveConfig(\'git_email\')">Save</button>'
+    + '</div></div>'
+
+    + '</div></div>';
 }
 
 /* ------------------------------------------------------------------ */
@@ -645,9 +998,14 @@ function renderProvider(provider, model, connected) {
     +       (model ? '<div class="provider-model">' + esc(model) + '</div>' : '')
     +     '</div>'
     +   '</div>'
-    +   '<span class="status-badge ' + statusClass + '">'
-    +     '<span class="status-dot"></span> ' + statusLabel
-    +   '</span>'
+    +   '<div class="provider-actions">'
+    +     (connected && provider !== 'unknown'
+           ? '<button class="btn-test" id="btn-test-' + esc(provider) + '" onclick="testProvider(\'' + esc(provider) + '\')">Test</button>'
+           : '')
+    +     '<span class="status-badge ' + statusClass + '">'
+    +       '<span class="status-dot"></span> ' + statusLabel
+    +     '</span>'
+    +   '</div>'
     + '</div>'
     + '</div>';
 }
@@ -713,10 +1071,112 @@ function renderTierAction(tierLevel, tierFeatures) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Bundle Contents                                                    */
+/* ------------------------------------------------------------------ */
+function renderBundleContents() {
+  const detect = state.detect || {};
+  const bundle = detect.existing_bundle;
+
+  if (!bundle || !bundle.includes || bundle.includes.length === 0) {
+    return '<div class="section">'
+      + '<div class="section-title">Bundle Contents</div>'
+      + '<div style="color: var(--text-secondary); font-size: 13px; padding: 12px 0;">'
+      + 'No bundle configured yet. Complete quickstart first.'
+      + '</div></div>';
+  }
+
+  let html = '<div class="section">'
+    + '<div class="section-title">Bundle Contents</div>'
+    + '<div class="bundle-list">';
+
+  bundle.includes.forEach(inc => {
+    const label = typeof inc === 'object' ? (inc.bundle || JSON.stringify(inc)) : inc;
+    html += '<div class="bundle-item">' + esc(label) + '</div>';
+  });
+
+  html += '</div></div>';
+  return html;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Memory Stats                                                       */
+/* ------------------------------------------------------------------ */
+function renderMemoryStats() {
+  const memCount = state.memoryCount != null ? state.memoryCount : '--';
+  const workItems = state.workStatus && state.workStatus.items ? state.workStatus.items.length : 0;
+
+  let lastUpdate = '--';
+  if (state.workStatus && state.workStatus.items && state.workStatus.items.length > 0) {
+    const last = state.workStatus.items[state.workStatus.items.length - 1];
+    if (last.updated) {
+      try {
+        const d = new Date(last.updated);
+        lastUpdate = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      } catch (e) {
+        lastUpdate = last.updated;
+      }
+    }
+  }
+
+  return '<div class="section">'
+    + '<div class="section-title">Memory</div>'
+    + '<div class="stats-grid">'
+    + '<div class="stat-card">'
+    + '<div class="stat-value">' + esc(String(memCount)) + '</div>'
+    + '<div class="stat-label">Memories</div>'
+    + '</div>'
+    + '<div class="stat-card">'
+    + '<div class="stat-value">' + workItems + '</div>'
+    + '<div class="stat-label">Work Items</div>'
+    + '</div>'
+    + '<div class="stat-card">'
+    + '<div class="stat-value" style="font-size: 14px;">' + esc(lastUpdate) + '</div>'
+    + '<div class="stat-label">Last Update</div>'
+    + '</div>'
+    + '</div></div>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Integrations                                                       */
+/* ------------------------------------------------------------------ */
+function renderIntegrations() {
+  const integrations = state.integrations || {};
+  const items = [
+    { key: 'slack', fallbackName: 'Slack Bridge', fallbackDesc: 'Connect a Slack workspace to Amplifier sessions', fallbackUrl: '/static/slack-setup.html' },
+    { key: 'voice', fallbackName: 'Voice Bridge', fallbackDesc: 'Voice interface via OpenAI Realtime API', fallbackUrl: '/static/voice.html' },
+  ];
+
+  let html = '<div class="section">'
+    + '<div class="section-title">Integrations</div>'
+    + '<div class="feature-list">';
+
+  items.forEach(item => {
+    const data = integrations[item.key] || {};
+    const name = data.name || item.fallbackName;
+    const desc = data.description || item.fallbackDesc;
+    const setupUrl = data.setup_url || item.fallbackUrl;
+    const status = data.status || 'not_configured';
+    const statusClass = status === 'configured' ? 'configured' : 'not-configured';
+    const statusLabel = status === 'configured' ? 'Configured' : 'Not Configured';
+
+    html += '<a href="' + esc(setupUrl) + '" class="integration-row" style="cursor: pointer;">'
+      + '<div class="feature-info">'
+      + '<div class="feature-name">' + esc(name) + '</div>'
+      + '<div class="feature-desc">' + esc(desc) + '</div>'
+      + '</div>'
+      + '<span class="integration-status ' + statusClass + '">' + statusLabel + '</span>'
+      + '<span class="integration-link">Configure &rarr;</span>'
+      + '</a>';
+  });
+
+  html += '</div></div>';
+  return html;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Environment                                                        */
 /* ------------------------------------------------------------------ */
 function renderEnvironment(detect) {
-  // API returns nested objects: { git: { installed, configured }, github: { handle }, ... }
   const tools = [
     { name: 'Git', found: detect.git && detect.git.installed },
     { name: 'GitHub', found: detect.github && detect.github.configured, detail: detect.github && detect.github.handle },
@@ -741,24 +1201,6 @@ function renderEnvironment(detect) {
 
   html += '</div></div>';
   return html;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Integrations                                                       */
-/* ------------------------------------------------------------------ */
-function renderIntegrations() {
-  return '<div class="section">'
-    + '<div class="section-title">Integrations</div>'
-    + '<div class="feature-list">'
-    + '<a href="/static/slack-setup.html" style="text-decoration: none; color: inherit;">'
-    + '<div class="feature-row" style="cursor: pointer;">'
-    + '<div class="feature-info">'
-    + '<div class="feature-name">Slack Bridge</div>'
-    + '<div class="feature-desc">Connect a Slack workspace to Amplifier sessions</div>'
-    + '</div>'
-    + '<span style="color: var(--accent); font-size: 13px;">Configure &rarr;</span>'
-    + '</div></a>'
-    + '</div></div>';
 }
 
 /* ------------------------------------------------------------------ */

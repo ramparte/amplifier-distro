@@ -228,6 +228,178 @@ class DistroServer:
                 for name, m in self._apps.items()
             }
 
+        @self._core_router.put("/config")
+        async def update_config(request: Request) -> JSONResponse:
+            """Update distro.yaml with partial config values.
+
+            Accepts a JSON body with keys matching DistroConfig fields.
+            Only provided fields are updated; others are preserved.
+            """
+            from amplifier_distro.config import load_config, save_config
+
+            body = await request.json()
+            try:
+                cfg = load_config()
+
+                # Update top-level scalar fields
+                if "workspace_root" in body:
+                    cfg.workspace_root = body["workspace_root"]
+
+                # Update nested identity fields
+                if "identity" in body and isinstance(body["identity"], dict):
+                    if "github_handle" in body["identity"]:
+                        cfg.identity.github_handle = body["identity"]["github_handle"]
+                    if "git_email" in body["identity"]:
+                        cfg.identity.git_email = body["identity"]["git_email"]
+
+                save_config(cfg)
+                return JSONResponse(content=cfg.model_dump())
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+
+        @self._core_router.get("/integrations")
+        async def get_integrations() -> JSONResponse:
+            """Status of each integration (Slack, Voice)."""
+            import os
+            from pathlib import Path as _Path
+
+            from amplifier_distro.conventions import (
+                AMPLIFIER_HOME,
+                KEYS_FILENAME,
+            )
+
+            keys_path = _Path(AMPLIFIER_HOME).expanduser() / KEYS_FILENAME
+            keys_data: dict[str, str] = {}
+            if keys_path.exists():
+                import yaml as _yaml
+
+                keys_data = _yaml.safe_load(keys_path.read_text()) or {}
+
+            def _check_key(env_var: str) -> str:
+                """Return 'configured' if key is in env or keys.yaml."""
+                if os.environ.get(env_var):
+                    return "configured"
+                if keys_data.get(env_var):
+                    return "configured"
+                return "not_configured"
+
+            integrations = {
+                "slack": {
+                    "name": "Slack Bridge",
+                    "status": _check_key("SLACK_BOT_TOKEN"),
+                    "description": "Connect Slack workspace to Amplifier",
+                    "setup_url": "/static/slack-setup.html",
+                },
+                "voice": {
+                    "name": "Voice Bridge",
+                    "status": _check_key("OPENAI_API_KEY"),
+                    "description": "Voice interface via OpenAI Realtime API",
+                    "setup_url": "/static/voice.html",
+                },
+            }
+            return JSONResponse(content=integrations)
+
+        @self._core_router.post("/test-provider")
+        async def test_provider(request: Request) -> JSONResponse:
+            """Test a provider connection with a minimal API request.
+
+            Body: {"provider": "anthropic"} or {"provider": "openai"}
+            """
+            import os
+
+            import httpx
+
+            body = await request.json()
+            provider = body.get("provider", "")
+
+            if provider == "anthropic":
+                api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if not api_key:
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": False,
+                            "error": "ANTHROPIC_API_KEY not set",
+                        }
+                    )
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json",
+                            },
+                            json={
+                                "model": "claude-sonnet-4-20250514",
+                                "max_tokens": 1,
+                                "messages": [{"role": "user", "content": "hi"}],
+                            },
+                        )
+                    ok = resp.status_code == 200
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": ok,
+                            "status_code": resp.status_code,
+                        }
+                    )
+                except Exception as e:
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": False,
+                            "error": str(e),
+                        }
+                    )
+
+            elif provider == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY", "")
+                if not api_key:
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": False,
+                            "error": "OPENAI_API_KEY not set",
+                        }
+                    )
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.get(
+                            "https://api.openai.com/v1/models",
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                            },
+                        )
+                    ok = resp.status_code == 200
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": ok,
+                            "status_code": resp.status_code,
+                        }
+                    )
+                except Exception as e:
+                    return JSONResponse(
+                        content={
+                            "provider": provider,
+                            "ok": False,
+                            "error": str(e),
+                        }
+                    )
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": f"Unknown provider: {provider}. "
+                        "Use 'anthropic' or 'openai'."
+                    },
+                )
+
     def _setup_bridge_routes(self) -> None:
         """Set up Bridge API routes for session management."""
 
