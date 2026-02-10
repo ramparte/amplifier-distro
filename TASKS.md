@@ -15,7 +15,8 @@
 | Web UI | unassigned | Candidate: @samueljklee or @samschillace |
 | UI flows (onboarding, wizards, config) | @samschillace (interim) | Needs stub mode for fast iteration |
 | Bundle structure | @samueljklee | Currently active |
-| Teams/M365 integration | @marklicata | |
+| Teams integration | @marklicata | |
+| M365 integration | @robotdad | |
 | Containers/Cloud/Azure | @marklicata + @robotdad | Co-owned |
 | Bridges (Slack, Voice) | @robotdad | Could involve @dluc |
 | Testing/QA strategy | unassigned | Suggested: @dluc |
@@ -61,11 +62,18 @@
   - Added: 2026-02-10
   - Tags: phase-4, containers, cloud, azure
 
-- [ ] **DISTRO-007**: Teams/M365 integration
+- [ ] **DISTRO-007**: Teams integration
   - Assigned: @marklicata
   - Priority: medium
   - Added: 2026-02-10
-  - Tags: phase-2, m365, teams, surfaces
+  - Tags: phase-2, teams, surfaces
+
+- [ ] **DISTRO-018**: M365 integration
+  - Assigned: @robotdad
+  - Priority: medium
+  - Added: 2026-02-10
+  - Tags: phase-2, m365, surfaces
+  - Notes: Split from DISTRO-007. M365 integration beyond Teams (Outlook, SharePoint, etc.).
 
 - [ ] **DISTRO-008**: Slack bridge hardening and production readiness
   - Assigned: @robotdad
