@@ -11,7 +11,7 @@
 | Distro overall | @samschillace | Architect, lead |
 | Desktop GUI | @michaeljabbour | Built it, owns it |
 | TUI | @samschillace (interim) | Candidate: @samueljklee |
-| CLI | @dluc (tentative) | Natural fit for his rigor |
+| CLI | @dluc (tentative) | |
 | Web UI | unassigned | Candidate: @samueljklee or @samschillace |
 | UI flows (onboarding, wizards, config) | @samschillace (interim) | Needs stub mode for fast iteration |
 | Bundle structure | @samueljklee | Currently active |
@@ -89,7 +89,7 @@
   - Priority: medium
   - Added: 2026-02-10
   - Tags: cli, surfaces
-  - Notes: Tentatively @dluc. Natural fit for his rigor -- CLI needs to be robust, well-structured, no handwaving.
+  - Notes: Tentatively @dluc. CLI needs to be robust and well-structured.
 
 ## Backlog
 
@@ -97,7 +97,7 @@
   - Priority: medium
   - Added: 2026-02-10
   - Tags: testing, qa, infrastructure
-  - Notes: 755 tests exist. Need strategy for DGX CI, Docker test profiles, coverage gaps. Suggested owner: @dluc (skepticism = great test strategist).
+  - Notes: 755 tests exist. Need strategy for DGX CI, Docker test profiles, coverage gaps. Suggested owner: @dluc.
 
 - [ ] **DISTRO-013**: Documentation plan (user-facing docs, install guides)
   - Priority: low
@@ -109,7 +109,7 @@
   - Priority: medium
   - Added: 2026-02-10
   - Tags: security, review
-  - Notes: Suggested owner: @dluc (architectural skepticism is literally the security mindset).
+  - Notes: Suggested owner: @dluc.
 
 - [ ] **DISTRO-015**: TUI surface development
   - Priority: low
