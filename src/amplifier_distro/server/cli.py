@@ -6,6 +6,9 @@ Usage:
     amp-distro-server stop                     # stop background daemon
     amp-distro-server restart [OPTIONS]        # restart background daemon
     amp-distro-server status                   # check daemon status
+    amp-distro-server watchdog start           # start health watchdog
+    amp-distro-server watchdog stop            # stop health watchdog
+    amp-distro-server watchdog status          # check watchdog status
     python -m amplifier_distro.server [OPTIONS]  # via module (foreground)
 """
 
@@ -184,6 +187,126 @@ def _check_port(host: str, port: int) -> bool:
             return True
     except (ConnectionRefusedError, TimeoutError, OSError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Watchdog subcommands
+# ---------------------------------------------------------------------------
+
+
+@serve.group("watchdog", invoke_without_command=True)
+@click.pass_context
+def watchdog_group(ctx: click.Context) -> None:
+    """Manage the server health watchdog."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(watchdog_status)
+
+
+@watchdog_group.command("start")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help="Server host to monitor",
+)
+@click.option(
+    "--port",
+    default=conventions.SERVER_DEFAULT_PORT,
+    type=int,
+    help="Server port to monitor",
+)
+@click.option(
+    "--check-interval",
+    default=30,
+    type=int,
+    help="Seconds between health checks",
+)
+@click.option(
+    "--restart-after",
+    default=300,
+    type=int,
+    help="Seconds of sustained downtime before restart",
+)
+@click.option(
+    "--max-restarts",
+    default=5,
+    type=int,
+    help="Max restart attempts (0 = unlimited)",
+)
+@click.option("--apps-dir", default=None, help="Server apps directory")
+@click.option("--dev", is_flag=True, help="Server dev mode")
+def watchdog_start(
+    host: str,
+    port: int,
+    check_interval: int,
+    restart_after: int,
+    max_restarts: int,
+    apps_dir: str | None,
+    dev: bool,
+) -> None:
+    """Start the watchdog as a background process."""
+    from amplifier_distro.server.watchdog import is_watchdog_running, start_watchdog
+
+    if is_watchdog_running():
+        click.echo("Watchdog is already running.", err=True)
+        raise SystemExit(1)
+
+    pid = start_watchdog(
+        host=host,
+        port=port,
+        check_interval=check_interval,
+        restart_after=restart_after,
+        max_restarts=max_restarts,
+        apps_dir=apps_dir,
+        dev=dev,
+    )
+    click.echo(f"Watchdog started (PID {pid})")
+    click.echo(f"  Monitoring: http://{host}:{port}/api/health")
+    click.echo(f"  Check interval: {check_interval}s")
+    click.echo(f"  Restart after: {restart_after}s downtime")
+
+
+@watchdog_group.command("stop")
+def watchdog_stop() -> None:
+    """Stop the running watchdog."""
+    from amplifier_distro.server.daemon import read_pid
+    from amplifier_distro.server.watchdog import stop_watchdog, watchdog_pid_file_path
+
+    wd_pid_file = watchdog_pid_file_path()
+    pid = read_pid(wd_pid_file)
+    if pid is None:
+        click.echo("No watchdog PID file found \u2014 watchdog may not be running.")
+        return
+
+    click.echo(f"Stopping watchdog (PID {pid})...")
+    stopped = stop_watchdog()
+    if stopped:
+        click.echo("Watchdog stopped.")
+    else:
+        click.echo("Could not stop watchdog.", err=True)
+        raise SystemExit(1)
+
+
+@watchdog_group.command("status")
+def watchdog_status() -> None:
+    """Check watchdog status."""
+    from amplifier_distro.server.daemon import cleanup_pid, read_pid
+    from amplifier_distro.server.watchdog import (
+        is_watchdog_running,
+        watchdog_pid_file_path,
+    )
+
+    wd_pid_file = watchdog_pid_file_path()
+    pid = read_pid(wd_pid_file)
+    running = is_watchdog_running()
+
+    if running and pid is not None:
+        click.echo(f"Watchdog is running (PID {pid})")
+    elif pid is not None:
+        click.echo(f"Watchdog is NOT running (stale PID file for PID {pid})")
+        click.echo("  Cleaning up stale PID file...")
+        cleanup_pid(wd_pid_file)
+    else:
+        click.echo("Watchdog is not running (no PID file)")
 
 
 def _run_foreground(

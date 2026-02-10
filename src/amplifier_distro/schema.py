@@ -88,6 +88,18 @@ class BackupConfig(BaseModel):
     auto: bool = False
 
 
+class WatchdogConfig(BaseModel):
+    """Watchdog settings for server health monitoring.
+
+    The watchdog is a lightweight process that polls the server health
+    endpoint and restarts the server after sustained downtime.
+    """
+
+    check_interval_seconds: int = 30
+    restart_after_seconds: int = 300  # 5 minutes of sustained downtime
+    max_restarts: int = 5  # per watchdog session; 0 = unlimited
+
+
 class DistroConfig(BaseModel):
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
@@ -99,3 +111,4 @@ class DistroConfig(BaseModel):
     backup: BackupConfig = Field(default_factory=BackupConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)

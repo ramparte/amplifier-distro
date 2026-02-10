@@ -38,7 +38,8 @@ Quick-start examples:
   amp-distro status      Check that everything is healthy
   amp-distro doctor      Diagnose problems (add --fix to auto-repair)
   amp-distro version     Show version and environment info
-  amp-distro update      Self-update to the latest release"""
+  amp-distro update      Self-update to the latest release
+  amp-distro service     Manage auto-start service (install/uninstall)"""
 
 
 @click.group(
@@ -329,6 +330,63 @@ def update() -> None:
     else:
         click.echo(f"Update failed: {message}", err=True)
         sys.exit(1)
+
+
+# —— Service commands————————————————————————————————————————
+
+
+@main.group("service")
+def service_group() -> None:
+    """Manage platform auto-start service (systemd/launchd)."""
+
+
+@service_group.command("install")
+@click.option(
+    "--no-watchdog",
+    is_flag=True,
+    help="Install server only, without the health watchdog.",
+)
+def service_install(no_watchdog: bool) -> None:
+    """Install the platform service for auto-start on boot."""
+    from .service import install_service
+
+    result = install_service(include_watchdog=not no_watchdog)
+    if result.success:
+        click.echo(f"Service installed ({result.platform})")
+        for detail in result.details:
+            click.echo(f"  {detail}")
+    else:
+        click.echo(f"Failed: {result.message}", err=True)
+        for detail in result.details:
+            click.echo(f"  {detail}", err=True)
+        raise SystemExit(1)
+
+
+@service_group.command("uninstall")
+def service_uninstall() -> None:
+    """Remove the platform auto-start service."""
+    from .service import uninstall_service
+
+    result = uninstall_service()
+    if result.success:
+        click.echo(f"Service removed ({result.platform})")
+        for detail in result.details:
+            click.echo(f"  {detail}")
+    else:
+        click.echo(f"Failed: {result.message}", err=True)
+        raise SystemExit(1)
+
+
+@service_group.command("status")
+def service_cmd_status() -> None:
+    """Check platform service status."""
+    from .service import service_status
+
+    result = service_status()
+    click.echo(f"Platform: {result.platform}")
+    click.echo(f"Status: {result.message}")
+    for detail in result.details:
+        click.echo(f"  {detail}")
 
 
 # ── Internal helpers ─────────────────────────────────────────────

@@ -92,6 +92,18 @@ class TestCanonicalValues:
     def test_server_default_port(self):
         assert conventions.SERVER_DEFAULT_PORT == 8400
 
+    def test_watchdog_pid_file(self):
+        assert conventions.WATCHDOG_PID_FILE == "watchdog.pid"
+
+    def test_watchdog_log_file(self):
+        assert conventions.WATCHDOG_LOG_FILE == "watchdog.log"
+
+    def test_service_name(self):
+        assert conventions.SERVICE_NAME == "amplifier-distro"
+
+    def test_launchd_label(self):
+        assert conventions.LAUNCHD_LABEL == "com.amplifier.distro"
+
     def test_interfaces_dir(self):
         assert conventions.INTERFACES_DIR == "interfaces"
 
@@ -140,6 +152,10 @@ class TestStringConstants:
         "SETTINGS_FILENAME",
         "SERVER_SOCKET",
         "SERVER_PID_FILE",
+        "WATCHDOG_PID_FILE",
+        "WATCHDOG_LOG_FILE",
+        "SERVICE_NAME",
+        "LAUNCHD_LABEL",
         "PROJECT_AGENTS_FILENAME",
         "PROJECT_SETTINGS_FILENAME",
         "DISTRO_BUNDLE_FILENAME",
@@ -322,3 +338,13 @@ class TestCrossModuleReferences:
         """BACKUP_REPO_PATTERN is used with .format(github_handle=...)."""
         assert hasattr(conventions, "BACKUP_REPO_PATTERN")
         assert "{github_handle}" in conventions.BACKUP_REPO_PATTERN
+
+    def test_constants_used_by_watchdog(self):
+        """server/watchdog.py uses WATCHDOG_PID_FILE and WATCHDOG_LOG_FILE."""
+        assert hasattr(conventions, "WATCHDOG_PID_FILE")
+        assert hasattr(conventions, "WATCHDOG_LOG_FILE")
+
+    def test_constants_used_by_service(self):
+        """service.py uses SERVICE_NAME and LAUNCHD_LABEL."""
+        assert hasattr(conventions, "SERVICE_NAME")
+        assert hasattr(conventions, "LAUNCHD_LABEL")

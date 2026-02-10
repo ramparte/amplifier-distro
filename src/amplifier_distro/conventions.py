@@ -71,6 +71,14 @@ SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
 SLACK_SESSIONS_FILENAME = "slack-sessions.json"  # Slack bridge session mappings
 
+# --- Watchdog ---
+WATCHDOG_PID_FILE = "watchdog.pid"  # relative to SERVER_DIR
+WATCHDOG_LOG_FILE = "watchdog.log"  # relative to SERVER_DIR
+
+# --- Platform Service ---
+SERVICE_NAME = "amplifier-distro"  # systemd unit name
+LAUNCHD_LABEL = "com.amplifier.distro"  # macOS launchd job label
+
 # --- Interface Registry ---
 # When an interface is installed, it registers here
 INTERFACES_DIR = "interfaces"  # relative to AMPLIFIER_HOME
