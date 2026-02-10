@@ -65,6 +65,18 @@ class SlackConfig(BaseModel):
     bot_name: str = "slackbridge"
 
 
+class VoiceConfig(BaseModel):
+    """Voice bridge settings for OpenAI Realtime API.
+
+    Uses WebRTC for direct browser-to-OpenAI audio streaming.
+    The OPENAI_API_KEY secret lives in keys.yaml / environment per Opinion #11.
+    """
+
+    # OpenAI voice: alloy, ash, ballad, coral, echo, sage, shimmer, verse
+    voice: str = "ash"
+    model: str = "gpt-4o-realtime-preview"
+
+
 class DistroConfig(BaseModel):
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
@@ -74,3 +86,4 @@ class DistroConfig(BaseModel):
     interfaces: InterfacesConfig = Field(default_factory=InterfacesConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
