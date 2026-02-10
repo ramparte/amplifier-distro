@@ -82,11 +82,13 @@ BACKUP_INCLUDE = [
     MEMORY_DIR,
     SETTINGS_FILENAME,
     BUNDLE_REGISTRY_FILENAME,
+    DISTRO_BUNDLE_DIR,  # Custom bundles
 ]
 BACKUP_EXCLUDE = [
     KEYS_FILENAME,  # Security: never backup keys
     CACHE_DIR,  # Rebuilds automatically
     PROJECTS_DIR,  # Team tracking handles this
+    SERVER_DIR,  # Runtime state, not config
 ]
 
 # --- Project-Level Conventions ---

@@ -132,6 +132,82 @@ def validate() -> None:
         sys.exit(1)
 
 
+@main.command("backup")
+@click.option("--name", default=None, help="Override backup repo name for this run.")
+def backup_cmd(name: str | None) -> None:
+    """Back up Amplifier state to a private GitHub repo."""
+    from pathlib import Path
+
+    from . import conventions
+    from .backup import backup as run_backup
+    from .schema import BackupConfig
+
+    config = load_config()
+    gh_handle = config.identity.github_handle
+    if not gh_handle:
+        click.echo("Error: no github_handle in distro.yaml identity.", err=True)
+        click.echo("Run 'amp-distro init' first.", err=True)
+        sys.exit(1)
+
+    backup_cfg = config.backup
+    if name:
+        backup_cfg = BackupConfig(
+            repo_name=name,
+            repo_owner=backup_cfg.repo_owner,
+            auto=backup_cfg.auto,
+        )
+
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
+    click.echo("Starting backup...")
+    result = run_backup(backup_cfg, amplifier_home, gh_handle)
+
+    if result.status == "success":
+        click.echo(f"  {result.message}")
+        for f in result.files:
+            click.echo(f"    {f}")
+    else:
+        click.echo(f"Backup failed: {result.message}", err=True)
+        sys.exit(1)
+
+
+@main.command("restore")
+@click.option("--name", default=None, help="Restore from a specific backup repo name.")
+def restore_cmd(name: str | None) -> None:
+    """Restore Amplifier state from a private GitHub repo."""
+    from pathlib import Path
+
+    from . import conventions
+    from .backup import restore as run_restore
+    from .schema import BackupConfig
+
+    config = load_config()
+    gh_handle = config.identity.github_handle
+    if not gh_handle:
+        click.echo("Error: no github_handle in distro.yaml identity.", err=True)
+        click.echo("Run 'amp-distro init' first.", err=True)
+        sys.exit(1)
+
+    backup_cfg = config.backup
+    if name:
+        backup_cfg = BackupConfig(
+            repo_name=name,
+            repo_owner=backup_cfg.repo_owner,
+            auto=backup_cfg.auto,
+        )
+
+    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
+    click.echo("Starting restore...")
+    result = run_restore(backup_cfg, amplifier_home, gh_handle)
+
+    if result.status == "success":
+        click.echo(f"  {result.message}")
+        for f in result.files:
+            click.echo(f"    {f}")
+    else:
+        click.echo(f"Restore failed: {result.message}", err=True)
+        sys.exit(1)
+
+
 def _print_report(report: PreflightReport) -> None:
     """Format and print a preflight report."""
     for check in report.checks:

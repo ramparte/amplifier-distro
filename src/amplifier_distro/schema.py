@@ -77,6 +77,17 @@ class VoiceConfig(BaseModel):
     model: str = "gpt-4o-realtime-preview"
 
 
+class BackupConfig(BaseModel):
+    """Backup to a private GitHub repo.
+
+    repo_owner defaults to identity.github_handle when None.
+    """
+
+    repo_name: str = "amplifier-backup"
+    repo_owner: str | None = None
+    auto: bool = False
+
+
 class DistroConfig(BaseModel):
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
@@ -85,5 +96,6 @@ class DistroConfig(BaseModel):
     preflight: PreflightConfig = Field(default_factory=PreflightConfig)
     interfaces: InterfacesConfig = Field(default_factory=InterfacesConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    backup: BackupConfig = Field(default_factory=BackupConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

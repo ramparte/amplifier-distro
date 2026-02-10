@@ -289,6 +289,19 @@ def _run_foreground(
         log_level="info",
     )
 
+    # Auto-backup on shutdown (if enabled in distro.yaml)
+    try:
+        from amplifier_distro.backup import run_auto_backup
+
+        result = run_auto_backup()
+        if result is not None:
+            if result.status == "success":
+                logger.info("Auto-backup: %s", result.message)
+            else:
+                logger.warning("Auto-backup failed: %s", result.message)
+    except Exception:
+        logger.exception("Auto-backup error")
+
 
 def _show_tailscale_url(port: int) -> None:
     """Show Tailscale URL if available."""
