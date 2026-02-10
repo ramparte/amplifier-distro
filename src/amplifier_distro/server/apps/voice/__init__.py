@@ -121,7 +121,7 @@ async def create_session() -> JSONResponse:
                 headers=headers,
             )
 
-        if resp.status_code != 200:
+        if resp.is_error:
             logger.error(
                 "OpenAI session creation failed: %d - %s",
                 resp.status_code,
@@ -200,7 +200,7 @@ async def exchange_sdp(request: Request) -> PlainTextResponse | JSONResponse:
                 headers=headers,
             )
 
-        if resp.status_code != 200:
+        if resp.is_error:
             logger.error(
                 "OpenAI SDP exchange failed: %d - %s",
                 resp.status_code,

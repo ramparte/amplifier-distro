@@ -168,6 +168,7 @@ class TestVoiceSessionEndpoint:
         """Session endpoint calls OpenAI and returns the response."""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.is_error = False
         mock_response.json.return_value = {
             "client_secret": {"value": "ek_test_token", "expires_at": 9999999999},
             "model": "gpt-4o-realtime-preview",
@@ -197,6 +198,7 @@ class TestVoiceSessionEndpoint:
         """Session endpoint returns error when OpenAI rejects request."""
         mock_response = MagicMock()
         mock_response.status_code = 401
+        mock_response.is_error = True
         mock_response.text = "Invalid API key"
 
         mock_client = AsyncMock()
@@ -274,6 +276,7 @@ class TestVoiceSdpEndpoint:
         """SDP endpoint relays offer to OpenAI and returns answer."""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.is_error = False
         mock_response.text = "v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\n"
 
         mock_client = AsyncMock()
@@ -305,6 +308,7 @@ class TestVoiceSdpEndpoint:
         """SDP endpoint returns error when OpenAI rejects SDP."""
         mock_response = MagicMock()
         mock_response.status_code = 400
+        mock_response.is_error = True
         mock_response.text = "Invalid SDP"
 
         mock_client = AsyncMock()
