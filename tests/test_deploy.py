@@ -9,9 +9,16 @@ Exit criteria verified:
 3. generate_dockerfile() returns valid Dockerfile content
 4. generate_deploy_config() returns cloud-specific config
 5. Invalid target IDs raise ValueError
+6. Dockerfile.prod has HEALTHCHECK, non-root USER, exec-form CMD
+7. docker-entrypoint.sh exists and is executable
+8. docker-compose.yml has health check configuration
 """
 
+import stat
+from pathlib import Path
+
 import pytest
+import yaml
 
 from amplifier_distro.conventions import SERVER_DEFAULT_PORT
 from amplifier_distro.deploy import (
@@ -136,3 +143,63 @@ class TestGenerateDeployConfig:
     def test_invalid_target_raises_error(self):
         with pytest.raises(ValueError, match="Unknown deploy target"):
             generate_deploy_config("nonexistent")
+
+
+# ── Project root for file-based tests ────────────────────────────
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestDockerContainerPolish:
+    """Validate Docker production artifacts for T8 container polish."""
+
+    def test_dockerfile_prod_has_healthcheck(self):
+        """Dockerfile.prod must include a HEALTHCHECK instruction."""
+        content = (_PROJECT_ROOT / "Dockerfile.prod").read_text()
+        assert "HEALTHCHECK" in content
+
+    def test_dockerfile_prod_has_nonroot_user(self):
+        """Dockerfile.prod must switch to a non-root USER."""
+        content = (_PROJECT_ROOT / "Dockerfile.prod").read_text()
+        # Must have a USER instruction (not 'root')
+        lines = [
+            ln.strip() for ln in content.splitlines() if ln.strip().startswith("USER ")
+        ]
+        assert len(lines) >= 1, "Dockerfile.prod should have a USER instruction"
+        # The USER should not be root
+        for line in lines:
+            user = line.split()[1]
+            assert user != "root", "USER should not be root"
+
+    def test_dockerfile_prod_uses_exec_form_cmd(self):
+        """CMD must use exec form (JSON array), not shell form."""
+        content = (_PROJECT_ROOT / "Dockerfile.prod").read_text()
+        found_cmd = False
+        for line in content.splitlines():
+            stripped = line.strip()
+            # Match top-level CMD only (skip HEALTHCHECK ... CMD which is indented)
+            if stripped.startswith("CMD ") and not line[0].isspace():
+                found_cmd = True
+                cmd_arg = stripped[len("CMD ") :].strip()
+                assert cmd_arg.startswith("["), (
+                    f"CMD should use exec form (JSON array), got: {stripped}"
+                )
+        assert found_cmd, "Dockerfile.prod should have a CMD instruction"
+
+    def test_docker_entrypoint_exists_and_executable(self):
+        """scripts/docker-entrypoint.sh must exist and have execute permission."""
+        entrypoint = _PROJECT_ROOT / "scripts" / "docker-entrypoint.sh"
+        assert entrypoint.exists(), "docker-entrypoint.sh not found"
+        mode = entrypoint.stat().st_mode
+        assert mode & stat.S_IXUSR, "docker-entrypoint.sh should be executable by owner"
+
+    def test_docker_compose_gui_has_healthcheck(self):
+        """docker-compose.yml gui service must define a healthcheck."""
+        content = (_PROJECT_ROOT / "docker-compose.yml").read_text()
+        data = yaml.safe_load(content)
+        gui = data["services"]["gui"]
+        assert "healthcheck" in gui, "gui service should have a healthcheck"
+        hc = gui["healthcheck"]
+        assert "test" in hc, "healthcheck should have a test command"
+        # Verify the health endpoint path references /api/health
+        test_cmd = " ".join(hc["test"]) if isinstance(hc["test"], list) else hc["test"]
+        assert "/api/health" in test_cmd

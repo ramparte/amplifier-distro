@@ -50,9 +50,20 @@ services:
     <<: *common
     profiles: ["gui", "all"]
     ports:
-      - "8080:8080"   # FastAPI backend
-      - "3000:3000"   # Web frontend (if separate)
-    command: ["bash", "-c", "echo 'GUI surface - install amp-gui then run it here'; bash"]
+      - "8400:8400"   # Distro server (conventions.SERVER_DEFAULT_PORT)
+    command:
+      - "uvicorn"
+      - "amplifier_distro.server:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8400"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8400/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ── Voice Bridge ────────────────────────────────────────────
   voice:

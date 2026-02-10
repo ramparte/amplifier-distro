@@ -9,18 +9,44 @@ WORKDIR /build
 COPY pyproject.toml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir --prefix=/install ".[slack]"
 
 # ---- Runtime stage ----
 FROM python:3.12-slim
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy only the installed packages and source
 COPY --from=builder /install /usr/local
 COPY src/ /app/src/
 
+# Create non-root user
+RUN useradd -m -s /bin/bash amplifier
+
+# Copy entrypoint script
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Create amplifier home directories
+RUN mkdir -p /home/amplifier/.amplifier/memory \
+             /home/amplifier/.amplifier/cache \
+             /home/amplifier/.amplifier/projects \
+             /home/amplifier/.amplifier/server \
+             /home/amplifier/.amplifier/bundles \
+    && chown -R amplifier:amplifier /home/amplifier
+
+USER amplifier
+
 WORKDIR /app
 ENV PYTHONPATH=/app/src
+ENV HOME=/home/amplifier
 
 EXPOSE 8400
 
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 --start-period=15s \
+    CMD curl -sf http://localhost:8400/api/health || exit 1
+
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uvicorn", "amplifier_distro.server:app", "--host", "0.0.0.0", "--port", "8400"]
