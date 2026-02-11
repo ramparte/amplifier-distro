@@ -277,6 +277,8 @@ class DistroServer:
             Accepts a JSON body with keys matching DistroConfig fields.
             Only provided fields are updated; others are preserved.
             """
+            from pydantic import ValidationError
+
             from amplifier_distro.config import load_config, save_config
 
             body = await request.json()
@@ -296,7 +298,13 @@ class DistroServer:
 
                 save_config(cfg)
                 return JSONResponse(content=cfg.model_dump())
-            except (OSError, ValueError, KeyError) as e:
+            except (ValidationError, ValueError) as e:
+                logger.info("Config update rejected: %s", e)
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": str(e), "type": type(e).__name__},
+                )
+            except Exception as e:
                 logger.warning("Config update failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
