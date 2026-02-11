@@ -360,7 +360,9 @@ class TestStructuredLogging:
 
     def test_setup_creates_log_file(self, tmp_path: Path) -> None:
         log_file = tmp_path / "test.log"
-        # Use a unique logger to avoid polluting the root
+        # Clear existing handlers so the idempotency guard doesn't skip
+        root = logging.getLogger()
+        root.handlers.clear()
         setup_logging(log_file=log_file)
         root = logging.getLogger()
         try:
