@@ -44,7 +44,7 @@ from amplifier_distro import conventions
 @click.option(
     "--dev",
     is_flag=True,
-    help="Dev mode: skip wizard, use existing environment",
+    help="Dev mode: skip wizard, use mock session backend (no LLM)",
 )
 @click.option(
     "--stub",
@@ -459,13 +459,41 @@ def _run_foreground(
         click.echo(f"  URL: http://{host}:{port}")
     click.echo(f"  API docs:  http://{host}:{port}/api/docs")
 
-    uvicorn.run(
-        server.app,
-        host=host,
-        port=port,
-        reload=reload,
-        log_level="info",
-    )
+    if dev:
+        click.echo(
+            click.style(
+                "  NOTE: --dev uses mock session backend (no LLM). "
+                "Remove --dev for real Amplifier sessions.",
+                fg="yellow",
+            )
+        )
+
+    if reload:
+        # Pass config to worker processes via environment.
+        # uvicorn --reload spawns a separate worker process that calls the
+        # factory -- CLI args and in-process state are not available there.
+        import os as _os
+
+        _os.environ["_AMPLIFIER_DEV_MODE"] = "1" if dev else ""
+        if apps_dir:
+            _os.environ["_AMPLIFIER_APPS_DIR"] = apps_dir
+
+        # uvicorn requires an import string for --reload to work
+        uvicorn.run(
+            "amplifier_distro.server.cli:_create_app",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+            log_level="info",
+        )
+    else:
+        uvicorn.run(
+            server.app,
+            host=host,
+            port=port,
+            log_level="info",
+        )
 
     # Auto-backup on shutdown (if enabled in distro.yaml)
     try:
@@ -547,3 +575,38 @@ def _create_default_config() -> None:
     )
     save_config(cfg)
     click.echo(f"  Created: {cfg.workspace_root} ({gh_handle or 'no gh handle'})")
+
+
+def _create_app():
+    """Factory for uvicorn --reload mode.
+
+    Returns a FastAPI/ASGI app instance. Called by uvicorn when using
+    import-string mode (required for --reload to work).
+
+    Configuration is passed from the supervisor process via environment
+    variables (_AMPLIFIER_DEV_MODE, _AMPLIFIER_APPS_DIR) because the
+    worker is a fresh Python process with no access to CLI args.
+    """
+    import os
+
+    from amplifier_distro.server.app import create_server
+    from amplifier_distro.server.services import init_services
+    from amplifier_distro.server.startup import export_keys, setup_logging
+
+    dev_mode = bool(os.environ.get("_AMPLIFIER_DEV_MODE"))
+
+    setup_logging()
+    export_keys()
+    init_services(dev_mode=dev_mode)
+
+    server = create_server(dev_mode=dev_mode)
+
+    apps_dir = os.environ.get("_AMPLIFIER_APPS_DIR")
+    if apps_dir:
+        server.discover_apps(Path(apps_dir))
+    else:
+        builtin_apps = Path(__file__).parent / "apps"
+        if builtin_apps.exists():
+            server.discover_apps(builtin_apps)
+
+    return server.app
