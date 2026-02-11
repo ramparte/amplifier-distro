@@ -240,7 +240,7 @@ class SlackEventHandler:
                         text=chunk,
                         thread_ts=reply_thread,
                     )
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to send blocks, falling back to plain text", exc_info=True
             )

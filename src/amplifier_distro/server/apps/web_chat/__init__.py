@@ -109,9 +109,10 @@ def _handle_memory_command(action: str, text: str) -> dict[str, Any]:
                 "memory_action": "recall",
                 "memory_result": [],
             }
-        lines = [f"Found {len(results)} memory(ies):\n"]
-        for m in results:
-            lines.append(f"- [{m['id']}] ({m['category']}) {m['content']}")
+        lines = [
+            f"Found {len(results)} memory(ies):\n",
+            *[f"- [{m['id']}] ({m['category']}) {m['content']}" for m in results],
+        ]
         return {
             "response": "\n".join(lines),
             "memory_action": "recall",
@@ -225,7 +226,7 @@ async def create_session(request: Request) -> JSONResponse:
                 status_code=503,
                 content={"error": str(e)},
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Session creation failed: %s", e, exc_info=True)
             return JSONResponse(
                 status_code=500,
@@ -264,7 +265,7 @@ async def chat(request: Request) -> JSONResponse:
             async with _session_lock:
                 result["session_connected"] = _active_session_id is not None
             return JSONResponse(content=result)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Memory command failed: %s", e, exc_info=True)
             return JSONResponse(
                 status_code=500,
@@ -308,7 +309,7 @@ async def chat(request: Request) -> JSONResponse:
                 status_code=503,
                 content={"error": str(e)},
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Chat message failed: %s", e, exc_info=True)
             return JSONResponse(
                 status_code=500,

@@ -54,12 +54,14 @@ target-version = "py311"
 src = ["src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "C4", "UP", "BLE", "S"]
+select = ["E", "F", "I", "B", "C4", "UP", "BLE", "S", "SIM", "TRY", "RUF", "PERF"]
 ignore = [
-    "S101",  # assert used (fine in non-web code and tests)
-    "S104",  # binding to all interfaces (intentional for server)
-    "S603",  # subprocess without shell=True (we validate inputs)
-    "S607",  # partial path to executable (acceptable for gh, git, etc.)
+    "S101",    # assert used (fine in non-web code and tests)
+    "S104",    # binding to all interfaces (intentional for server)
+    "S603",    # subprocess without shell=True (we validate inputs)
+    "S607",    # partial path to executable (acceptable for gh, git, etc.)
+    "TRY003",  # long exception messages are more readable inline
+    "TRY300",  # return-in-try is fine for guard clauses
 ]
 
 [tool.ruff.lint.per-file-ignores]

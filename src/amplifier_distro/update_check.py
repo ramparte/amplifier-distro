@@ -7,6 +7,7 @@ All paths come from conventions.py.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import platform
@@ -204,7 +205,7 @@ def check_for_updates() -> UpdateInfo | None:
         resp.raise_for_status()
         data = resp.json()
         latest = data["info"]["version"]
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug("Could not check PyPI for updates", exc_info=True)
         return None
 
@@ -288,10 +289,8 @@ def run_self_update() -> tuple[bool, str]:
 
     if new_version != old_version and new_version != "unknown":
         # Clear the update cache since we just updated
-        try:
+        with contextlib.suppress(OSError):
             _cache_path().unlink(missing_ok=True)
-        except OSError:
-            pass
         return True, f"Updated {old_version} -> {new_version} (via {method})."
     elif new_version == old_version:
         return True, f"Already at latest version ({old_version})."

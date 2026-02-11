@@ -10,11 +10,12 @@ the session manager and discovery service.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any
+from typing import Any, ClassVar
 
 from .config import SlackConfig
 from .discovery import AmplifierDiscovery
@@ -54,7 +55,7 @@ class CommandHandler:
     bot mention. The handler routes to the appropriate method.
     """
 
-    COMMANDS: dict[str, str] = {
+    COMMANDS: ClassVar[dict[str, str]] = {
         "list": "List recent Amplifier sessions",
         "sessions": "List active bridge sessions",
         "projects": "List known projects",
@@ -180,12 +181,14 @@ class CommandHandler:
         if not projects:
             return CommandResult(text="_No projects found._")
 
-        lines = ["*Known Projects:*\n"]
-        for p in projects:
-            lines.append(
+        lines = [
+            "*Known Projects:*\n",
+            *[
                 f"• *{p.project_name}* - {p.session_count} sessions"
                 f" (last: {p.last_active})"
-            )
+                for p in projects
+            ],
+        ]
 
         return CommandResult(text="\n".join(lines))
 
@@ -234,11 +237,13 @@ class CommandHandler:
             if len(matches) == 1:
                 session = matches[0]
             elif len(matches) > 1:
-                lines = ["Multiple sessions match. Be more specific:\n"]
-                for m in matches[:5]:
-                    lines.append(
+                lines = [
+                    "Multiple sessions match. Be more specific:\n",
+                    *[
                         f"• `{m.session_id[:12]}` - {m.project} ({m.date_str})"
-                    )
+                        for m in matches[:5]
+                    ],
+                ]
                 return CommandResult(text="\n".join(lines))
 
         if session is None:
@@ -341,10 +346,8 @@ class CommandHandler:
         """Discover local sessions - verbose listing with details."""
         limit = 10
         if args:
-            try:
+            with contextlib.suppress(ValueError):
                 limit = int(args[0])
-            except ValueError:
-                pass
 
         sessions = self._discovery.list_sessions(limit=limit)
         if not sessions:
@@ -440,9 +443,10 @@ class CommandHandler:
         if not results:
             return CommandResult(text=f"_No memories found matching '{query}'._")
 
-        lines = [f"*Found {len(results)} memory(ies):*\n"]
-        for m in results:
-            lines.append(f"- `{m['id']}` ({m['category']}) {m['content']}")
+        lines = [
+            f"*Found {len(results)} memory(ies):*\n",
+            *[f"- `{m['id']}` ({m['category']}) {m['content']}" for m in results],
+        ]
 
         return CommandResult(text="\n".join(lines))
 

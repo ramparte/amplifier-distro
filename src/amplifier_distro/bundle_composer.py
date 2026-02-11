@@ -37,8 +37,7 @@ def generate(provider_id: str, feature_ids: list[str] | None = None) -> str:
 
     for fid in feature_ids or []:
         feature = FEATURES[fid]
-        for inc in feature.includes:
-            includes.append({"bundle": inc})
+        includes.extend({"bundle": inc} for inc in feature.includes)
 
     data = {
         "bundle": {

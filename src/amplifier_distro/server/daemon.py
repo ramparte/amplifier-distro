@@ -8,6 +8,7 @@ All paths are constructed from conventions.py constants — no hardcoded paths.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -73,10 +74,8 @@ def is_running(pid_file: Path) -> bool:
 
 def cleanup_pid(pid_file: Path) -> None:
     """Remove a PID file if it exists."""
-    try:
+    with contextlib.suppress(OSError):
         pid_file.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def is_port_in_use(host: str, port: int) -> bool:
@@ -214,10 +213,8 @@ def stop_process(pid_file: Path, timeout: float = 10.0) -> bool:
             return True
 
     # Force kill if still alive after timeout
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
     cleanup_pid(pid_file)
     return True

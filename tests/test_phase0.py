@@ -15,7 +15,6 @@ Exit criteria verified:
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -313,49 +312,5 @@ class TestCLI:
             assert result.exit_code != 0
 
 
-class TestBaseBundleFile:
-    """Verify the base bundle has required structure.
-
-    Antagonist note: These tests read the actual file on disk and parse
-    its YAML frontmatter. They pin the expected bundle name, version,
-    required includes, and provider modules.
-    """
-
-    @pytest.fixture
-    def bundle_path(self):
-        return Path(__file__).parent.parent / "src" / "bundles" / "distro-base.md"
-
-    def test_base_bundle_exists(self, bundle_path):
-        assert bundle_path.exists(), f"Base bundle not found at {bundle_path}"
-
-    def test_base_bundle_has_yaml_frontmatter(self, bundle_path):
-        content = bundle_path.read_text()
-        assert content.startswith("---"), "Bundle must start with YAML frontmatter"
-        second_sep = content.index("---", 3)
-        frontmatter = content[3:second_sep].strip()
-        data = yaml.safe_load(frontmatter)
-        assert "bundle" in data
-        assert "name" in data["bundle"]
-        assert "version" in data["bundle"]
-
-    def test_base_bundle_has_correct_identity(self, bundle_path):
-        content = bundle_path.read_text()
-        second_sep = content.index("---", 3)
-        frontmatter = content[3:second_sep].strip()
-        data = yaml.safe_load(frontmatter)
-        assert data["bundle"]["name"] == "amplifier-distro-base"
-        assert data["bundle"]["version"] == "0.1.0"
-
-    def test_base_bundle_includes_foundation_behaviors(self, bundle_path):
-        content = bundle_path.read_text()
-        assert "foundation:behaviors/agents" in content
-
-    def test_base_bundle_has_providers(self, bundle_path):
-        content = bundle_path.read_text()
-        second_sep = content.index("---", 3)
-        frontmatter = content[3:second_sep].strip()
-        data = yaml.safe_load(frontmatter)
-        assert "providers" in data
-        provider_modules = [p["module"] for p in data["providers"]]
-        assert "provider-anthropic" in provider_modules
-        assert "provider-openai" in provider_modules
+# TestBaseBundleFile removed: static distro-base.md was replaced by
+# dynamic bundle_composer.py (tested in test_bundle_composer.py).

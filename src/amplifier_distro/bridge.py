@@ -22,7 +22,16 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from amplifier_core.session import (
+        AmplifierSession,  # type: ignore[import-not-found]
+    )
+
+    from amplifier_distro.bridge_protocols import BridgeDisplaySystem
 
 from amplifier_distro.conventions import (
     AMPLIFIER_HOME,
@@ -49,9 +58,9 @@ class BridgeConfig:
     # Whether to run preflight before creating session
     run_preflight: bool = True
     # Session display/UI callbacks (interface-specific)
-    display: Any = None
+    display: BridgeDisplaySystem | None = None
     # Streaming callback
-    on_stream: Any = None
+    on_stream: Callable[[str, dict[str, Any]], Any] | None = None
 
 
 @dataclass
@@ -65,8 +74,8 @@ class SessionHandle:
     session_id: str
     project_id: str
     working_dir: Path
-    # The actual AmplifierSession (typed as Any to avoid hard dep on core)
-    _session: Any = field(repr=False, default=None)
+    # The actual AmplifierSession (typed via TYPE_CHECKING to avoid hard dep on core)
+    _session: AmplifierSession | None = field(repr=False, default=None)
 
     async def run(self, prompt: str) -> str:
         """Send a prompt and get the response."""
@@ -87,7 +96,7 @@ class SessionHandle:
         if self._session is not None:
             try:
                 await self._session.cleanup()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Error during session cleanup", exc_info=True)
 
 
@@ -349,7 +358,7 @@ class LocalBridge:
         prepared = await bundle.prepare()
 
         # 5. Create protocol adapters (same as create_session)
-        from amplifier_distro.bridge_protocols import (  # noqa: E501
+        from amplifier_distro.bridge_protocols import (
             BridgeApprovalSystem,
             BridgeDisplaySystem,
             BridgeStreamingHook,

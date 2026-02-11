@@ -501,7 +501,7 @@ class DistroServer:
                         "working_dir": info.working_dir,
                     }
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning("Session creation failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,
@@ -537,7 +537,7 @@ class DistroServer:
                     status_code=404,
                     content={"error": str(e)},
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning("Prompt execution failed: %s", e, exc_info=True)
                 return JSONResponse(
                     status_code=500,

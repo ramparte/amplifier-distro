@@ -71,9 +71,7 @@ def collect_backup_files(amplifier_home: Path) -> list[Path]:
         if path.is_file():
             files.append(path)
         elif path.is_dir():
-            for child in path.rglob("*"):
-                if child.is_file():
-                    files.append(child)
+            files.extend(child for child in path.rglob("*") if child.is_file())
 
     return sorted(files)
 

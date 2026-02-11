@@ -24,6 +24,9 @@ from .client import MemorySlackClient, SentMessage
 
 logger = logging.getLogger(__name__)
 
+# Strong references to fire-and-forget tasks so they aren't garbage-collected.
+_background_tasks: set[Any] = set()
+
 router = APIRouter(prefix="/simulator")
 
 
@@ -118,7 +121,9 @@ def wire_client_to_hub(client: MemorySlackClient) -> None:
         # Schedule the async broadcast from sync callback
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_hub.broadcast(event))
+            task = loop.create_task(_hub.broadcast(event))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except RuntimeError:
             # No running loop - skip (happens in tests)
             pass
@@ -257,15 +262,15 @@ async def list_channels() -> dict[str, Any]:
     ]
 
     # Add breakout channels from active sessions
-    for mapping in session_manager.list_active():
-        if mapping.channel_id != (config.hub_channel_id or "C_HUB"):
-            channels.append(
-                {
-                    "id": mapping.channel_id,
-                    "name": f"amp-{mapping.session_id[:8]}",
-                    "type": "session",
-                    "topic": mapping.description or "Amplifier session",
-                }
-            )
+    channels.extend(
+        {
+            "id": mapping.channel_id,
+            "name": f"amp-{mapping.session_id[:8]}",
+            "type": "session",
+            "topic": mapping.description or "Amplifier session",
+        }
+        for mapping in session_manager.list_active()
+        if mapping.channel_id != (config.hub_channel_id or "C_HUB")
+    )
 
     return {"channels": channels}

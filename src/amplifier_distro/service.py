@@ -423,10 +423,10 @@ def _status_systemd() -> ServiceResult:
     # Check server
     server_unit = _systemd_server_unit_path()
     if server_unit.exists():
-        ok, output = _run_cmd(
+        _ok, output = _run_cmd(
             ["systemctl", "--user", "is-active", f"{service_name}.service"]
         )
-        state = output.strip() if ok else output.strip()
+        state = output.strip()
         details.append(f"Server service: installed ({state})")
     else:
         details.append("Server service: not installed")
@@ -434,7 +434,7 @@ def _status_systemd() -> ServiceResult:
     # Check watchdog
     watchdog_unit = _systemd_watchdog_unit_path()
     if watchdog_unit.exists():
-        ok, output = _run_cmd(
+        _ok, output = _run_cmd(
             [
                 "systemctl",
                 "--user",
@@ -442,7 +442,7 @@ def _status_systemd() -> ServiceResult:
                 f"{service_name}-watchdog.service",
             ]
         )
-        state = output.strip() if ok else output.strip()
+        state = output.strip()
         details.append(f"Watchdog service: installed ({state})")
     else:
         details.append("Watchdog service: not installed")
@@ -695,7 +695,7 @@ def _status_launchd() -> ServiceResult:
     # Check server
     server_plist = _launchd_server_plist_path()
     if server_plist.exists():
-        ok, output = _run_cmd(["launchctl", "list", label])
+        ok, _output = _run_cmd(["launchctl", "list", label])
         if ok:
             details.append("Server agent: installed (loaded)")
         else:
@@ -706,7 +706,7 @@ def _status_launchd() -> ServiceResult:
     # Check watchdog
     watchdog_plist = _launchd_watchdog_plist_path()
     if watchdog_plist.exists():
-        ok, output = _run_cmd(["launchctl", "list", f"{label}.watchdog"])
+        ok, _output = _run_cmd(["launchctl", "list", f"{label}.watchdog"])
         if ok:
             details.append("Watchdog agent: installed (loaded)")
         else:

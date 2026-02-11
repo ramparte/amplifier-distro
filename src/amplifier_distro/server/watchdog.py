@@ -113,7 +113,7 @@ def _setup_watchdog_logging() -> None:
 
 def _signal_handler(signum: int, frame: object) -> None:
     """Handle SIGTERM/SIGINT by setting the shutdown flag."""
-    global _shutdown  # noqa: PLW0603
+    global _shutdown
     _shutdown = True
     logger.info("Received signal %d, shutting down...", signum)
 
@@ -144,7 +144,7 @@ def run_watchdog_loop(
         apps_dir: Optional server apps directory.
         dev: Server dev mode flag.
     """
-    global _shutdown  # noqa: PLW0603
+    global _shutdown
     _shutdown = False
 
     # Register signal handlers

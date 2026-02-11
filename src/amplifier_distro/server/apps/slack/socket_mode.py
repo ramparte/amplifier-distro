@@ -13,6 +13,7 @@ WebSocket lifecycle and event dispatch.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -313,9 +314,7 @@ class SocketModeAdapter:
 
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
 
         logger.info("Socket Mode adapter stopped")

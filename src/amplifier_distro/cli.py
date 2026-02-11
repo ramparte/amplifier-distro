@@ -72,12 +72,11 @@ def init() -> None:
     click.echo("Amplifier Distro - Setup\n")
 
     path = config_path()
-    if path.exists():
-        if not click.confirm(
-            f"distro.yaml already exists at {path}. Overwrite?", default=False
-        ):
-            click.echo("Aborted.")
-            return
+    if path.exists() and not click.confirm(
+        f"distro.yaml already exists at {path}. Overwrite?", default=False
+    ):
+        click.echo("Aborted.")
+        return
 
     config = load_config()
 
@@ -408,7 +407,7 @@ def _show_update_notice() -> None:
                 f"v{info.latest_version}. "
                 "Run `amp-distro update` to upgrade."
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug("Update check failed", exc_info=True)
 
 

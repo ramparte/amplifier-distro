@@ -379,15 +379,14 @@ class MemoryService:
             Dict with the updated work log items.
         """
         timestamp = datetime.now(UTC).isoformat()
-        log_items = []
-        for item in items:
-            log_items.append(
-                WorkLogItem(
-                    task=item.get("task", ""),
-                    status=item.get("status", "pending"),
-                    updated=item.get("updated", timestamp),
-                )
+        log_items = [
+            WorkLogItem(
+                task=item.get("task", ""),
+                status=item.get("status", "pending"),
+                updated=item.get("updated", timestamp),
             )
+            for item in items
+        ]
         log = WorkLog(items=log_items)
         self._save_work_log(log)
 

@@ -145,13 +145,13 @@ async def create_session() -> JSONResponse:
         return JSONResponse(content=data)
 
     except httpx.TimeoutException:
-        logger.error("Timeout connecting to OpenAI Realtime API")
+        logger.exception("Timeout connecting to OpenAI Realtime API")
         return JSONResponse(
             status_code=504,
             content={"error": "Timeout connecting to OpenAI"},
         )
     except httpx.HTTPError as exc:
-        logger.error("HTTP error calling OpenAI: %s", exc)
+        logger.exception("HTTP error calling OpenAI: %s", exc.__class__.__name__)
         return JSONResponse(
             status_code=502,
             content={"error": f"HTTP error: {exc}"},
@@ -231,13 +231,13 @@ async def exchange_sdp(request: Request) -> PlainTextResponse | JSONResponse:
         )
 
     except httpx.TimeoutException:
-        logger.error("Timeout during SDP exchange with OpenAI")
+        logger.exception("Timeout during SDP exchange with OpenAI")
         return JSONResponse(
             status_code=504,
             content={"error": "Timeout during SDP exchange"},
         )
     except httpx.HTTPError as exc:
-        logger.error("HTTP error during SDP exchange: %s", exc)
+        logger.exception("HTTP error during SDP exchange: %s", exc.__class__.__name__)
         return JSONResponse(
             status_code=502,
             content={"error": f"HTTP error: {exc}"},
