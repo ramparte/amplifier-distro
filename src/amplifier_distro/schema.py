@@ -6,7 +6,49 @@ standards. This schema defines the shape of distro.yaml; conventions.py
 defines the fixed assumptions the distro relies on.
 """
 
-from pydantic import BaseModel, Field
+import os
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def looks_like_path(value: str) -> bool:
+    """Return True if *value* looks like a filesystem path (cross-platform).
+
+    NOT a security boundary -- this is a data-quality guard for catching
+    obvious non-path input like command strings or bare words.
+
+    Note: bare relative paths like ``dev/foo`` (no ``./`` prefix) return
+    False by design -- they're the main thing we want to reject.
+    """
+    if not value or not value.strip():
+        return False
+    v = value.strip()
+    # Environment variable syntax -- assume it's a path
+    if v.startswith(("$", "%")):
+        return True
+    # Expand ~ and env vars, then check the result
+    expanded = normalize_path(v)
+    # Unix: absolute, home-relative, or dot-relative
+    if expanded.startswith(("/", "~", ".")):
+        return True
+    # Windows: drive letter (C:\, D:/) -- os.path.splitdrive is platform-specific,
+    # so use a regex that works on any host OS
+    return bool(re.match(r"^[A-Za-z]:[\\/]", expanded))
+
+
+def normalize_path(value: str) -> str:
+    """Expand ``~`` and environment variables in a path string."""
+    return os.path.expandvars(os.path.expanduser(value))
+
+
+# ---------------------------------------------------------------------------
+# Sub-models
+# ---------------------------------------------------------------------------
 
 
 class IdentityConfig(BaseModel):
@@ -113,7 +155,14 @@ class WatchdogConfig(BaseModel):
     max_restarts: int = 5  # per watchdog session; 0 = unlimited
 
 
+# ---------------------------------------------------------------------------
+# Top-level config
+# ---------------------------------------------------------------------------
+
+
 class DistroConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     bundle: BundleConfig = Field(default_factory=BundleConfig)
@@ -126,3 +175,22 @@ class DistroConfig(BaseModel):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
+
+    @field_validator("workspace_root")
+    @classmethod
+    def workspace_root_must_look_like_path(cls, v: str) -> str:
+        """Reject values that are obviously not filesystem paths."""
+        v = v.strip()
+        if not v:
+            raise ValueError(
+                "workspace_root cannot be empty. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        if not looks_like_path(v):
+            raise ValueError(
+                f"workspace_root must be a filesystem path, got: {v!r}. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        return v
