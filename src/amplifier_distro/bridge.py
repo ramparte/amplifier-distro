@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,13 +93,6 @@ class SessionHandle:
             raise RuntimeError("Session not initialized")
         result: str = await self._session.execute(prompt)
         return result
-
-    async def run_streaming(self, prompt: str) -> AsyncIterator[str]:
-        """Send a prompt and stream the response."""
-        if self._session is None:
-            raise RuntimeError("Session not initialized")
-        async for chunk in self._session.run_streaming(prompt):
-            yield chunk
 
     async def cleanup(self) -> None:
         """Clean up session resources."""
