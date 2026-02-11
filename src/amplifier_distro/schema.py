@@ -75,6 +75,8 @@ class VoiceConfig(BaseModel):
     # OpenAI voice: alloy, ash, ballad, coral, echo, sage, shimmer, verse
     voice: str = "ash"
     model: str = "gpt-4o-realtime-preview"
+    instructions: str = ""  # System prompt for voice sessions
+    tools_enabled: bool = False  # Enable Amplifier tool calling
 
 
 class BackupConfig(BaseModel):

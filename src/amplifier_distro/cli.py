@@ -42,6 +42,8 @@ Quick-start examples:
   amp-distro doctor      Diagnose problems (add --fix to auto-repair)
   amp-distro version     Show version and environment info
   amp-distro update      Self-update to the latest release
+  amp-distro install     Install an interface (tui, voice, gui)
+  amp-distro interfaces  List available interfaces and status
   amp-distro service     Manage auto-start service (install/uninstall)"""
 
 
@@ -288,6 +290,203 @@ def restore_cmd(name: str | None) -> None:
     else:
         click.echo(f"Restore failed: {result.message}", err=True)
         sys.exit(1)
+
+
+# ── Interface commands ────────────────────────────────────────
+
+INTERFACE_REGISTRY: dict[str, dict[str, str]] = {
+    "tui": {
+        "repo": "ramparte/amplifier-tui",
+        "package": "amplifier-tui",
+        "description": "Terminal UI with Textual",
+    },
+    "voice": {
+        "repo": "ramparte/amplifier-voice-bridge",
+        "package": "amplifier-voice-bridge",
+        "description": "Voice interface via OpenAI Realtime API",
+    },
+    "gui": {
+        "repo": "ramparte/amplifier-gui",
+        "package": "amplifier-gui",
+        "description": "Web-based GUI",
+    },
+}
+
+
+@main.command(help="Install an Amplifier interface (tui, voice, gui).")
+@click.argument("interface", type=click.Choice(list(INTERFACE_REGISTRY.keys())))
+@click.option(
+    "--from-source", is_flag=True, help="Clone repo and install in editable mode."
+)
+def install(interface: str, from_source: bool) -> None:
+    """Install an Amplifier interface."""
+    info = INTERFACE_REGISTRY[interface]
+    repo = info["repo"]
+    package = info["package"]
+    repo_name = repo.split("/")[1]
+
+    click.echo(f"Installing {interface} ({info['description']})...\n")
+
+    if from_source:
+        _install_from_source(interface, repo, repo_name, package)
+    else:
+        _install_from_package(interface, repo, package)
+
+
+def _install_from_package(interface: str, repo: str, package: str) -> None:
+    """Install an interface via uv tool install, falling back to pip."""
+    import subprocess
+
+    url = f"git+https://github.com/{repo}"
+    click.echo(f"  Trying: uv tool install {url}")
+
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "install", url],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            click.echo("  Installed via uv.")
+        else:
+            logger.debug("uv install failed: %s", result.stderr)
+            click.echo(f"  uv failed, trying: pip install {package}")
+            result = subprocess.run(
+                ["pip", "install", package],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                click.echo(f"  pip install failed: {result.stderr.strip()}", err=True)
+                sys.exit(1)
+            click.echo("  Installed via pip.")
+    except FileNotFoundError:
+        click.echo("  uv not found, trying: pip install " + package)
+        try:
+            result = subprocess.run(
+                ["pip", "install", package],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                click.echo(f"  pip install failed: {result.stderr.strip()}", err=True)
+                sys.exit(1)
+            click.echo("  Installed via pip.")
+        except FileNotFoundError:
+            click.echo("Error: neither uv nor pip found.", err=True)
+            sys.exit(1)
+    except subprocess.TimeoutExpired:
+        click.echo("Error: install command timed out.", err=True)
+        sys.exit(1)
+
+    _update_config(interface)
+    _smoke_test(package)
+    click.echo(f"\n{interface} interface installed successfully.")
+
+
+def _install_from_source(
+    interface: str, repo: str, repo_name: str, package: str
+) -> None:
+    """Clone repo and install in editable mode."""
+    import subprocess
+
+    config = load_config()
+    workspace = Path(config.workspace_root).expanduser()
+    clone_dir = workspace / repo_name
+
+    if clone_dir.exists():
+        click.echo(f"  Directory exists: {clone_dir} (skipping clone)")
+    else:
+        clone_url = f"https://github.com/{repo}.git"
+        click.echo(f"  Cloning {clone_url} -> {clone_dir}")
+        try:
+            result = subprocess.run(
+                ["git", "clone", clone_url, str(clone_dir)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                click.echo(f"  Clone failed: {result.stderr.strip()}", err=True)
+                sys.exit(1)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            click.echo(f"  Clone failed: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"  Installing editable: uv pip install -e {clone_dir}")
+    try:
+        result = subprocess.run(
+            ["uv", "pip", "install", "-e", "."],
+            capture_output=True,
+            text=True,
+            cwd=str(clone_dir),
+            timeout=120,
+        )
+        if result.returncode != 0:
+            click.echo(f"  Editable install failed: {result.stderr.strip()}", err=True)
+            sys.exit(1)
+    except FileNotFoundError:
+        click.echo("Error: uv not found. Install uv first.", err=True)
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        click.echo("Error: install command timed out.", err=True)
+        sys.exit(1)
+
+    _update_config(interface, path=str(clone_dir))
+    _smoke_test(package)
+    click.echo(f"\n{interface} interface installed from source at {clone_dir}.")
+
+
+def _update_config(interface: str, path: str = "") -> None:
+    """Mark an interface as installed in distro.yaml."""
+    config = load_config()
+    entry = getattr(config.interfaces, interface)
+    entry.installed = True
+    if path:
+        entry.path = path
+    save_config(config)
+    logger.debug("Updated distro.yaml: interfaces.%s.installed = True", interface)
+
+
+def _smoke_test(package: str) -> None:
+    """Try importing the package's main module as a quick sanity check."""
+    module_name = package.replace("-", "_")
+    try:
+        __import__(module_name)
+        click.echo(f"  Smoke test: import {module_name} OK")
+    except ImportError:
+        click.echo(
+            f"  Smoke test: import {module_name} not available (may need PATH update)"
+        )
+
+
+@main.command("interfaces", help="List available interfaces and their install status.")
+def list_interfaces() -> None:
+    """List available interfaces and their install status."""
+    config = load_config()
+
+    click.echo("Amplifier Interfaces\n")
+
+    # CLI is always installed
+    cli_entry = config.interfaces.cli
+    mark = click.style("✓", fg="green") if cli_entry.installed else " "
+    click.echo(f"  [{mark}] cli        Amplifier CLI (always installed)")
+
+    for name, info in INTERFACE_REGISTRY.items():
+        entry = getattr(config.interfaces, name)
+        if entry.installed:
+            mark = click.style("✓", fg="green")
+            suffix = f" ({entry.path})" if entry.path else ""
+        else:
+            mark = " "
+            suffix = ""
+        click.echo(f"  [{mark}] {name:<10} {info['description']}{suffix}")
+
+    click.echo("\nInstall with: amp-distro install <name>")
+    click.echo("Source mode:  amp-distro install <name> --from-source")
 
 
 # ── Info commands ────────────────────────────────────────────────
