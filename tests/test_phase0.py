@@ -110,6 +110,109 @@ class TestDistroYamlSchema:
         assert config.identity.git_email == ""
 
 
+class TestPathValidation:
+    """Verify path validation helpers and workspace_root validator.
+
+    These tests cover the centralized looks_like_path() and normalize_path()
+    functions, plus the Pydantic validator on DistroConfig.workspace_root.
+    """
+
+    def test_looks_like_path_unix_absolute(self):
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("/home/user/dev") is True
+        assert looks_like_path("/tmp") is True
+        assert looks_like_path("/") is True
+
+    def test_looks_like_path_tilde(self):
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("~/dev") is True
+        assert looks_like_path("~") is True
+
+    def test_looks_like_path_dot_relative(self):
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("./foo") is True
+        assert looks_like_path("../foo") is True
+        assert looks_like_path(".") is True
+
+    def test_looks_like_path_env_vars(self):
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("$HOME/dev") is True
+        assert looks_like_path("${HOME}/dev") is True
+        assert looks_like_path("%USERPROFILE%") is True
+
+    def test_looks_like_path_rejects_non_paths(self):
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("") is False
+        assert looks_like_path("   ") is False
+        assert looks_like_path("foobar") is False
+        assert looks_like_path("my-bundle") is False
+        assert looks_like_path("http://example.com") is False
+
+    def test_looks_like_path_double_hyphens_allowed(self):
+        """Double hyphens in directory names should be allowed."""
+        from amplifier_distro.schema import looks_like_path
+
+        assert looks_like_path("~/my--project") is True
+
+    def test_normalize_path_expands_tilde(self):
+        from amplifier_distro.schema import normalize_path
+
+        result = normalize_path("~/dev")
+        assert "~" not in result
+        assert result.endswith("/dev")
+
+    def test_normalize_path_expands_env_vars(self):
+        import os
+
+        from amplifier_distro.schema import normalize_path
+
+        os.environ["_TEST_DISTRO_VAR"] = "/test/path"
+        try:
+            result = normalize_path("$_TEST_DISTRO_VAR/sub")
+            assert result == "/test/path/sub"
+        finally:
+            del os.environ["_TEST_DISTRO_VAR"]
+
+    def test_distro_config_rejects_empty_workspace_root(self):
+        with pytest.raises(Exception):  # ValidationError
+            DistroConfig(workspace_root="")
+
+    def test_distro_config_rejects_whitespace_workspace_root(self):
+        with pytest.raises(Exception):  # ValidationError
+            DistroConfig(workspace_root="   ")
+
+    def test_distro_config_rejects_non_path_workspace_root(self):
+        with pytest.raises(Exception):  # ValidationError
+            DistroConfig(workspace_root="amp-distro-server --dev --port 8400")
+
+    def test_distro_config_accepts_valid_paths(self):
+        cfg = DistroConfig(workspace_root="~/dev")
+        assert cfg.workspace_root == "~/dev"
+
+        cfg2 = DistroConfig(workspace_root="/home/user/projects")
+        assert cfg2.workspace_root == "/home/user/projects"
+
+    def test_distro_config_strips_whitespace(self):
+        cfg = DistroConfig(workspace_root="  ~/dev  ")
+        assert cfg.workspace_root == "~/dev"
+
+    def test_validate_assignment_rejects_invalid(self):
+        """validate_assignment=True should fire validators on attribute set."""
+        cfg = DistroConfig(workspace_root="~/dev")
+        with pytest.raises(Exception):  # ValidationError
+            cfg.workspace_root = "not-a-path"
+
+    def test_validate_assignment_accepts_valid(self):
+        cfg = DistroConfig(workspace_root="~/dev")
+        cfg.workspace_root = "~/projects"
+        assert cfg.workspace_root == "~/projects"
+
+
 class TestConfigIO:
     """Verify config load/save works correctly.
 

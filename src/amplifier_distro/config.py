@@ -1,11 +1,15 @@
 """Config I/O and environment detection for distro.yaml."""
 
+import logging
 import subprocess
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from .schema import DistroConfig
+
+logger = logging.getLogger(__name__)
 
 
 def config_path() -> Path:
@@ -14,7 +18,11 @@ def config_path() -> Path:
 
 
 def load_config() -> DistroConfig:
-    """Load and parse distro.yaml, returning defaults if missing."""
+    """Load and parse distro.yaml, returning defaults if missing or invalid.
+
+    If the file contains invalid values (e.g. workspace_root is not a path),
+    logs a warning and returns defaults so the server can still start.
+    """
     path = config_path()
     if not path.exists():
         return DistroConfig()
@@ -24,7 +32,16 @@ def load_config() -> DistroConfig:
     if not data:
         return DistroConfig()
 
-    return DistroConfig(**data)
+    try:
+        return DistroConfig(**data)
+    except ValidationError as exc:
+        logger.warning(
+            "Invalid distro.yaml at %s: %s. Using defaults. "
+            "Re-run 'amp-distro init' to fix.",
+            path,
+            exc,
+        )
+        return DistroConfig()
 
 
 def save_config(config: DistroConfig) -> None:

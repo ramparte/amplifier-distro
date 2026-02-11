@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import config_path, load_config
+from .schema import looks_like_path, normalize_path
 
 
 @dataclass
@@ -88,9 +89,19 @@ def run_preflight() -> PreflightReport:
     _check_api_key(report, "OPENAI_API_KEY")
 
     # Check 6: Workspace root exists
-    ws = Path(config.workspace_root).expanduser()
+    ws_raw = config.workspace_root
+    ws = Path(normalize_path(ws_raw))
     if ws.is_dir():
         report.checks.append(CheckResult("Workspace", True, str(ws)))
+    elif not looks_like_path(ws_raw):
+        report.checks.append(
+            CheckResult(
+                "Workspace",
+                False,
+                f"workspace_root is not a valid path: {ws_raw!r}. "
+                "Re-run 'amp-distro init' to fix.",
+            )
+        )
     else:
         report.checks.append(CheckResult("Workspace", False, f"{ws} does not exist"))
 

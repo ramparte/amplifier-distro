@@ -6,7 +6,42 @@ standards. This schema defines the shape of distro.yaml; conventions.py
 defines the fixed assumptions the distro relies on.
 """
 
-from pydantic import BaseModel, Field
+import os
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def normalize_path(value: str) -> str:
+    """Expand environment variables and user home in a path string.
+
+    Handles ~/dev, $HOME/dev, ${HOME}/dev, and %USERPROFILE% (Windows).
+    Does NOT resolve symlinks or make paths absolute.
+    """
+    return os.path.expanduser(os.path.expandvars(value))
+
+
+def looks_like_path(value: str) -> bool:
+    """Check if a string looks like a filesystem path (cross-platform).
+
+    NOT a security boundary -- workspace_root is used via Path(), never shell.
+    This is a data-quality guard for catching obvious non-path input.
+    """
+    if not value or not value.strip():
+        return False
+    v = value.strip()
+    # Environment variable syntax -- assume it's a path
+    if v.startswith(("$", "%")):
+        return True
+    # Expand and check the result
+    expanded = normalize_path(v)
+    # Unix: absolute, home-relative, or dot-relative
+    if expanded.startswith(("/", "~", ".")):
+        return True
+    # Windows: drive letter (C:\, D:/)
+    drive, _ = os.path.splitdrive(expanded)
+    if drive:
+        return True
+    return False
 
 
 class IdentityConfig(BaseModel):
@@ -114,7 +149,29 @@ class WatchdogConfig(BaseModel):
 
 
 class DistroConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     workspace_root: str = "~/dev"
+
+    @field_validator("workspace_root")
+    @classmethod
+    def validate_workspace_root(cls, v: str) -> str:
+        """Reject values that are obviously not filesystem paths."""
+        v = v.strip()
+        if not v:
+            raise ValueError(
+                "workspace_root cannot be empty. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        if not looks_like_path(v):
+            raise ValueError(
+                f"workspace_root must be a filesystem path, got: {v!r}. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        return v
+
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     bundle: BundleConfig = Field(default_factory=BundleConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)

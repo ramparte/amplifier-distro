@@ -18,7 +18,7 @@ from .config import (
 from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
-from .schema import IdentityConfig
+from .schema import IdentityConfig, looks_like_path
 from .update_check import check_for_updates, get_version_info, run_self_update
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,12 @@ def init() -> None:
 
     # Workspace
     default_ws = detect_workspace_root()
-    ws = click.prompt("Workspace root", default=default_ws)
+    while True:
+        ws = click.prompt("Workspace root", default=default_ws)
+        if looks_like_path(ws):
+            break
+        click.echo(f"  '{ws}' doesn't look like a directory path.")
+        click.echo("  Enter a path like ~/dev or /home/user/projects.")
     config.workspace_root = ws
 
     # Save
