@@ -43,7 +43,7 @@ services:
     profiles: ["tui", "all"]
     stdin_open: true
     tty: true
-    command: ["bash", "-c", "echo 'TUI surface - install amp-tui then run it here'; bash"]
+    command: ["bash", "-c", "pip install -q git+https://github.com/ramparte/amplifier-tui 2>&1 | tail -1 && amplifier-tui"]
 
   # ── GUI/Web Surface ─────────────────────────────────────────
   gui:

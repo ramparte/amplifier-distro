@@ -43,6 +43,15 @@ from amplifier_distro.conventions import (
 logger = logging.getLogger(__name__)
 
 
+def _encode_cwd(working_dir: Path) -> str:
+    """Encode working directory to project directory name.
+
+    Matches the convention used by amplifier-core:
+    /home/user/dev/project -> -home-user-dev-project
+    """
+    return str(working_dir.resolve()).replace("/", "-")
+
+
 @dataclass
 class BridgeConfig:
     """Configuration for creating a session through the Bridge."""
@@ -76,6 +85,8 @@ class SessionHandle:
     working_dir: Path
     # The actual AmplifierSession (typed via TYPE_CHECKING to avoid hard dep on core)
     _session: AmplifierSession | None = field(repr=False, default=None)
+    # Resolved session directory on disk (set by create/resume)
+    _session_dir: Path | None = field(repr=False, default=None)
 
     async def run(self, prompt: str) -> str:
         """Send a prompt and get the response."""
@@ -287,18 +298,28 @@ class LocalBridge:
                     "Could not inject context (coordinator context API not available)"
                 )
 
+        sid = session.coordinator.session_id
+        session_dir = (
+            Path(AMPLIFIER_HOME).expanduser()
+            / PROJECTS_DIR
+            / _encode_cwd(config.working_dir)
+            / "sessions"
+            / sid
+        )
+
         logger.info(
             "Session created: id=%s project=%s bundle=%s",
-            session.coordinator.session_id,
+            sid,
             project_id,
             bundle_name,
         )
 
         return SessionHandle(
-            session_id=session.coordinator.session_id,
+            session_id=sid,
             project_id=project_id,
             working_dir=config.working_dir,
             _session=session,
+            _session_dir=session_dir,
         )
 
     async def resume_session(
@@ -321,7 +342,10 @@ class LocalBridge:
         for project_dir in projects_path.iterdir():
             if not project_dir.is_dir():
                 continue
-            for candidate in project_dir.iterdir():
+            # Sessions live under <project_dir>/sessions/<session_id>/
+            sessions_subdir = project_dir / "sessions"
+            search_dir = sessions_subdir if sessions_subdir.is_dir() else project_dir
+            for candidate in search_dir.iterdir():
                 if not candidate.is_dir():
                     continue
                 if candidate.name == session_id or candidate.name.startswith(
@@ -368,8 +392,10 @@ class LocalBridge:
         approval = BridgeApprovalSystem(auto_approve=True)
         streaming = BridgeStreamingHook(on_event=config.on_stream)
 
-        # 6. Create session
+        # 6. Create session (preserving original session ID)
         session = await prepared.create_session(
+            session_id=session_id,
+            is_resumed=True,
             approval_system=approval,
             display_system=display,
             session_cwd=config.working_dir,
@@ -442,6 +468,7 @@ class LocalBridge:
             project_id=project_id,
             working_dir=config.working_dir,
             _session=session,
+            _session_dir=session_dir,
         )
 
     async def end_session(self, handle: SessionHandle) -> HandoffSummary | None:
@@ -455,12 +482,17 @@ class LocalBridge:
 
         # 2. Generate handoff summary
         timestamp = datetime.now(UTC).isoformat()
-        session_dir = (
-            Path(AMPLIFIER_HOME).expanduser()
-            / PROJECTS_DIR
-            / handle.project_id
-            / handle.session_id
-        )
+        if handle._session_dir:
+            session_dir = handle._session_dir
+        else:
+            # Fallback: scan for session directory (handles both old and new paths)
+            session_dir = (
+                Path(AMPLIFIER_HOME).expanduser()
+                / PROJECTS_DIR
+                / handle.project_id
+                / "sessions"
+                / handle.session_id
+            )
 
         # 3. Build template-based handoff markdown
         summary_lines = [
@@ -513,28 +545,52 @@ class LocalBridge:
         )
 
     async def get_handoff(self, project_id: str) -> HandoffSummary | None:
-        """Find most recent handoff for project."""
-        projects_path = Path(AMPLIFIER_HOME).expanduser() / PROJECTS_DIR / project_id
+        """Find most recent handoff for project.
+
+        Searches all project directories (which are encoded CWD paths)
+        and looks inside their ``sessions/`` subdirectory for handoff files.
+        Matches project_id as a substring of the directory name so that
+        logical names like ``"amplifier-distro"`` match encoded paths like
+        ``-home-user-dev-amplifier-distro``.
+        """
+        projects_path = Path(AMPLIFIER_HOME).expanduser() / PROJECTS_DIR
         if not projects_path.exists():
             return None
 
-        # Find most recent session with a handoff
-        sessions = sorted(
-            projects_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
-        )
-        for session_dir in sessions:
-            handoff_file = session_dir / HANDOFF_FILENAME
-            if handoff_file.exists():
-                content = handoff_file.read_text()
-                return HandoffSummary(
-                    session_id=session_dir.name,
-                    project_id=project_id,
-                    summary=content,
-                    key_decisions=[],
-                    open_questions=[],
-                    files_modified=[],
-                    timestamp=str(session_dir.stat().st_mtime),
-                )
+        # Find project directories that contain the project_id
+        project_dirs: list[Path] = []
+        for d in projects_path.iterdir():
+            if not d.is_dir():
+                continue
+            if d.name == project_id or project_id in d.name:
+                project_dirs.append(d)
+
+        if not project_dirs:
+            return None
+
+        # Search for most recent handoff across matching project dirs
+        for project_dir in project_dirs:
+            sessions_subdir = project_dir / "sessions"
+            search_dir = sessions_subdir if sessions_subdir.is_dir() else project_dir
+
+            sessions = sorted(
+                (d for d in search_dir.iterdir() if d.is_dir()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for session_dir in sessions:
+                handoff_file = session_dir / HANDOFF_FILENAME
+                if handoff_file.exists():
+                    content = handoff_file.read_text()
+                    return HandoffSummary(
+                        session_id=session_dir.name,
+                        project_id=project_id,
+                        summary=content,
+                        key_decisions=[],
+                        open_questions=[],
+                        files_modified=[],
+                        timestamp=str(session_dir.stat().st_mtime),
+                    )
         return None
 
     def get_config(self) -> dict[str, Any]:
