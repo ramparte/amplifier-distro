@@ -128,6 +128,42 @@ class TestPutConfig:
         data = yaml.safe_load(config_path.read_text())
         assert data["workspace_root"] == "~/new-workspace"
 
+    def test_invalid_workspace_returns_400(self, settings_client: TestClient) -> None:
+        """ValidationError/ValueError -> 400 (client error), not 500."""
+        response = settings_client.put(
+            "/api/config",
+            json={"workspace_root": "not-a-path-at-all"},
+        )
+        assert response.status_code == 400
+        body = response.json()
+        assert "error" in body
+        assert "type" in body
+
+    def test_empty_workspace_returns_400(self, settings_client: TestClient) -> None:
+        """Empty workspace_root should be rejected with 400."""
+        response = settings_client.put(
+            "/api/config",
+            json={"workspace_root": ""},
+        )
+        assert response.status_code == 400
+
+    def test_unexpected_error_returns_500(self, settings_client: TestClient) -> None:
+        """Unexpected exceptions -> 500 (server error)."""
+        # Patch save_config (not load_config) because load_config is also
+        # called by the auth middleware before reaching the endpoint handler.
+        with patch(
+            "amplifier_distro.config.save_config",
+            side_effect=RuntimeError("disk on fire"),
+        ):
+            response = settings_client.put(
+                "/api/config",
+                json={"workspace_root": "~/dev"},
+            )
+        assert response.status_code == 500
+        body = response.json()
+        assert "error" in body
+        assert "disk on fire" in body["error"]
+
     def test_partial_update_preserves_other_fields(
         self, settings_client: TestClient
     ) -> None:
