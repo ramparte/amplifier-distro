@@ -15,13 +15,50 @@ Exit criteria verified:
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
 from amplifier_distro.cli import main
 from amplifier_distro.config import config_path, load_config, save_config
 from amplifier_distro.preflight import CheckResult, PreflightReport, run_preflight
-from amplifier_distro.schema import DistroConfig, IdentityConfig
+from amplifier_distro.schema import (
+    DistroConfig,
+    IdentityConfig,
+    looks_like_path,
+    normalize_path,
+)
+
+
+class TestPathHelpers:
+    """Verify path helper functions from schema.py."""
+
+    def test_looks_like_path_absolute(self):
+        assert looks_like_path("/usr/local") is True
+
+    def test_looks_like_path_tilde(self):
+        assert looks_like_path("~/dev") is True
+
+    def test_looks_like_path_relative_dot(self):
+        assert looks_like_path("./src") is True
+
+    def test_looks_like_path_rejects_bare_word(self):
+        assert looks_like_path("not-a-path") is False
+
+    def test_looks_like_path_rejects_empty(self):
+        assert looks_like_path("") is False
+
+    def test_normalize_path_expands_tilde(self):
+        result = normalize_path("~/dev")
+        assert "~" not in result
+        assert result.endswith("/dev")
+
+    def test_normalize_path_expands_env_var(self):
+        import os
+
+        with patch.dict(os.environ, {"MY_TEST_DIR": "/tmp/test"}):
+            result = normalize_path("$MY_TEST_DIR/sub")
+            assert result == "/tmp/test/sub"
 
 
 class TestDistroYamlSchema:
@@ -109,6 +146,23 @@ class TestDistroYamlSchema:
         assert config.identity.github_handle == ""
         assert config.identity.git_email == ""
 
+    def test_workspace_root_validator_rejects_bare_word(self):
+        """DistroConfig rejects workspace_root that doesn't look like a path."""
+        with pytest.raises(Exception):
+            DistroConfig(workspace_root="not-a-path")
+
+    def test_workspace_root_validator_accepts_tilde(self):
+        config = DistroConfig(workspace_root="~/dev")
+        assert config.workspace_root == "~/dev"
+
+    def test_workspace_root_validator_accepts_absolute(self):
+        config = DistroConfig(workspace_root="/home/user/dev")
+        assert config.workspace_root == "/home/user/dev"
+
+    def test_workspace_root_validator_accepts_relative_dot(self):
+        config = DistroConfig(workspace_root="./projects")
+        assert config.workspace_root == "./projects"
+
 
 class TestConfigIO:
     """Verify config load/save works correctly.
@@ -152,6 +206,27 @@ class TestConfigIO:
         with patch("amplifier_distro.config.config_path", return_value=deep_path):
             save_config(config)
             assert deep_path.exists()
+
+    def test_load_config_raises_on_invalid_values(self, tmp_path):
+        """load_config() raises ValidationError when config has invalid values."""
+        import os
+        from unittest.mock import patch
+
+        from amplifier_distro.config import load_config
+
+        config_file = tmp_path / "distro.yaml"
+        config_file.write_text("workspace_root: not-a-path\n")
+        with patch("amplifier_distro.config.config_path", return_value=config_file):
+            with pytest.raises(Exception):  # ValidationError
+                load_config()
+
+    def test_load_config_raises_on_malformed_yaml(self, tmp_path):
+        """load_config() raises ValueError when YAML is malformed."""
+        config_file = tmp_path / "distro.yaml"
+        config_file.write_text("{{invalid yaml: [}\n")
+        with patch("amplifier_distro.config.config_path", return_value=config_file):
+            with pytest.raises(ValueError, match="Malformed YAML"):
+                load_config()
 
 
 class TestPreflightChecks:

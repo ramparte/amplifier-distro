@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import click
+from pydantic import ValidationError
 
 from . import conventions
 from .config import (
@@ -18,10 +19,33 @@ from .config import (
 from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
-from .schema import IdentityConfig
+from .schema import DistroConfig, IdentityConfig, looks_like_path
 from .update_check import check_for_updates, get_version_info, run_self_update
 
 logger = logging.getLogger(__name__)
+
+_CONFIG_FIX_HINT = (
+    "Edit ~/.amplifier/distro.yaml to fix, or re-run 'amp-distro init' to regenerate."
+)
+
+
+def _config_error_message(exc: Exception) -> str:
+    """Extract a clean, user-friendly message from a config error.
+
+    Pydantic's ValidationError.str() includes machine-readable metadata
+    ([type=value_error, input_type=str]) and docs links that are noise
+    for CLI users. This extracts just the human-readable part.
+    """
+    if isinstance(exc, ValidationError):
+        msgs = []
+        for e in exc.errors():
+            msg = e.get("msg", str(e))
+            # Strip Pydantic's "Value error, " prefix
+            if msg.startswith("Value error, "):
+                msg = msg[len("Value error, ") :]
+            msgs.append(msg)
+        return "; ".join(msgs)
+    return str(exc)
 
 
 class _EpilogGroup(click.Group):
@@ -80,7 +104,11 @@ def init() -> None:
         click.echo("Aborted.")
         return
 
-    config = load_config()
+    # init is the *fix* for bad config, so tolerate errors here
+    try:
+        config = load_config()
+    except (ValidationError, ValueError):
+        config = DistroConfig()
 
     # Detect identity
     click.echo("Detecting identity...")
@@ -102,9 +130,13 @@ def init() -> None:
 
     config.identity = IdentityConfig(github_handle=handle, git_email=email)
 
-    # Workspace
+    # Workspace — validate interactively
     default_ws = detect_workspace_root()
-    ws = click.prompt("Workspace root", default=default_ws)
+    while True:
+        ws = click.prompt("Workspace root", default=default_ws)
+        if looks_like_path(ws):
+            break
+        click.echo(f"  '{ws}' doesn't look like a path (should start with /, ~, or .)")
     config.workspace_root = ws
 
     # Save
@@ -139,7 +171,14 @@ def init() -> None:
 def status() -> None:
     """Show environment health."""
     click.echo("Amplifier Distro - Status\n")
-    report = run_preflight()
+
+    try:
+        report = run_preflight()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
+
     _print_report(report)
 
     if report.passed:
@@ -174,7 +213,7 @@ def validate() -> None:
         click.echo(f"  preflight: {config.preflight.mode}")
         click.echo(f"  cache TTL: {config.cache.max_age_hours}h")
         click.echo("\nValid.")
-    except (OSError, ValueError, KeyError) as e:
+    except (ValidationError, ValueError, OSError, KeyError) as e:
         click.echo(f"Invalid: {e}")
         sys.exit(1)
 
@@ -226,7 +265,13 @@ def backup_cmd(name: str | None) -> None:
     from .backup import backup as run_backup
     from .schema import BackupConfig
 
-    config = load_config()
+    try:
+        config = load_config()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
+
     gh_handle = config.identity.github_handle
     if not gh_handle:
         click.echo("Error: no github_handle in distro.yaml identity.", err=True)
@@ -264,7 +309,13 @@ def restore_cmd(name: str | None) -> None:
     from .backup import restore as run_restore
     from .schema import BackupConfig
 
-    config = load_config()
+    try:
+        config = load_config()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
+
     gh_handle = config.identity.github_handle
     if not gh_handle:
         click.echo("Error: no github_handle in distro.yaml identity.", err=True)
@@ -292,7 +343,7 @@ def restore_cmd(name: str | None) -> None:
         sys.exit(1)
 
 
-# ── Interface commands ────────────────────────────────────────
+# ── Interface commands ───────────────────────────────────────────
 
 INTERFACE_REGISTRY: dict[str, dict[str, str]] = {
     "tui": {
@@ -393,7 +444,13 @@ def _install_from_source(
     """Clone repo and install in editable mode."""
     import subprocess
 
-    config = load_config()
+    try:
+        config = load_config()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
+
     workspace = Path(config.workspace_root).expanduser()
     clone_dir = workspace / repo_name
 
@@ -442,7 +499,13 @@ def _install_from_source(
 
 def _update_config(interface: str, path: str = "") -> None:
     """Mark an interface as installed in distro.yaml."""
-    config = load_config()
+    try:
+        config = load_config()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
+
     entry = getattr(config.interfaces, interface)
     entry.installed = True
     if path:
@@ -466,19 +529,24 @@ def _smoke_test(package: str) -> None:
 @main.command("interfaces", help="List available interfaces and their install status.")
 def list_interfaces() -> None:
     """List available interfaces and their install status."""
-    config = load_config()
+    try:
+        config = load_config()
+    except (ValidationError, ValueError) as e:
+        click.echo(f"Invalid distro.yaml: {_config_error_message(e)}", err=True)
+        click.echo(_CONFIG_FIX_HINT, err=True)
+        raise SystemExit(1)
 
     click.echo("Amplifier Interfaces\n")
 
     # CLI is always installed
     cli_entry = config.interfaces.cli
-    mark = click.style("✓", fg="green") if cli_entry.installed else " "
+    mark = click.style("\u2713", fg="green") if cli_entry.installed else " "
     click.echo(f"  [{mark}] cli        Amplifier CLI (always installed)")
 
     for name, info in INTERFACE_REGISTRY.items():
         entry = getattr(config.interfaces, name)
         if entry.installed:
-            mark = click.style("✓", fg="green")
+            mark = click.style("\u2713", fg="green")
             suffix = f" ({entry.path})" if entry.path else ""
         else:
             mark = " "

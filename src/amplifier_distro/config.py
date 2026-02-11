@@ -1,11 +1,15 @@
 """Config I/O and environment detection for distro.yaml."""
 
+import logging
 import subprocess
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError  # noqa: F401 - re-exported for callers
 
 from .schema import DistroConfig
+
+logger = logging.getLogger(__name__)
 
 
 def config_path() -> Path:
@@ -14,15 +18,27 @@ def config_path() -> Path:
 
 
 def load_config() -> DistroConfig:
-    """Load and parse distro.yaml, returning defaults if missing."""
+    """Load and parse distro.yaml, returning defaults if missing.
+
+    Raises ValidationError if the file contains invalid values.
+    Callers should catch and handle appropriately for their context.
+    """
     path = config_path()
     if not path.exists():
         return DistroConfig()
 
-    text = path.read_text()
-    data = yaml.safe_load(text)
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Malformed YAML in {path}: {exc}") from exc
+
     if not data:
         return DistroConfig()
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected a YAML mapping in {path}, got {type(data).__name__}"
+        )
 
     return DistroConfig(**data)
 
