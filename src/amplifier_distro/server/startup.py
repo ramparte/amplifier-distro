@@ -61,12 +61,16 @@ def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> No
         log_file: Path for the JSON log file. Uses convention default if None.
         level: Logging level for both handlers.
     """
+    root = logging.getLogger()
+    # Prevent duplicate handlers on uvicorn reload
+    if root.handlers:
+        return
+
     if log_file is None:
         log_file = log_file_path()
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    root = logging.getLogger()
     root.setLevel(level)
 
     # Console handler: human-readable
