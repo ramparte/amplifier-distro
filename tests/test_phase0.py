@@ -15,13 +15,58 @@ Exit criteria verified:
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import yaml
 from click.testing import CliRunner
+from pydantic import ValidationError
 
 from amplifier_distro.cli import main
 from amplifier_distro.config import config_path, load_config, save_config
 from amplifier_distro.preflight import CheckResult, PreflightReport, run_preflight
-from amplifier_distro.schema import DistroConfig, IdentityConfig
+from amplifier_distro.schema import (
+    DistroConfig,
+    IdentityConfig,
+    looks_like_path,
+    normalize_path,
+)
+
+
+class TestPathHelpers:
+    """Verify normalize_path() and looks_like_path() helper functions."""
+
+    def test_normalize_expands_tilde(self):
+        result = normalize_path("~/dev")
+        assert "~" not in result
+        assert result.endswith("/dev")
+
+    def test_normalize_expands_env_var(self):
+        with patch.dict("os.environ", {"MY_DIR": "/opt/work"}):
+            result = normalize_path("$MY_DIR/sub")
+            assert result.endswith("/opt/work/sub")
+
+    def test_normalize_resolves_relative(self):
+        import os
+
+        result = normalize_path("./foo")
+        assert os.path.isabs(result)
+
+    def test_looks_like_path_tilde(self):
+        assert looks_like_path("~/dev") is True
+
+    def test_looks_like_path_absolute(self):
+        assert looks_like_path("/home/user/projects") is True
+
+    def test_looks_like_path_relative_dot(self):
+        assert looks_like_path("./mydir") is True
+
+    def test_looks_like_path_rejects_command(self):
+        assert looks_like_path("amp-distro-server --dev --port 8400") is False
+
+    def test_looks_like_path_empty(self):
+        assert looks_like_path("") is False
+
+    def test_looks_like_path_whitespace(self):
+        assert looks_like_path("   ") is False
 
 
 class TestDistroYamlSchema:
@@ -108,6 +153,39 @@ class TestDistroYamlSchema:
         config = DistroConfig()
         assert config.identity.github_handle == ""
         assert config.identity.git_email == ""
+
+    def test_distro_config_rejects_empty_workspace_root(self):
+        with pytest.raises(ValidationError, match="workspace_root"):
+            DistroConfig(workspace_root="")
+
+    def test_distro_config_rejects_whitespace_workspace_root(self):
+        with pytest.raises(ValidationError, match="workspace_root"):
+            DistroConfig(workspace_root="   ")
+
+    def test_distro_config_rejects_non_path_workspace_root(self):
+        with pytest.raises(ValidationError, match="workspace_root"):
+            DistroConfig(workspace_root="amp-distro-server --dev --port 8400")
+
+    def test_distro_config_accepts_valid_paths(self):
+        cfg = DistroConfig(workspace_root="~/dev")
+        assert cfg.workspace_root == "~/dev"
+        cfg2 = DistroConfig(workspace_root="/home/user/projects")
+        assert cfg2.workspace_root == "/home/user/projects"
+
+    def test_distro_config_strips_whitespace(self):
+        cfg = DistroConfig(workspace_root="  ~/dev  ")
+        assert cfg.workspace_root == "~/dev"
+
+    def test_validate_assignment_rejects_invalid(self):
+        """validate_assignment=True should fire validators on attribute set."""
+        cfg = DistroConfig(workspace_root="~/dev")
+        with pytest.raises(ValidationError, match="workspace_root"):
+            cfg.workspace_root = "not a path at all"
+
+    def test_validate_assignment_accepts_valid(self):
+        cfg = DistroConfig(workspace_root="~/dev")
+        cfg.workspace_root = "~/projects"
+        assert cfg.workspace_root == "~/projects"
 
 
 class TestConfigIO:

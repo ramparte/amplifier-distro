@@ -6,7 +6,37 @@ standards. This schema defines the shape of distro.yaml; conventions.py
 defines the fixed assumptions the distro relies on.
 """
 
-from pydantic import BaseModel, Field
+import os
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def normalize_path(p: str) -> str:
+    """Expand ~ and env vars, then resolve to an absolute path string."""
+    return str(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
+
+
+def looks_like_path(v: str) -> bool:
+    """Return True if *v* looks like a filesystem path, not a shell command."""
+    v = v.strip()
+    if not v:
+        return False
+    # Obvious path prefixes
+    if v.startswith(("/", "~", ".")):
+        return True
+    # Drive letters on Windows (C:\...)
+    if len(v) >= 3 and v[1] == ":" and v[2] in ("/", "\\"):
+        return True
+    # Heuristic: if it contains spaces *and* no path separator it's likely a
+    # command string ("amp-distro-server --dev --port 8400").
+    if " " in v and "/" not in v and "\\" not in v:
+        return False
+    return True
 
 
 class IdentityConfig(BaseModel):
@@ -114,6 +144,8 @@ class WatchdogConfig(BaseModel):
 
 
 class DistroConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     workspace_root: str = "~/dev"
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     bundle: BundleConfig = Field(default_factory=BundleConfig)
@@ -126,3 +158,22 @@ class DistroConfig(BaseModel):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
+
+    @field_validator("workspace_root")
+    @classmethod
+    def validate_workspace_root(cls, v: str) -> str:
+        """Reject values that are obviously not filesystem paths."""
+        v = v.strip()
+        if not v:
+            raise ValueError(
+                "workspace_root cannot be empty. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        if not looks_like_path(v):
+            raise ValueError(
+                f"workspace_root must be a filesystem path, got: {v!r}. "
+                "Expected a path like ~/dev or /home/user/projects. "
+                "Re-run 'amp-distro init' to fix."
+            )
+        return v
