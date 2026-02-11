@@ -6,7 +6,46 @@ standards. This schema defines the shape of distro.yaml; conventions.py
 defines the fixed assumptions the distro relies on.
 """
 
+import os
+
 from pydantic import BaseModel, Field
+
+
+def normalize_path(value: str) -> str:
+    """Expand environment variables and user home in a path string.
+
+    Handles ~/dev, $HOME/dev, ${HOME}/dev, and %USERPROFILE% (Windows).
+    Does NOT resolve symlinks or make paths absolute.
+    """
+    return os.path.expanduser(os.path.expandvars(value))
+
+
+def looks_like_path(value: str) -> bool:
+    """Check if a string looks like a filesystem path (cross-platform).
+
+    NOT a security boundary -- workspace_root is used via Path(), never shell.
+    This is a data-quality guard for catching obvious non-path input.
+
+    Note: Bare relative paths like 'dev/foo' (no ./ prefix) return False.
+    After expanduser(), the ~ check is intentional redundancy for edge cases
+    like ~unknownuser where expansion doesn't resolve to an absolute path.
+    """
+    if not value or not value.strip():
+        return False
+    v = value.strip()
+    # Environment variable syntax -- assume it's a path
+    if v.startswith(("$", "%")):
+        return True
+    # Expand and check the result
+    expanded = normalize_path(v)
+    # Unix: absolute, home-relative, or dot-relative
+    if expanded.startswith(("/", "~", ".")):
+        return True
+    # Windows: drive letter (C:\, D:/)
+    drive, _ = os.path.splitdrive(expanded)
+    if drive:
+        return True
+    return False
 
 
 class IdentityConfig(BaseModel):

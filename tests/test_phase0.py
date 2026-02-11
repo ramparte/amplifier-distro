@@ -312,5 +312,71 @@ class TestCLI:
             assert result.exit_code != 0
 
 
+class TestPathValidation:
+    """Verify path validation helpers.
+
+    These tests cover the centralized looks_like_path() and normalize_path()
+    functions used for data-quality validation of path-like config values.
+    """
+
+    def test_looks_like_path_unix_absolute(self):
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("/home/user/dev") is True
+        assert looks_like_path("/tmp") is True
+        assert looks_like_path("/") is True
+
+    def test_looks_like_path_tilde(self):
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("~/dev") is True
+        assert looks_like_path("~") is True
+
+    def test_looks_like_path_dot_relative(self):
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("./foo") is True
+        assert looks_like_path("../foo") is True
+        assert looks_like_path(".") is True
+
+    def test_looks_like_path_env_vars(self):
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("$HOME/dev") is True
+        assert looks_like_path("${HOME}/dev") is True
+        assert looks_like_path("%USERPROFILE%") is True
+
+    def test_looks_like_path_rejects_non_paths(self):
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("") is False
+        assert looks_like_path("   ") is False
+        assert looks_like_path("foobar") is False
+        assert looks_like_path("my-bundle") is False
+        assert looks_like_path("http://example.com") is False
+
+    def test_looks_like_path_double_hyphens_allowed(self):
+        """Double hyphens in directory names should be allowed."""
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("~/my--project") is True
+
+    def test_looks_like_path_bare_relative_rejected(self):
+        """Bare relative paths without ./ prefix are rejected (by design)."""
+        from amplifier_distro.schema import looks_like_path
+        assert looks_like_path("dev/projects") is False
+        assert looks_like_path("projects") is False
+
+    def test_normalize_path_expands_tilde(self):
+        from amplifier_distro.schema import normalize_path
+        result = normalize_path("~/dev")
+        assert "~" not in result
+        assert result.endswith("/dev")
+
+    def test_normalize_path_expands_env_vars(self):
+        import os
+        from amplifier_distro.schema import normalize_path
+        os.environ["_TEST_DISTRO_VAR"] = "/test/path"
+        try:
+            result = normalize_path("$_TEST_DISTRO_VAR/sub")
+            assert result == "/test/path/sub"
+        finally:
+            del os.environ["_TEST_DISTRO_VAR"]
+
+
 # TestBaseBundleFile removed: static distro-base.md was replaced by
 # dynamic bundle_composer.py (tested in test_bundle_composer.py).
