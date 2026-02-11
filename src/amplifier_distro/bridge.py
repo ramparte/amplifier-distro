@@ -348,8 +348,13 @@ class LocalBridge:
         if not matches:
             raise FileNotFoundError(f"Session not found: {session_id}")
         if len(matches) > 1:
-            ids = [m[1].name for m in matches]
-            raise ValueError(f"Ambiguous session prefix '{session_id}' matches: {ids}")
+            # Prefer exact match over prefix matches (sub-sessions share UUID prefix)
+            exact = [m for m in matches if m[1].name == session_id]
+            if len(exact) == 1:
+                matches = exact
+            else:
+                ids = [m[1].name for m in matches]
+                raise ValueError(f"Ambiguous session prefix '{session_id}' matches: {ids}")
 
         project_id, session_dir = matches[0]
         logger.info(
