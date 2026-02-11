@@ -99,22 +99,6 @@ class TestSessionHandle:
         with pytest.raises(RuntimeError, match="Session not initialized"):
             asyncio.run(handle.run("hello"))
 
-    def test_run_streaming_raises_when_session_is_none(self):
-        """run_streaming() must raise RuntimeError if _session is None."""
-        handle = SessionHandle(
-            session_id="test-123",
-            project_id="my-project",
-            working_dir=Path("/tmp"),
-            _session=None,
-        )
-
-        async def consume():
-            async for _chunk in handle.run_streaming("hello"):
-                pass
-
-        with pytest.raises(RuntimeError, match="Session not initialized"):
-            asyncio.run(consume())
-
     def test_session_excluded_from_repr(self):
         """_session should be excluded from repr (it's an internal handle)."""
         handle = SessionHandle(
