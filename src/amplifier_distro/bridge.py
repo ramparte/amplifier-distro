@@ -102,6 +102,17 @@ class SessionHandle:
             except Exception:  # noqa: BLE001
                 logger.warning("Error during session cleanup", exc_info=True)
 
+    def set_approval_system(self, approval_system: Any) -> None:
+        """Set the approval system on the session's coordinator."""
+        if self._session is not None and hasattr(self._session, "coordinator"):
+            self._session.coordinator.approval_system = approval_system
+
+    def get_mounted(self, category: str) -> list:
+        """Get mounted modules by category (e.g., 'tools', 'hooks')."""
+        if self._session is not None and hasattr(self._session, "coordinator"):
+            return self._session.coordinator.get_mounted(category)
+        return []
+
 
 @dataclass
 class HandoffSummary:
