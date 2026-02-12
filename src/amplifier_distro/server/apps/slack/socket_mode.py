@@ -33,6 +33,10 @@ _INITIAL_BACKOFF = 1.0
 _MAX_BACKOFF = 60.0
 _BACKOFF_FACTOR = 2.0
 
+# If no WebSocket frame arrives within this window, assume the connection is dead.
+# Slack sends pings every ~30s, so 5 minutes of silence = definitely dead.
+_RECEIVE_TIMEOUT = 300  # seconds
+
 # Dedup window: ignore duplicate events for the same message within this window
 _DEDUP_WINDOW_SECS = 10.0
 _DEDUP_MAX_SIZE = 200
@@ -145,13 +149,26 @@ class SocketModeAdapter:
                 backoff = min(backoff * _BACKOFF_FACTOR, _MAX_BACKOFF)
 
     async def _process_frames(self) -> None:
-        """Read and dispatch WebSocket frames."""
+        """Read and dispatch WebSocket frames.
+
+        Uses an explicit receive timeout instead of ``async for`` so that
+        silently-dead TCP connections (common on WSL2) are detected and
+        the reconnection loop can kick in.  Slack sends pings roughly
+        every 30 s, so 5 minutes of silence is a reliable death signal.
+        """
         assert self._ws is not None
         logger.info("[socket] Entering frame processing loop")
 
-        async for msg in self._ws:
-            if not self._running:
-                logger.info("[socket] Stopping: running=False")
+        while self._running and self._ws and not self._ws.closed:
+            try:
+                msg = await asyncio.wait_for(
+                    self._ws.receive(), timeout=_RECEIVE_TIMEOUT
+                )
+            except TimeoutError:
+                logger.warning(
+                    f"[socket] No frames received in {_RECEIVE_TIMEOUT}s, "
+                    "assuming dead connection"
+                )
                 break
 
             logger.debug(f"[socket] Frame: type={msg.type}")

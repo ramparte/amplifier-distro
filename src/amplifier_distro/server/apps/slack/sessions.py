@@ -209,6 +209,60 @@ class SlackSessionManager:
         logger.info(f"Created session {info.session_id} mapped to {key}")
         return mapping
 
+    async def connect_session(
+        self,
+        channel_id: str,
+        thread_ts: str | None,
+        user_id: str,
+        working_dir: str,
+        description: str = "",
+    ) -> SessionMapping:
+        """Connect a Slack context to a new backend session in *working_dir*.
+
+        Unlike ``create_session`` (which uses the default working directory),
+        this creates a backend session in the same directory as a previously
+        discovered session so the user lands in the right project context.
+        """
+        # Check session limit (same as create_session)
+        user_sessions = [
+            m
+            for m in self._mappings.values()
+            if m.created_by == user_id and m.is_active
+        ]
+        if len(user_sessions) >= self._config.max_sessions_per_user:
+            raise ValueError(
+                f"Session limit reached ({self._config.max_sessions_per_user}). "
+                "End an existing session first."
+            )
+
+        # Create a real backend session in the discovered session's directory
+        info = await self._backend.create_session(
+            working_dir=working_dir,
+            bundle_name=self._config.default_bundle,
+            description=description,
+        )
+
+        key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
+        now = datetime.now(UTC).isoformat()
+
+        mapping = SessionMapping(
+            session_id=info.session_id,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            project_id=info.project_id,
+            description=description,
+            created_by=user_id,
+            created_at=now,
+            last_active=now,
+        )
+
+        self._mappings[key] = mapping
+        self._save_sessions()
+        logger.info(
+            f"Connected session {info.session_id} (in {working_dir}) mapped to {key}"
+        )
+        return mapping
+
     async def route_message(self, message: SlackMessage) -> str | None:
         """Route a Slack message to the appropriate Amplifier session.
 

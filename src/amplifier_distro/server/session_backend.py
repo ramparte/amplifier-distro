@@ -201,8 +201,26 @@ class BridgeBackend:
     async def send_message(self, session_id: str, message: str) -> str:
         handle = self._sessions.get(session_id)
         if handle is None:
-            raise ValueError(f"Unknown session: {session_id}")
+            # Session handle lost (server restart). Try to reconnect.
+            handle = await self._reconnect(session_id)
         return await handle.run(message)
+
+    async def _reconnect(self, session_id: str) -> Any:
+        """Attempt to resume a session whose handle was lost (e.g. after restart).
+
+        On success the handle is cached so subsequent messages don't pay
+        the resume cost again.  On failure the original ValueError is raised
+        so callers see the same error they would have before.
+        """
+        logger.info(f"Attempting to reconnect lost session {session_id}")
+        try:
+            handle = await self._bridge.resume_session(session_id)
+            self._sessions[session_id] = handle
+            logger.info(f"Reconnected session {session_id}")
+            return handle
+        except (FileNotFoundError, ValueError, RuntimeError, OSError) as err:
+            logger.warning(f"Failed to reconnect session {session_id}", exc_info=True)
+            raise ValueError(f"Unknown session: {session_id}") from err
 
     async def end_session(self, session_id: str) -> None:
         handle = self._sessions.pop(session_id, None)

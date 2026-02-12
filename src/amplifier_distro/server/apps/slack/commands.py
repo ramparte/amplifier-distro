@@ -14,7 +14,6 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC
 from typing import Any, ClassVar
 
 from .config import SlackConfig
@@ -249,29 +248,20 @@ class CommandHandler:
         if session is None:
             return CommandResult(text=f"Session not found: `{target_id}`")
 
-        # Create a mapping to this session
-        # NOTE: This creates a mapping entry without creating a new backend session.
-        # The backend would need a "resume" capability for full integration.
-        from datetime import datetime
+        # Create a real backend session in the discovered session's project
+        # directory so messages can actually be routed to a live session.
+        try:
+            mapping = await self._sessions.connect_session(
+                channel_id=ctx.channel_id,
+                thread_ts=ctx.thread_ts,
+                user_id=ctx.user_id,
+                working_dir=session.project_path,
+                description=session.description or session.name,
+            )
+        except ValueError as e:
+            return CommandResult(text=str(e))
 
-        from .models import SessionMapping
-
-        now = datetime.now(UTC).isoformat()
-        key = f"{ctx.channel_id}:{ctx.thread_ts}" if ctx.thread_ts else ctx.channel_id
-
-        mapping = SessionMapping(
-            session_id=session.session_id,
-            channel_id=ctx.channel_id,
-            thread_ts=ctx.thread_ts,
-            project_id=session.project,
-            description=session.description or session.name,
-            created_by=ctx.user_id,
-            created_at=now,
-            last_active=now,
-        )
-        self._sessions._mappings[key] = mapping
-
-        short_id = session.session_id[:8]
+        short_id = mapping.session_id[:8]
         text = f"Connected to session `{short_id}` ({session.project})"
         if session.name:
             text += f"\n_{session.name}_"
