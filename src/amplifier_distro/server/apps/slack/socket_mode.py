@@ -37,8 +37,10 @@ _BACKOFF_FACTOR = 2.0
 # Slack sends pings every ~30s, so 5 minutes of silence = definitely dead.
 _RECEIVE_TIMEOUT = 300  # seconds
 
-# Dedup window: ignore duplicate events for the same message within this window
-_DEDUP_WINDOW_SECS = 10.0
+# Dedup window: ignore duplicate events for the same message within this window.
+# Must be longer than the slowest session creation (~30s) plus Slack retry
+# delays, otherwise the key expires and duplicates slip through.
+_DEDUP_WINDOW_SECS = 120.0
 _DEDUP_MAX_SIZE = 200
 
 
