@@ -63,10 +63,11 @@ class TestProviders:
             "name",
             "description",
             "include",
-            "key_prefix",
             "env_var",
             "default_model",
         }
+        # key_prefix is only meaningful for cloud providers with API keys
+        optional_if_local = {"key_prefix"}
         for pid, provider in PROVIDERS.items():
             for field_name in required:
                 value = getattr(provider, field_name)
@@ -75,6 +76,11 @@ class TestProviders:
                 )
                 assert len(value) > 0, (
                     f"Provider {pid}.{field_name} should not be empty"
+                )
+            for field_name in optional_if_local:
+                value = getattr(provider, field_name)
+                assert isinstance(value, str), (
+                    f"Provider {pid}.{field_name} should be str"
                 )
 
 
