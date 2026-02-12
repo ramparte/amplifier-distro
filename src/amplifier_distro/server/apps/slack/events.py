@@ -325,6 +325,42 @@ class SlackEventHandler:
         else:
             logger.debug(f"Unhandled action: {action_id}")
 
+    async def handle_slash_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Handle a Slack slash command payload.
+
+        Slack sends slash commands (e.g. ``/amp list``) as a flat dict with
+        ``command``, ``text``, ``user_id``, ``channel_id``, etc.  We parse the
+        text the same way we parse @-mention commands and return a Slack
+        response payload (``response_type`` + ``text``/``blocks``).
+        """
+        command_text = payload.get("text", "").strip()
+        user_id = payload.get("user_id", "")
+        channel_id = payload.get("channel_id", "")
+
+        # Reuse the existing command parser (handles aliases, etc.)
+        command, args = self._commands.parse_command(command_text)
+
+        ctx = CommandContext(
+            channel_id=channel_id,
+            user_id=user_id,
+            thread_ts=None,
+            raw_text=command_text,
+        )
+
+        result = await self._commands.handle(command, args, ctx)
+
+        # Build Slack slash-command response
+        response: dict[str, Any] = {
+            "response_type": "in_channel",
+        }
+        if result.blocks:
+            response["blocks"] = result.blocks
+            response["text"] = result.text or "Amplifier"
+        elif result.text:
+            response["text"] = result.text
+
+        return response
+
     async def _safe_react(self, channel: str, ts: str, emoji: str) -> None:
         """Add a reaction, ignoring failures (already_reacted, etc.)."""
         try:

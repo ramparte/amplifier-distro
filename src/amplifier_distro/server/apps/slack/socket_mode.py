@@ -219,9 +219,7 @@ class SocketModeAdapter:
             await self._handle_interactive(frame)
 
         elif frame_type == "slash_commands":
-            # Future: handle slash commands
-            await self._ack(frame)
-            logger.debug("Slash command (not yet handled)")
+            await self._handle_slash_command(frame)
 
         # Ignore pings -- aiohttp handles pong automatically
 
@@ -293,6 +291,23 @@ class SocketModeAdapter:
         except Exception:
             logger.exception("[socket] Error in interactive handler")
 
+    async def _handle_slash_command(self, frame: dict[str, Any]) -> None:
+        """Process a slash command frame (e.g. /amp list)."""
+        payload = frame.get("payload", {})
+        command_name = payload.get("command", "?")
+        text = payload.get("text", "")
+        user = payload.get("user_name", "?")
+
+        logger.info(f"[socket] Slash command: {command_name} text={text!r} user={user}")
+
+        try:
+            response = await self._event_handler.handle_slash_command(payload)
+            # Ack with the response payload so Slack displays it inline
+            await self._ack(frame, response=response)
+        except Exception:
+            logger.exception("[socket] Error in slash command handler")
+            await self._ack(frame, response={"text": "Error processing command."})
+
     def _is_duplicate(self, key: str) -> bool:
         """Check if this event key was recently seen. Records it if not.
 
@@ -317,11 +332,21 @@ class SocketModeAdapter:
         self._seen_events[key] = now
         return False
 
-    async def _ack(self, frame: dict[str, Any]) -> None:
-        """Send acknowledgement for a Socket Mode envelope."""
+    async def _ack(
+        self, frame: dict[str, Any], response: dict[str, Any] | None = None
+    ) -> None:
+        """Send acknowledgement for a Socket Mode envelope.
+
+        For slash commands and interactive payloads, ``response`` can include
+        a Slack response body (text, blocks, response_type, etc.) that Slack
+        will display inline.
+        """
         eid = frame.get("envelope_id")
         if eid and self._ws and not self._ws.closed:
-            await self._ws.send_json({"envelope_id": eid})
+            ack_payload: dict[str, Any] = {"envelope_id": eid}
+            if response is not None:
+                ack_payload["payload"] = response
+            await self._ws.send_json(ack_payload)
 
     async def _close_ws(self) -> None:
         """Close WebSocket and HTTP session."""
