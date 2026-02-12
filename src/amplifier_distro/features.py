@@ -31,6 +31,7 @@ class Provider:
     env_var: str
     default_model: str
     module_id: str = ""
+    source_url: str = ""  # git URL for module installation
     console_url: str = ""
     fallback_models: tuple[str, ...] = ()
     base_url: str | None = None
@@ -47,6 +48,7 @@ PROVIDERS: dict[str, Provider] = {
         env_var="ANTHROPIC_API_KEY",
         default_model="claude-sonnet-4-5",
         module_id="provider-anthropic",
+        source_url="git+https://github.com/microsoft/amplifier-module-provider-anthropic@main",
         console_url="https://console.anthropic.com/settings/keys",
         fallback_models=(
             "claude-opus-4-5",
@@ -63,6 +65,7 @@ PROVIDERS: dict[str, Provider] = {
         env_var="OPENAI_API_KEY",
         default_model="gpt-4o",
         module_id="provider-openai",
+        source_url="git+https://github.com/microsoft/amplifier-module-provider-openai@main",
         console_url="https://platform.openai.com/api-keys",
         fallback_models=("gpt-4o", "gpt-4o-mini", "o1", "o3-mini"),
     ),
@@ -75,6 +78,7 @@ PROVIDERS: dict[str, Provider] = {
         env_var="GOOGLE_API_KEY",
         default_model="gemini-2.5-pro",
         module_id="provider-gemini",
+        source_url="git+https://github.com/microsoft/amplifier-module-provider-gemini@main",
         console_url="https://aistudio.google.com/apikey",
         fallback_models=("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"),
     ),
@@ -101,6 +105,7 @@ PROVIDERS: dict[str, Provider] = {
         env_var="OLLAMA_HOST",
         default_model="llama3.1",
         module_id="provider-ollama",
+        source_url="git+https://github.com/microsoft/amplifier-module-provider-ollama@main",
         console_url="https://ollama.com/",
         fallback_models=("llama3.1", "mistral", "codellama"),
     ),
@@ -113,6 +118,7 @@ PROVIDERS: dict[str, Provider] = {
         env_var="AZURE_OPENAI_API_KEY",
         default_model="gpt-4o",
         module_id="provider-azure-openai",
+        source_url="git+https://github.com/microsoft/amplifier-module-provider-azure-openai@main",
         console_url="https://portal.azure.com/",
         fallback_models=("gpt-4o", "gpt-4o-mini"),
     ),

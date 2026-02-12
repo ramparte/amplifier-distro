@@ -240,6 +240,11 @@ class LocalBridge:
         bundle = await load_bundle(bundle_name, registry=registry)
         prepared = await bundle.prepare()
 
+        # 6b. Inject providers into mount plan if bundle doesn't have them.
+        # User bundles (e.g. my-amplifier) typically omit providers; the app
+        # layer adds the provider the user selected.  BridgeConfig carries that.
+        self._inject_providers(prepared.mount_plan, config.provider_preferences)
+
         # 7. Create protocol adapters
         from amplifier_distro.bridge_protocols import (
             BridgeApprovalSystem,
@@ -377,6 +382,9 @@ class LocalBridge:
         registry = BundleRegistry()
         bundle = await load_bundle(bundle_name, registry=registry)
         prepared = await bundle.prepare()
+
+        # 4b. Inject providers (same as create_session)
+        self._inject_providers(prepared.mount_plan, config.provider_preferences)
 
         # 5. Create protocol adapters (same as create_session)
         from amplifier_distro.bridge_protocols import (
@@ -607,6 +615,70 @@ class LocalBridge:
         except ValueError:
             # Not under workspace - use directory name
             return cwd.name
+
+    def _inject_providers(
+        self,
+        mount_plan: dict[str, Any],
+        provider_preferences: list[dict[str, str]] | None,
+    ) -> None:
+        """Inject provider modules into mount_plan when the bundle has none.
+
+        Many user bundles (especially personal ones composed via includes)
+        don't carry a ``providers:`` section -- they rely on the app layer
+        to decide which provider to mount.  This method bridges that gap
+        by translating ``BridgeConfig.provider_preferences`` into concrete
+        mount-plan entries.
+
+        If the bundle *already* has providers, this is a no-op so we never
+        override explicit bundle-level provider configuration.
+        """
+        # Nothing to do if bundle already has providers
+        if mount_plan.get("providers"):
+            return
+
+        from amplifier_distro.features import PROVIDERS, resolve_provider
+
+        prefs = provider_preferences or []
+        if not prefs:
+            # Fall back to distro.yaml default provider
+            distro = self._load_distro_config()
+            default = distro.get("default_provider", "anthropic")
+            prefs = [{"provider": default}]
+
+        providers: list[dict[str, Any]] = []
+        for i, pref in enumerate(prefs):
+            raw_name = pref.get("provider", "")
+            # resolve_provider returns canonical key (e.g. "anthropic")
+            canonical = resolve_provider(raw_name)
+            info = PROVIDERS.get(canonical)
+            if info is None:
+                logger.warning("Unknown provider '%s' (resolved: '%s'), skipping", raw_name, canonical)
+                continue
+
+            entry: dict[str, Any] = {"module": info.module_id}
+            if info.source_url:
+                entry["source"] = info.source_url
+            cfg: dict[str, Any] = {"priority": i + 1}
+
+            model = pref.get("model")
+            if model:
+                cfg["default_model"] = model
+            elif info.default_model:
+                cfg["default_model"] = info.default_model
+
+            if info.base_url:
+                cfg["base_url"] = info.base_url
+
+            entry["config"] = cfg
+            providers.append(entry)
+
+        if providers:
+            mount_plan["providers"] = providers
+            logger.info(
+                "Injected %d provider(s) into mount plan: %s",
+                len(providers),
+                [p["module"] for p in providers],
+            )
 
     def _load_distro_config(self) -> dict[str, Any]:
         """Load distro.yaml, cached."""
