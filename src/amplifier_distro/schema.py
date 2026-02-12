@@ -155,6 +155,25 @@ class WatchdogConfig(BaseModel):
     max_restarts: int = 5  # per watchdog session; 0 = unlimited
 
 
+class KeplerConfig(BaseModel):
+    """Kepler desktop app settings."""
+
+    default_provider: str = "anthropic"
+    default_model: str = ""  # empty = use provider default
+    skills_enabled: bool = True
+    skills_dirs: list[str] = Field(default_factory=list)
+    mcp_servers: dict = Field(default_factory=dict)
+    extended_thinking: bool = True
+    thinking_budget_tokens: int = 32000
+    auto_approve: bool = False
+    hidden_models: list[str] = Field(default_factory=list)
+    prompt_caching: bool = True
+    work_directory: str = ""
+    max_context_tokens: int = 200000
+    max_iterations: int = 200
+    temperature: float = 0.7
+
+
 # ---------------------------------------------------------------------------
 # Top-level config
 # ---------------------------------------------------------------------------
@@ -175,6 +194,7 @@ class DistroConfig(BaseModel):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
+    kepler: KeplerConfig = Field(default_factory=KeplerConfig)
 
     @field_validator("workspace_root")
     @classmethod

@@ -30,6 +30,11 @@ class Provider:
     key_prefix: str
     env_var: str
     default_model: str
+    module_id: str = ""
+    console_url: str = ""
+    fallback_models: tuple[str, ...] = ()
+    base_url: str | None = None
+    api_key_config: str | None = None
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -41,6 +46,13 @@ PROVIDERS: dict[str, Provider] = {
         key_prefix="sk-ant-",
         env_var="ANTHROPIC_API_KEY",
         default_model="claude-sonnet-4-5",
+        module_id="provider-anthropic",
+        console_url="https://console.anthropic.com/settings/keys",
+        fallback_models=(
+            "claude-opus-4-5",
+            "claude-sonnet-4-5",
+            "claude-3-5-sonnet-20241022",
+        ),
     ),
     "openai": Provider(
         id="openai",
@@ -50,6 +62,59 @@ PROVIDERS: dict[str, Provider] = {
         key_prefix="sk-",
         env_var="OPENAI_API_KEY",
         default_model="gpt-4o",
+        module_id="provider-openai",
+        console_url="https://platform.openai.com/api-keys",
+        fallback_models=("gpt-4o", "gpt-4o-mini", "o1", "o3-mini"),
+    ),
+    "google": Provider(
+        id="google",
+        name="Google",
+        description="Gemini models (Pro, Flash)",
+        include="foundation:providers/gemini-pro",
+        key_prefix="AI",
+        env_var="GOOGLE_API_KEY",
+        default_model="gemini-2.5-pro",
+        module_id="provider-gemini",
+        console_url="https://aistudio.google.com/apikey",
+        fallback_models=("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"),
+    ),
+    "xai": Provider(
+        id="xai",
+        name="xAI",
+        description="Grok models via xAI API",
+        include="foundation:providers/openai-gpt",
+        key_prefix="xai-",
+        env_var="XAI_API_KEY",
+        default_model="grok-3",
+        module_id="provider-openai",
+        console_url="https://console.x.ai/",
+        fallback_models=("grok-4", "grok-3", "grok-3-mini"),
+        base_url="https://api.x.ai/v1",
+        api_key_config="api_key",
+    ),
+    "ollama": Provider(
+        id="ollama",
+        name="Ollama",
+        description="Local models via Ollama",
+        include="foundation:providers/ollama",
+        key_prefix="",
+        env_var="OLLAMA_HOST",
+        default_model="llama3.1",
+        module_id="provider-ollama",
+        console_url="https://ollama.com/",
+        fallback_models=("llama3.1", "mistral", "codellama"),
+    ),
+    "azure": Provider(
+        id="azure",
+        name="Azure OpenAI",
+        description="OpenAI models via Azure",
+        include="foundation:providers/azure-openai",
+        key_prefix="",
+        env_var="AZURE_OPENAI_API_KEY",
+        default_model="gpt-4o",
+        module_id="provider-azure-openai",
+        console_url="https://portal.azure.com/",
+        fallback_models=("gpt-4o", "gpt-4o-mini"),
     ),
 }
 
@@ -122,12 +187,30 @@ TIERS: dict[int, list[str]] = {
 }
 
 
+# Aliases — normalize common variants to canonical names
+PROVIDER_ALIASES: dict[str, str] = {
+    "gemini": "google",
+    "azure-openai": "azure",
+}
+
+
+def resolve_provider(name: str) -> str:
+    """Resolve a provider name through aliases to its canonical key."""
+    normalized = name.replace("provider-", "")
+    return PROVIDER_ALIASES.get(normalized, normalized)
+
+
 def detect_provider(api_key: str) -> str | None:
     """Detect provider from API key format."""
     if api_key.startswith("sk-ant-"):
         return "anthropic"
     if api_key.startswith("sk-"):
         return "openai"
+    if api_key.startswith("AI"):
+        return "google"
+    if api_key.startswith("xai-"):
+        return "xai"
+    # Ollama uses a host URL, not an API key — no prefix detection
     return None
 
 
