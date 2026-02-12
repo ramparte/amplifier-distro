@@ -366,3 +366,92 @@ class TestLocalBridgeCreateSession:
             handle = asyncio.run(bridge.create_session(config))
         assert handle.session_id  # non-empty string
         assert isinstance(handle.session_id, str)
+
+
+# ---------------------------------------------------------------------------
+# Tests for SessionHandle.set_approval_system / .get_mounted
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock
+
+
+def _make_handle(session=None):
+    """Create a SessionHandle with an optional mock session."""
+    return SessionHandle(
+        session_id="test-123",
+        project_id="my-project",
+        working_dir=Path("/tmp"),
+        _session=session,
+    )
+
+
+def _mock_session_with_coordinator(**coordinator_attrs):
+    """Create a mock session whose coordinator has the given attributes."""
+    session = MagicMock()
+    for k, v in coordinator_attrs.items():
+        setattr(session.coordinator, k, v)
+    return session
+
+
+class TestSessionHandleSetApprovalSystem:
+    """Tests for SessionHandle.set_approval_system()."""
+
+    def test_sets_on_coordinator(self):
+        """Approval system assigned to coordinator when session exists."""
+        mock_approval = MagicMock(name="approval_system")
+        session = _mock_session_with_coordinator()
+        handle = _make_handle(session=session)
+
+        handle.set_approval_system(mock_approval)
+
+        assert session.coordinator.approval_system is mock_approval
+
+    def test_no_session_is_noop(self):
+        """_session=None -> no error, silent no-op."""
+        handle = _make_handle(session=None)
+        handle.set_approval_system(MagicMock())  # must not raise
+
+    def test_no_coordinator_is_noop(self):
+        """Session without coordinator attribute -> no error, no-op."""
+        session = MagicMock(spec=[])  # spec=[] means NO attributes at all
+        handle = _make_handle(session=session)
+        handle.set_approval_system(MagicMock())  # must not raise
+
+
+class TestSessionHandleGetMounted:
+    """Tests for SessionHandle.get_mounted()."""
+
+    def test_delegates_to_coordinator(self):
+        """Calls coordinator.get_mounted(category) and returns result."""
+        expected = [MagicMock(name="tool1"), MagicMock(name="tool2")]
+        session = _mock_session_with_coordinator()
+        session.coordinator.get_mounted.return_value = expected
+        handle = _make_handle(session=session)
+
+        result = handle.get_mounted("tools")
+
+        assert result is expected
+        session.coordinator.get_mounted.assert_called_once_with("tools")
+
+    def test_returns_empty_list_no_session(self):
+        """_session=None -> returns []."""
+        handle = _make_handle(session=None)
+        assert handle.get_mounted("tools") == []
+
+    def test_returns_empty_list_no_coordinator(self):
+        """Session without coordinator -> returns []."""
+        session = MagicMock(spec=[])  # no coordinator attribute
+        handle = _make_handle(session=session)
+        assert handle.get_mounted("tools") == []
+
+    def test_passes_category_through(self):
+        """Category string passed directly to coordinator.get_mounted()."""
+        session = _mock_session_with_coordinator()
+        session.coordinator.get_mounted.return_value = []
+        handle = _make_handle(session=session)
+
+        for category in ("tools", "hooks", "providers"):
+            handle.get_mounted(category)
+
+        calls = [c.args[0] for c in session.coordinator.get_mounted.call_args_list]
+        assert calls == ["tools", "hooks", "providers"]
