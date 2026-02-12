@@ -260,6 +260,71 @@ class SlackEventHandler:
         # Done reaction (best-effort, never fatal)
         await self._safe_react(message.channel_id, message.ts, "white_check_mark")
 
+    async def handle_interactive_payload(self, payload: dict[str, Any]) -> None:
+        """Handle a Slack interactive payload (button clicks, modals, etc.).
+
+        Slack sends these when a user clicks a Block Kit button, submits a
+        modal, or interacts with a message shortcut.  The payload structure
+        varies by interaction type; we currently support ``block_actions``
+        for the "Connect" buttons rendered by the session list.
+        """
+        interaction_type = payload.get("type")
+
+        if interaction_type != "block_actions":
+            logger.debug(f"Ignoring interactive type: {interaction_type}")
+            return
+
+        actions = payload.get("actions", [])
+        if not actions:
+            return
+
+        action = actions[0]
+        action_id: str = action.get("action_id", "")
+        value: str = action.get("value", "")
+
+        # Route connect_session_* buttons to cmd_connect
+        if action_id.startswith("connect_session_") and value:
+            user = payload.get("user", {})
+            channel = payload.get("channel", {})
+            message = payload.get("message", {})
+
+            user_id = user.get("id", "")
+            channel_id = channel.get("id", "")
+            # Interactive payloads in threads include message.thread_ts;
+            # if the button was in a top-level message, thread_ts is absent.
+            thread_ts = message.get("thread_ts")
+
+            ctx = CommandContext(
+                channel_id=channel_id,
+                user_id=user_id,
+                thread_ts=thread_ts,
+                raw_text=f"connect {value}",
+            )
+
+            result = await self._commands.handle("connect", [value], ctx)
+
+            # Send the response back to the channel
+            reply_thread = thread_ts or message.get("ts")
+            try:
+                if result.blocks:
+                    await self._client.post_message(
+                        channel_id,
+                        text=result.text or "Amplifier",
+                        thread_ts=reply_thread,
+                        blocks=result.blocks,
+                    )
+                elif result.text:
+                    for chunk in SlackFormatter.split_message(result.text):
+                        await self._client.post_message(
+                            channel_id,
+                            text=chunk,
+                            thread_ts=reply_thread,
+                        )
+            except Exception:
+                logger.exception("Failed to send interactive response")
+        else:
+            logger.debug(f"Unhandled action: {action_id}")
+
     async def _safe_react(self, channel: str, ts: str, emoji: str) -> None:
         """Add a reaction, ignoring failures (already_reacted, etc.)."""
         try:

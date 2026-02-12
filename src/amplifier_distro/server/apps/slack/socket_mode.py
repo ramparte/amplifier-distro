@@ -215,9 +215,8 @@ class SocketModeAdapter:
             await self._handle_event(frame)
 
         elif frame_type == "interactive":
-            # Future: handle button clicks, modals, etc.
             await self._ack(frame)
-            logger.debug("Interactive payload (not yet handled)")
+            await self._handle_interactive(frame)
 
         elif frame_type == "slash_commands":
             # Future: handle slash commands
@@ -276,6 +275,23 @@ class SocketModeAdapter:
             logger.info(f"[socket] Handler result: {result}")
         except Exception:
             logger.exception("[socket] Error in event handler")
+
+    async def _handle_interactive(self, frame: dict[str, Any]) -> None:
+        """Process an interactive frame (button clicks, modals, etc.)."""
+        payload = frame.get("payload", {})
+        action_type = payload.get("type", "?")
+        user = payload.get("user", {}).get("username", "?")
+        actions = payload.get("actions", [])
+        action_id = actions[0].get("action_id", "?") if actions else "?"
+
+        logger.info(
+            f"[socket] Interactive: type={action_type} user={user} action={action_id}"
+        )
+
+        try:
+            await self._event_handler.handle_interactive_payload(payload)
+        except Exception:
+            logger.exception("[socket] Error in interactive handler")
 
     def _is_duplicate(self, key: str) -> bool:
         """Check if this event key was recently seen. Records it if not.
