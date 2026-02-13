@@ -49,6 +49,8 @@
   - Priority: high
   - Added: 2026-02-10
   - Tags: phase-1, bundle, core
+  - Spec: `specs/distro-004-bundle-structure.md`
+  - Notes: Bridge loads distro bundle by convention path instead of CLI registry name lookup. 2 files, ~20 lines changed. Spec ready for implementation.
 
 - [ ] **DISTRO-005**: Desktop GUI continued development
   - Assigned: @michaeljabbour
