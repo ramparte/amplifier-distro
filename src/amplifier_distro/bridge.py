@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 from amplifier_distro.conventions import (
     AMPLIFIER_HOME,
+    DISTRO_BUNDLE_DIR,
+    DISTRO_BUNDLE_FILENAME,
     HANDOFF_FILENAME,
     PROJECTS_DIR,
     TRANSCRIPT_FILENAME,
@@ -214,6 +216,30 @@ class LocalBridge:
     def __init__(self) -> None:
         self._config: dict[str, Any] | None = None
 
+    @staticmethod
+    def _resolve_distro_bundle(bundle_name_override: str | None) -> str:
+        """Resolve the bundle reference to load.
+
+        If *bundle_name_override* is set (e.g. from BridgeConfig.bundle_name),
+        use it as-is — it flows through foundation's normal name/path resolution.
+
+        Otherwise, load from the convention path that the install wizard
+        generates: ``~/.amplifier/bundles/distro.yaml``.
+        """
+        if bundle_name_override:
+            return bundle_name_override
+        path = (
+            Path(AMPLIFIER_HOME).expanduser()
+            / DISTRO_BUNDLE_DIR
+            / DISTRO_BUNDLE_FILENAME
+        )
+        if not path.exists():
+            raise RuntimeError(
+                f"No distro bundle found at {path}. "
+                "Run the install wizard or 'amp distro init' to set up."
+            )
+        return str(path)
+
     async def create_session(self, config: BridgeConfig | None = None) -> SessionHandle:
         """Create a session using local amplifier-foundation."""
         if config is None:
@@ -235,9 +261,7 @@ class LocalBridge:
         load_bundle, BundleRegistry = _require_foundation()
 
         # 4. Determine bundle
-        bundle_name = config.bundle_name or distro.get("bundle", {}).get(
-            "active", "my-amplifier"
-        )
+        bundle_ref = self._resolve_distro_bundle(config.bundle_name)
 
         # 5. Get project ID and check for handoff
         project_id = self.get_project_id(config.working_dir)
@@ -248,7 +272,14 @@ class LocalBridge:
 
         # 6. Load and prepare bundle
         registry = BundleRegistry()
-        bundle = await load_bundle(bundle_name, registry=registry)
+        try:
+            bundle = await load_bundle(bundle_ref, registry=registry)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load distro bundle at {bundle_ref}: {e}\n"
+                "If you edited this file manually, check for YAML syntax errors.\n"
+                "To regenerate: amp distro init"
+            ) from e
         prepared = await bundle.prepare()
 
         # 6b. Inject providers into mount plan if bundle doesn't have them.
@@ -319,7 +350,7 @@ class LocalBridge:
             "Session created: id=%s project=%s bundle=%s",
             sid,
             project_id,
-            bundle_name,
+            bundle_ref,
         )
 
         return SessionHandle(
@@ -370,7 +401,9 @@ class LocalBridge:
                 matches = exact
             else:
                 ids = [m[1].name for m in matches]
-                raise ValueError(f"Ambiguous session prefix '{session_id}' matches: {ids}")
+                raise ValueError(
+                    f"Ambiguous session prefix '{session_id}' matches: {ids}"
+                )
 
         project_id, session_dir = matches[0]
         logger.info(
@@ -383,15 +416,19 @@ class LocalBridge:
         # 2. Load foundation
         load_bundle, BundleRegistry = _require_foundation()
 
-        # 3. Determine bundle from distro config
-        distro = self._load_distro_config()
-        bundle_name = config.bundle_name or distro.get("bundle", {}).get(
-            "active", "my-amplifier"
-        )
+        # 3. Determine bundle
+        bundle_ref = self._resolve_distro_bundle(config.bundle_name)
 
         # 4. Load and prepare bundle
         registry = BundleRegistry()
-        bundle = await load_bundle(bundle_name, registry=registry)
+        try:
+            bundle = await load_bundle(bundle_ref, registry=registry)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load distro bundle at {bundle_ref}: {e}\n"
+                "If you edited this file manually, check for YAML syntax errors.\n"
+                "To regenerate: amp distro init"
+            ) from e
         prepared = await bundle.prepare()
 
         # 4b. Inject providers (same as create_session)
@@ -476,7 +513,7 @@ class LocalBridge:
             "Session resumed: id=%s project=%s bundle=%s",
             session.coordinator.session_id,
             project_id,
-            bundle_name,
+            bundle_ref,
         )
 
         return SessionHandle(
@@ -663,7 +700,11 @@ class LocalBridge:
             canonical = resolve_provider(raw_name)
             info = PROVIDERS.get(canonical)
             if info is None:
-                logger.warning("Unknown provider '%s' (resolved: '%s'), skipping", raw_name, canonical)
+                logger.warning(
+                    "Unknown provider '%s' (resolved: '%s'), skipping",
+                    raw_name,
+                    canonical,
+                )
                 continue
 
             entry: dict[str, Any] = {"module": info.module_id}
