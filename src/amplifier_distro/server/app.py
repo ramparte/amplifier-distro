@@ -640,7 +640,7 @@ class DistroServer:
 
         @self._app.get("/")
         async def root() -> RedirectResponse:
-            from amplifier_distro.server.apps.install_wizard import compute_phase
+            from amplifier_distro.server.apps.settings import compute_phase
 
             phase = compute_phase()
             if phase == "unconfigured":
@@ -648,7 +648,7 @@ class DistroServer:
             # Ready: go to web-chat if available, otherwise settings
             if "web-chat" in self._apps:
                 return RedirectResponse(url="/apps/web-chat/")
-            return RedirectResponse(url="/apps/install-wizard/settings")
+            return RedirectResponse(url="/apps/settings/")
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.

@@ -48,15 +48,21 @@ def settings_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     test_bundle = home / "bundles" / "distro.yaml"
     monkeypatch.setattr("amplifier_distro.bundle_composer.BUNDLE_PATH", test_bundle)
 
-    # Redirect install wizard's AMPLIFIER_HOME
+    # Redirect AMPLIFIER_HOME in both apps
     monkeypatch.setattr(
         "amplifier_distro.server.apps.install_wizard.AMPLIFIER_HOME",
         str(home),
     )
+    monkeypatch.setattr(
+        "amplifier_distro.server.apps.settings.AMPLIFIER_HOME",
+        str(home),
+    )
 
-    # Clear provider env vars to start clean
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Clear ALL provider env vars to start clean
+    from amplifier_distro.features import PROVIDERS
+
+    for provider in PROVIDERS.values():
+        monkeypatch.delenv(provider.env_var, raising=False)
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
 
     return home
@@ -64,11 +70,13 @@ def settings_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def settings_client(settings_home: Path) -> TestClient:
-    """Create a TestClient with the install wizard registered."""
-    from amplifier_distro.server.apps.install_wizard import manifest
+    """Create a TestClient with install wizard and settings registered."""
+    from amplifier_distro.server.apps.install_wizard import manifest as wizard_manifest
+    from amplifier_distro.server.apps.settings import manifest as settings_manifest
 
     server = DistroServer()
-    server.register_app(manifest)
+    server.register_app(wizard_manifest)
+    server.register_app(settings_manifest)
     return TestClient(server.app)
 
 
@@ -334,24 +342,24 @@ class TestBehaviorToggleRoundTrip:
 
         # Enable
         resp = settings_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "dev-memory", "enabled": True},
         )
         assert resp.status_code == 200
         assert resp.json()["features"]["dev-memory"]["enabled"] is True
 
         # Verify via status
-        status = settings_client.get("/apps/install-wizard/status").json()
+        status = settings_client.get("/apps/settings/status").json()
         assert status["features"]["dev-memory"]["enabled"] is True
 
         # Disable
         resp = settings_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "dev-memory", "enabled": False},
         )
         assert resp.status_code == 200
         assert resp.json()["features"]["dev-memory"]["enabled"] is False
 
         # Verify via status
-        status = settings_client.get("/apps/install-wizard/status").json()
+        status = settings_client.get("/apps/settings/status").json()
         assert status["features"]["dev-memory"]["enabled"] is False
