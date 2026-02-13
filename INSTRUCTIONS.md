@@ -68,25 +68,87 @@ goes in `src/`. If no, it goes at the root level.
 We use Docker to isolate testing from your real machine. Your local
 `~/.amplifier/` is never touched by test activities.
 
+### One-Click Install (Fastest)
+
+**Linux / macOS / WSL:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install.sh | bash
+```
+
+This will:
+1. Check prerequisites (Docker, Docker Compose)
+2. Download and install Amplifier Distro
+3. Build all containers (CLI, TUI, GUI, Voice)
+4. Launch the TUI interface automatically
+
+**Windows:**
+Download and run the [GUI installer](https://github.com/ramparte/amplifier-distro/releases/latest) or see Quick Start below.
+
 ### Quick Start
 
+**Using the helper scripts (recommended):**
+
+Windows (cmd/PowerShell or double-click):
+```cmd
+scripts\start-dev.bat   # Build all, start all services, launch TUI
+scripts\stop-dev.bat    # Stop and clean up
+```
+
+Linux/macOS/WSL:
 ```bash
-cd ~/dev/ANext/amplifier-distro
+bash scripts/start-dev.sh   # Build all, start all services, launch TUI
+bash scripts/stop-dev.sh    # Stop and clean up
+```
 
-# Build the test image (first time only, ~2 min)
+The start script will:
+- Build images for all interfaces (CLI, TUI, GUI, Voice)
+- Start all containers
+- Automatically launch the TUI interface
+
+After the TUI launches, you can:
+- Use it immediately
+- Exit and restart: `docker compose exec tui amplifier-tui`
+- Access CLI: `docker compose exec cli bash`
+- Access GUI: http://localhost:8400
+
+**Manual Docker Compose commands:**
+
+If you prefer to run commands directly:
+```bash
+docker compose --profile all build  # Build all images
+docker compose --profile all up -d  # Start all containers
+docker compose exec tui amplifier-tui  # Launch TUI
+docker compose exec cli bash        # Enter CLI container
+docker compose down -v              # Teardown
+```
+
+Or to start just the CLI (for development):
+```bash
 docker compose --profile cli build
-
-# Start the CLI test environment
 docker compose --profile cli up -d
-
-# Enter the container
 docker compose exec cli bash
+```
 
-# Inside: Amplifier is ready
-amplifier --version
+**What happens automatically:**
+- `Dockerfile.dev` builds the base image with system dependencies
+- `scripts/docker-entrypoint.sh` runs on container start and installs:
+  - `amplifier-distro` package (provides `amp-distro` command)
+  - `amplifier-foundation` (session backend for server/bridges)
+  - `amplifier` CLI (from microsoft/amplifier)
 
-# Tear down (clean slate)
-docker compose down -v
+**Manual installation (if not using Docker):**
+
+If you want to set up the environment yourself without Docker:
+
+```bash
+# Install the distro package with foundation
+uv pip install -e ".[amplifier]"
+
+# Install the amplifier CLI
+uv tool install git+https://github.com/microsoft/amplifier
+
+# Initialize distro config
+amp-distro init
 ```
 
 ### Available Profiles

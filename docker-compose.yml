@@ -32,6 +32,7 @@ services:
   # ── CLI Surface ──────────────────────────────────────────────
   cli:
     <<: *common
+    container_name: amplifier-distro-cli
     profiles: ["cli", "all", "agent-test"]
     stdin_open: true
     tty: true
@@ -40,14 +41,16 @@ services:
   # ── TUI Surface ─────────────────────────────────────────────
   tui:
     <<: *common
+    container_name: amplifier-distro-tui
     profiles: ["tui", "all"]
     stdin_open: true
     tty: true
-    command: ["bash", "-c", "pip install -q git+https://github.com/ramparte/amplifier-tui 2>&1 | tail -1 && amplifier-tui"]
+    command: ["bash"]
 
   # ── GUI/Web Surface ─────────────────────────────────────────
   gui:
     <<: *common
+    container_name: amplifier-distro-gui
     profiles: ["gui", "all"]
     ports:
       - "8400:8400"   # Distro server (conventions.SERVER_DEFAULT_PORT)
@@ -68,6 +71,7 @@ services:
   # ── Voice Bridge ────────────────────────────────────────────
   voice:
     <<: *common
+    container_name: amplifier-distro-voice
     profiles: ["voice", "all"]
     ports:
       - "8443:8443"   # WebRTC signaling
@@ -77,6 +81,7 @@ services:
   # Full Linux desktop in a browser window at localhost:6901
   # Use this to manually test GUI/Voice with a real browser
   novnc:
+    container_name: amplifier-distro-novnc
     image: consol/ubuntu-xfce-vnc:latest
     profiles: ["human-test"]
     ports:

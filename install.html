@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amplifier Distro - One-Click Install</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .subtitle {
+            font-size: 1.3em;
+            color: #666;
+            margin-bottom: 40px;
+        }
+
+        .install-box {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 30px;
+            margin: 40px 0;
+        }
+
+        .install-box h2 {
+            font-size: 1.2em;
+            margin-bottom: 20px;
+            color: #495057;
+        }
+
+        .command {
+            background: #2d3748;
+            color: #68d391;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.95em;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: left;
+            overflow-x: auto;
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #4a5568;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: background 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: #2d3748;
+        }
+
+        .copy-btn.copied {
+            background: #48bb78;
+        }
+
+        .prerequisites {
+            text-align: left;
+            margin: 30px 0;
+        }
+
+        .prerequisites h3 {
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            color: #495057;
+        }
+
+        .prerequisites ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .prerequisites li {
+            padding: 10px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+
+        .prerequisites li::before {
+            content: "✓ ";
+            color: #48bb78;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 2px solid #e9ecef;
+            color: #6c757d;
+        }
+
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        .platforms {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin: 30px 0;
+        }
+
+        .platform-btn {
+            flex: 1;
+            max-width: 200px;
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .platform-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .platform-btn.active {
+            background: #764ba2;
+        }
+
+        .platform-content {
+            display: none;
+        }
+
+        .platform-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Amplifier Distro</h1>
+        <p class="subtitle">One-Click Installation - From URL to TUI in seconds</p>
+
+        <!-- True One-Click Options -->
+        <div class="install-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+            <h2 style="color: white; font-size: 1.5em;">⚡ TRUE One-Click Options</h2>
+            <div style="display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap;">
+                <a href="https://github.com/codespaces/new?repo=ramparte/amplifier-distro"
+                   style="flex: 1; min-width: 200px; padding: 20px; background: white; color: #667eea; text-decoration: none; border-radius: 10px; font-weight: bold; text-align: center; transition: transform 0.2s;"
+                   onmouseover="this.style.transform='translateY(-5px)'"
+                   onmouseout="this.style.transform='translateY(0)'">
+                    <div style="font-size: 2em;">☁️</div>
+                    <div style="margin-top: 10px;">Open in GitHub Codespaces</div>
+                    <div style="font-size: 0.8em; color: #888; margin-top: 5px;">No local install needed</div>
+                </a>
+                <a href="https://github.com/ramparte/amplifier-distro/releases/latest/download/amplifier-distro-installer.exe"
+                   style="flex: 1; min-width: 200px; padding: 20px; background: white; color: #667eea; text-decoration: none; border-radius: 10px; font-weight: bold; text-align: center; transition: transform 0.2s;"
+                   onmouseover="this.style.transform='translateY(-5px)'"
+                   onmouseout="this.style.transform='translateY(0)'">
+                    <div style="font-size: 2em;">💾</div>
+                    <div style="margin-top: 10px;">Download Windows Installer</div>
+                    <div style="font-size: 0.8em; color: #888; margin-top: 5px;">Double-click to install</div>
+                </a>
+            </div>
+        </div>
+
+        <p style="margin: 30px 0; color: #6c757d;">Or use the command-line installer:</p>
+
+        <div class="platforms">
+            <button class="platform-btn active" onclick="showPlatform('linux')">Linux / Mac</button>
+            <button class="platform-btn" onclick="showPlatform('windows')">Windows</button>
+        </div>
+
+        <!-- Linux/Mac Installation -->
+        <div id="linux-content" class="platform-content active">
+            <div class="install-box">
+                <h2>Copy and paste this command into your terminal:</h2>
+                <div class="command">
+                    <button class="copy-btn" onclick="copyCommand('linux')">Copy</button>
+                    <code id="linux-cmd">curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install.sh | bash</code>
+                </div>
+                <p style="color: #6c757d; font-size: 0.9em; margin-top: 10px;">
+                    Or with wget: <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">wget -qO- https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install.sh | bash</code>
+                </p>
+            </div>
+        </div>
+
+        <!-- Windows Installation -->
+        <div id="windows-content" class="platform-content">
+            <div class="install-box">
+                <h2>Copy and paste this into PowerShell (as Administrator):</h2>
+                <div class="command">
+                    <button class="copy-btn" onclick="copyCommand('windows')">Copy</button>
+                    <code id="windows-cmd">iwr -useb https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install.ps1 | iex</code>
+                </div>
+                <p style="color: #6c757d; font-size: 0.9em; margin-top: 15px;">
+                    Or download and run: <a href="https://github.com/ramparte/amplifier-distro/releases/latest/download/amplifier-distro-installer.exe">amplifier-distro-installer.exe</a>
+                </p>
+            </div>
+        </div>
+
+        <div class="prerequisites">
+            <h3>Prerequisites (installed automatically if missing):</h3>
+            <ul>
+                <li>Docker Desktop (or Docker Engine)</li>
+                <li>Docker Compose v2+</li>
+            </ul>
+        </div>
+
+        <div class="install-box" style="background: #fff3cd; border-color: #ffc107;">
+            <h2 style="color: #856404;">🎯 What happens after you run the command?</h2>
+            <ol style="text-align: left; padding-left: 20px; color: #856404;">
+                <li style="margin: 10px 0;">Checks prerequisites (Docker, Docker Compose)</li>
+                <li style="margin: 10px 0;">Downloads and installs Amplifier Distro</li>
+                <li style="margin: 10px 0;">Builds all containers (CLI, TUI, GUI, Voice)</li>
+                <li style="margin: 10px 0;">Launches the TUI interface automatically</li>
+                <li style="margin: 10px 0;">You're ready to start using Amplifier! 🎉</li>
+            </ol>
+        </div>
+
+        <div class="footer">
+            <p>
+                <strong>Need help?</strong> Check the
+                <a href="https://github.com/ramparte/amplifier-distro/blob/main/INSTRUCTIONS.md">documentation</a>
+                or
+                <a href="https://github.com/ramparte/amplifier-distro/issues">report an issue</a>
+            </p>
+            <p style="margin-top: 15px;">
+                <a href="https://github.com/ramparte/amplifier-distro">View on GitHub</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function showPlatform(platform) {
+            // Update buttons
+            document.querySelectorAll('.platform-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update content
+            document.querySelectorAll('.platform-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(platform + '-content').classList.add('active');
+        }
+
+        function copyCommand(platform) {
+            const cmdId = platform + '-cmd';
+            const text = document.getElementById(cmdId).textContent;
+
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>

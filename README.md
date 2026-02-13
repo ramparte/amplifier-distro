@@ -2,6 +2,32 @@
 
 An opinionated distribution for AI-assisted development with Amplifier.
 
+## 🚀 Quick Start - One-Click Install
+
+### GitHub Codespaces (Fastest - No local install)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=ramparte/amplifier-distro)
+
+Click the badge above → TUI opens automatically in your browser!
+
+### Command Line Install
+
+**Linux / macOS / WSL:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install.sh | bash
+```
+
+**Windows:**
+```powershell
+# Download and run: scripts\start-dev.bat
+# Or use PowerShell:
+iwr -useb https://raw.githubusercontent.com/ramparte/amplifier-distro/main/install-windows.ps1 | iex
+```
+
+See [ONE-CLICK-INSTALL.md](ONE-CLICK-INSTALL.md) for more options and troubleshooting.
+
+---
+
 ## What This Is
 
 A set of shared conventions, tools, and defaults that make Amplifier

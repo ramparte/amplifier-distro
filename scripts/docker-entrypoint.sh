@@ -18,7 +18,18 @@ if [ -f "$PYPROJECT" ]; then
     if [ ! -f "$STAMP" ] || [ "$PYPROJECT" -nt "$STAMP" ]; then
         echo "[entrypoint] Installing dependencies into venv..."
         cd /workspace
-        uv pip install fastapi uvicorn pydantic pyyaml httpx pytest 2>&1 | tail -3
+
+        # Install the distro package with amplifier-foundation
+        uv pip install -e ".[amplifier]" 2>&1 | tail -3
+
+        # Install the amplifier CLI tool
+        echo "[entrypoint] Installing amplifier CLI..."
+        uv tool install --force git+https://github.com/microsoft/amplifier 2>&1 | tail -3
+
+        # Install amplifier-tui (for TUI interface)
+        echo "[entrypoint] Installing amplifier-tui..."
+        uv pip install git+https://github.com/ramparte/amplifier-tui 2>&1 | tail -3
+
         touch "$STAMP"
         echo "[entrypoint] Done."
     fi
