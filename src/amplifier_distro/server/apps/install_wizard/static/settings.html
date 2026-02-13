@@ -1142,8 +1142,8 @@ function renderMemoryStats() {
 function renderIntegrations() {
   const integrations = state.integrations || {};
   const items = [
-    { key: 'slack', fallbackName: 'Slack Bridge', fallbackDesc: 'Connect a Slack workspace to Amplifier sessions', fallbackUrl: '/static/slack-setup.html' },
-    { key: 'voice', fallbackName: 'Voice Bridge', fallbackDesc: 'Voice interface via OpenAI Realtime API', fallbackUrl: '/static/voice.html' },
+    { key: 'slack', fallbackName: 'Slack Bridge', fallbackDesc: 'Connect a Slack workspace to Amplifier sessions', fallbackUrl: '/apps/slack/setup-ui' },
+    { key: 'voice', fallbackName: 'Voice Bridge', fallbackDesc: 'Voice interface via OpenAI Realtime API', fallbackUrl: '/apps/voice/' },
   ];
 
   let html = '<div class="section">'
@@ -1208,8 +1208,8 @@ function renderEnvironment(detect) {
 /* ------------------------------------------------------------------ */
 function renderFooter() {
   return '<div class="footer-links">'
-    + '<a href="/static/wizard.html">Full Setup Wizard</a>'
-    + '<a href="/static/quickstart.html">Quickstart</a>'
+    + '<a href="/apps/install-wizard/wizard">Full Setup Wizard</a>'
+    + '<a href="/apps/install-wizard/">Quickstart</a>'
     + '<a href="https://ramparte.github.io/amplifier-tutorial" target="_blank">Tutorial</a>'
     + '<a href="https://github.com/microsoft/amplifier/tree/main/docs" target="_blank">Docs</a>'
     + '<a href="https://ramparte.github.io/amplifier-stories" target="_blank">Stories</a>'

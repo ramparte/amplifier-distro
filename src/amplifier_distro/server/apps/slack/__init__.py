@@ -22,9 +22,11 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import HTMLResponse
 
 from amplifier_distro.server.app import AppManifest
 
@@ -177,6 +179,21 @@ async def on_shutdown() -> None:
     with _state_lock:
         _state.clear()
     logger.info("Slack bridge shut down")
+
+
+# --- HTML Pages ---
+
+
+@router.get("/setup-ui", response_class=HTMLResponse)
+async def setup_page() -> HTMLResponse:
+    """Serve the Slack setup wizard page."""
+    html_file = Path(__file__).parent / "static" / "slack-setup.html"
+    if html_file.exists():
+        return HTMLResponse(content=html_file.read_text())
+    return HTMLResponse(
+        content="<h1>Slack Setup</h1><p>slack-setup.html not found.</p>",
+        status_code=500,
+    )
 
 
 # --- Slack Event Routes ---

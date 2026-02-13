@@ -34,7 +34,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +127,6 @@ class DistroServer:
         self._setup_memory_routes()
         self._setup_root_redirect()
         self._app.include_router(self._core_router)
-        self._mount_static_files()
 
     @property
     def app(self) -> FastAPI:
@@ -342,13 +340,13 @@ class DistroServer:
                     "name": "Slack Bridge",
                     "status": _check_key("SLACK_BOT_TOKEN"),
                     "description": "Connect Slack workspace to Amplifier",
-                    "setup_url": "/static/slack-setup.html",
+                    "setup_url": "/apps/slack/setup-ui",
                 },
                 "voice": {
                     "name": "Voice Bridge",
                     "status": _check_key("OPENAI_API_KEY"),
                     "description": "Voice interface via OpenAI Realtime API",
-                    "setup_url": "/static/voice.html",
+                    "setup_url": "/apps/voice/",
                 },
             }
             return JSONResponse(content=integrations)
@@ -646,20 +644,11 @@ class DistroServer:
 
             phase = compute_phase()
             if phase == "unconfigured":
-                return RedirectResponse(url="/static/quickstart.html")
+                return RedirectResponse(url="/apps/install-wizard/")
             # Ready: go to web-chat if available, otherwise settings
             if "web-chat" in self._apps:
                 return RedirectResponse(url="/apps/web-chat/")
-            return RedirectResponse(url="/static/settings.html")
-
-    def _mount_static_files(self) -> None:
-        """Mount static files directory if it exists."""
-        static_dir = Path(__file__).parent / "static"
-        if static_dir.exists():
-            self._app.mount(
-                "/static", StaticFiles(directory=str(static_dir)), name="static"
-            )
-
+            return RedirectResponse(url="/apps/install-wizard/settings")
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.

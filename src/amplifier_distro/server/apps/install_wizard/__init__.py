@@ -3,6 +3,19 @@
 Replaces the 7-step wizard with a fast-path approach:
 1. Quickstart: paste ONE API key, get a working chat in < 2 minutes
 2. Settings panel: incrementally enable features after hello world
+
+Routes:
+    GET  /          - Quickstart page (paste API key)
+    GET  /wizard    - Full multi-step setup wizard
+    GET  /settings  - Post-setup settings panel
+    GET  /detect    - Auto-detect environment
+    GET  /status    - Current setup state
+    POST /quickstart - Fast-path API key setup
+    POST /features  - Toggle a feature
+    POST /tier      - Set feature tier
+    POST /provider  - Change provider
+    GET  /bridges   - Bridge status
+    GET  /docs      - Documentation pointers
 """
 
 from __future__ import annotations
@@ -16,6 +29,7 @@ from typing import Any
 
 import yaml
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from amplifier_distro import bundle_composer
@@ -59,6 +73,47 @@ _BRIDGE_DEFS: dict[str, dict[str, Any]] = {
 }
 
 router = APIRouter()
+
+_static_dir = Path(__file__).parent / "static"
+
+
+# --- HTML Pages ---
+
+
+@router.get("/", response_class=HTMLResponse)
+async def quickstart_page() -> HTMLResponse:
+    """Serve the quickstart page (fast-path API key entry)."""
+    html_file = _static_dir / "quickstart.html"
+    if html_file.exists():
+        return HTMLResponse(content=html_file.read_text())
+    return HTMLResponse(
+        content="<h1>Install Wizard</h1><p>quickstart.html not found.</p>",
+        status_code=500,
+    )
+
+
+@router.get("/wizard", response_class=HTMLResponse)
+async def wizard_page() -> HTMLResponse:
+    """Serve the full multi-step setup wizard."""
+    html_file = _static_dir / "wizard.html"
+    if html_file.exists():
+        return HTMLResponse(content=html_file.read_text())
+    return HTMLResponse(
+        content="<h1>Install Wizard</h1><p>wizard.html not found.</p>",
+        status_code=500,
+    )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page() -> HTMLResponse:
+    """Serve the settings panel."""
+    html_file = _static_dir / "settings.html"
+    if html_file.exists():
+        return HTMLResponse(content=html_file.read_text())
+    return HTMLResponse(
+        content="<h1>Settings</h1><p>settings.html not found.</p>",
+        status_code=500,
+    )
 
 
 # --- Pydantic Models ---
