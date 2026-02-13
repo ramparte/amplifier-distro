@@ -358,6 +358,43 @@ def _check_slack_configured(home: Path) -> DiagnosticCheck:
     )
 
 
+def _check_email_configured(home: Path) -> DiagnosticCheck:
+    """Check that the email bridge has Gmail credentials available."""
+    required = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"]
+
+    # Collect from both sources: env vars + keys.yaml
+    found: set[str] = {k for k in required if os.environ.get(k)}
+
+    keys_path = home / conventions.KEYS_FILENAME
+    if keys_path.exists():
+        try:
+            data = yaml.safe_load(keys_path.read_text()) or {}
+            found.update(k for k in required if data.get(k))
+        except yaml.YAMLError:
+            pass
+
+    if len(found) == len(required):
+        return DiagnosticCheck(
+            name="Email bridge",
+            status=CheckStatus.ok,
+            message="Gmail credentials configured",
+        )
+
+    if found:
+        missing = [k for k in required if k not in found]
+        return DiagnosticCheck(
+            name="Email bridge",
+            status=CheckStatus.warning,
+            message=f"Partial config - missing: {', '.join(missing)}",
+        )
+
+    return DiagnosticCheck(
+        name="Email bridge",
+        status=CheckStatus.warning,
+        message="Gmail credentials not found in env or keys.yaml",
+    )
+
+
 def _check_voice_configured(home: Path) -> DiagnosticCheck:
     """Check that voice has an OpenAI API key available."""
     # Check environment first
@@ -473,6 +510,7 @@ def run_diagnostics(amplifier_home: Path) -> DoctorReport:
 
     # Integration checks
     report.checks.append(_check_slack_configured(amplifier_home))
+    report.checks.append(_check_email_configured(amplifier_home))
     report.checks.append(_check_voice_configured(amplifier_home))
 
     return report

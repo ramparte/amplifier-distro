@@ -209,7 +209,6 @@ class TestConfigIO:
 
     def test_load_config_raises_on_invalid_values(self, tmp_path):
         """load_config() raises ValidationError when config has invalid values."""
-        import os
         from unittest.mock import patch
 
         from amplifier_distro.config import load_config
@@ -273,7 +272,7 @@ class TestPreflightChecks:
     @patch("amplifier_distro.preflight.shutil.which", return_value=None)
     @patch("amplifier_distro.preflight.subprocess.run", side_effect=FileNotFoundError)
     def test_preflight_checks_all_required_areas(self, _mock_run, _mock_which):
-        """Pre-flight must produce exactly these 8 named checks.
+        """Pre-flight must produce exactly these 9 named checks.
 
         Antagonist note: The exact check names are pinned here. If preflight.py
         changes a name or drops a check, this test catches it.
@@ -289,11 +288,12 @@ class TestPreflightChecks:
             "Workspace",
             "Memory store",
             "Amplifier CLI",
+            "Email bridge",
         ]
         for req in required:
             assert req in check_names, f"Missing pre-flight check: {req}"
-        assert len(report.checks) == 8, (
-            f"Expected exactly 8 checks, got {len(report.checks)}: {check_names}"
+        assert len(report.checks) == 9, (
+            f"Expected exactly 9 checks, got {len(report.checks)}: {check_names}"
         )
 
     @patch("amplifier_distro.preflight.shutil.which", return_value=None)

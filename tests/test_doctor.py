@@ -11,6 +11,7 @@ Covers:
 import json
 import platform
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -281,6 +282,49 @@ class TestCheckSlackConfigured:
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
         report = _run_with_home(tmp_path)
         check = _find_check(report, "Slack bridge")
+        assert check.status == CheckStatus.warning
+
+
+class TestCheckEmailConfigured:
+    """Test the email bridge diagnostic check."""
+
+    _GMAIL_KEYS: ClassVar[list[str]] = [
+        "GMAIL_CLIENT_ID",
+        "GMAIL_CLIENT_SECRET",
+        "GMAIL_REFRESH_TOKEN",
+    ]
+
+    def test_all_keys_in_env(self, tmp_path, monkeypatch):
+        for k in self._GMAIL_KEYS:
+            monkeypatch.setenv(k, "test-value")
+        report = _run_with_home(tmp_path)
+        check = _find_check(report, "Email bridge")
+        assert check.status == CheckStatus.ok
+
+    def test_all_keys_in_keys_yaml(self, tmp_path, monkeypatch):
+        for k in self._GMAIL_KEYS:
+            monkeypatch.delenv(k, raising=False)
+        keys = tmp_path / conventions.KEYS_FILENAME
+        keys.write_text(yaml.dump(dict.fromkeys(self._GMAIL_KEYS, "real-value")))
+        report = _run_with_home(tmp_path)
+        check = _find_check(report, "Email bridge")
+        assert check.status == CheckStatus.ok
+
+    def test_partial_config_warns(self, tmp_path, monkeypatch):
+        for k in self._GMAIL_KEYS:
+            monkeypatch.delenv(k, raising=False)
+        # Only set one key
+        monkeypatch.setenv("GMAIL_CLIENT_ID", "partial")
+        report = _run_with_home(tmp_path)
+        check = _find_check(report, "Email bridge")
+        assert check.status == CheckStatus.warning
+        assert "missing" in check.message.lower()
+
+    def test_no_config_warns(self, tmp_path, monkeypatch):
+        for k in self._GMAIL_KEYS:
+            monkeypatch.delenv(k, raising=False)
+        report = _run_with_home(tmp_path)
+        check = _find_check(report, "Email bridge")
         assert check.status == CheckStatus.warning
 
 
@@ -628,11 +672,12 @@ class TestRunDiagnostics:
             "Git config",
             "GitHub CLI",
             "Slack bridge",
+            "Email bridge",
             "Voice config",
         ]
         for name in expected:
             assert name in names, f"Missing check: {name}"
-        assert len(report.checks) == 13
+        assert len(report.checks) == 14
 
 
 # ---------------------------------------------------------------------------

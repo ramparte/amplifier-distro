@@ -347,3 +347,55 @@ class TestTierEndpoint:
         data = resp.json()
         assert "features_added" in data
         assert "dev-memory" in data["features_added"]
+
+
+# --- GET /bridges Tests ---
+
+
+class TestBridgesEndpoint:
+    """Verify bridge detection for Slack, Email, and Voice."""
+
+    def test_returns_200(self, wizard_client: TestClient):
+        response = wizard_client.get("/apps/install-wizard/bridges")
+        assert response.status_code == 200
+
+    def test_has_bridges_key(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/bridges").json()
+        assert "bridges" in data
+
+    def test_contains_all_bridge_types(self, wizard_client: TestClient):
+        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        assert "slack" in bridges
+        assert "email" in bridges
+        assert "voice" in bridges
+
+    def test_bridge_structure(self, wizard_client: TestClient):
+        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        for info in bridges.values():
+            assert "name" in info
+            assert "description" in info
+            assert "configured" in info
+            assert "setup_url" in info
+
+    def test_email_unconfigured_by_default(self, wizard_client: TestClient):
+        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        assert bridges["email"]["configured"] is False
+        assert len(bridges["email"]["missing_keys"]) > 0
+
+    def test_email_configured_with_env(
+        self, wizard_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("GMAIL_CLIENT_ID", "id")
+        monkeypatch.setenv("GMAIL_CLIENT_SECRET", "secret")
+        monkeypatch.setenv("GMAIL_REFRESH_TOKEN", "token")
+        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        assert bridges["email"]["configured"] is True
+        assert bridges["email"]["missing_keys"] == []
+
+    def test_detect_includes_bridges(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/detect").json()
+        assert "bridges" in data
+
+    def test_status_includes_bridges(self, wizard_client: TestClient):
+        data = wizard_client.get("/apps/install-wizard/status").json()
+        assert "bridges" in data

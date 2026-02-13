@@ -29,6 +29,35 @@ from amplifier_distro.docs_config import DOC_POINTERS, get_docs_for_category
 from amplifier_distro.features import FEATURES, PROVIDERS, detect_provider
 from amplifier_distro.server.app import AppManifest
 
+# Bridge env-var / keys.yaml lookups used by _detect_bridges()
+_BRIDGE_DEFS: dict[str, dict[str, Any]] = {
+    "slack": {
+        "name": "Slack",
+        "description": "Connect Slack channels to Amplifier sessions",
+        "required_keys": ["SLACK_BOT_TOKEN"],
+        "optional_keys": ["SLACK_APP_TOKEN"],
+        "setup_url": "/apps/slack/setup/status",
+    },
+    "email": {
+        "name": "Email",
+        "description": "Send and receive email through Gmail API",
+        "required_keys": [
+            "GMAIL_CLIENT_ID",
+            "GMAIL_CLIENT_SECRET",
+            "GMAIL_REFRESH_TOKEN",
+        ],
+        "optional_keys": ["EMAIL_AGENT_ADDRESS"],
+        "setup_url": "/apps/email/setup/status",
+    },
+    "voice": {
+        "name": "Voice",
+        "description": "Real-time voice conversations via OpenAI Realtime API",
+        "required_keys": ["OPENAI_API_KEY"],
+        "optional_keys": [],
+        "setup_url": "/apps/voice/",
+    },
+}
+
 router = APIRouter()
 
 
@@ -137,6 +166,46 @@ def _write_distro_config() -> None:
     path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
 
 
+def _load_keys() -> dict[str, str]:
+    """Load keys.yaml if it exists, returning an empty dict on failure."""
+    keys_path = _keys_path()
+    if not keys_path.exists():
+        return {}
+    try:
+        return yaml.safe_load(keys_path.read_text()) or {}
+    except yaml.YAMLError:
+        return {}
+
+
+def _detect_bridges() -> dict[str, Any]:
+    """Detect configuration status of all known bridges.
+
+    Checks env vars first, then keys.yaml.  Returns a dict keyed by
+    bridge id with ``configured``, ``missing``, and metadata fields.
+    """
+    keys = _load_keys()
+    bridges: dict[str, Any] = {}
+
+    for bid, defn in _BRIDGE_DEFS.items():
+        present: list[str] = []
+        missing: list[str] = []
+        for k in defn["required_keys"]:
+            if os.environ.get(k) or keys.get(k):
+                present.append(k)
+            else:
+                missing.append(k)
+
+        configured = len(missing) == 0
+        bridges[bid] = {
+            "name": defn["name"],
+            "description": defn["description"],
+            "configured": configured,
+            "missing_keys": missing,
+            "setup_url": defn["setup_url"],
+        }
+    return bridges
+
+
 def _build_status() -> dict[str, Any]:
     """Build the full status response."""
     phase = compute_phase()
@@ -158,6 +227,7 @@ def _build_status() -> dict[str, Any]:
         "provider": provider,
         "tier": tier,
         "features": features,
+        "bridges": _detect_bridges(),
     }
 
 
@@ -245,6 +315,9 @@ async def detect_environment() -> dict[str, Any]:
         if p.exists() and p.is_dir():
             candidates.append(f"~/{name}")
     result["workspace_candidates"] = candidates
+
+    # Bridges (Slack, Email, Voice)
+    result["bridges"] = _detect_bridges()
 
     return result
 
@@ -355,6 +428,12 @@ async def change_provider(req: ProviderRequest) -> dict[str, Any]:
         "provider": provider_id,
         "model": provider.default_model,
     }
+
+
+@router.get("/bridges")
+async def get_bridges() -> dict[str, Any]:
+    """Status of all communication bridges (Slack, Email, Voice)."""
+    return {"bridges": _detect_bridges()}
 
 
 @router.get("/docs")
