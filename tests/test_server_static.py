@@ -1,7 +1,7 @@
-"""Server Root Redirect & App HTML Serving Tests
+"""Server Root Landing Page & App HTML Serving Tests
 
 These tests validate:
-1. GET / returns a phase-aware redirect to an app route
+1. GET / serves a landing page (when configured) or redirects (when not)
 2. Install-wizard app serves its HTML pages (quickstart, wizard)
 3. Settings app serves its HTML page
 4. HTML pages contain expected elements (title, Amplifier branding)
@@ -22,29 +22,39 @@ def _make_client() -> TestClient:
     return TestClient(server.app)
 
 
-class TestRootRedirect:
-    """Verify GET / redirects based on setup phase.
+class TestRootLandingPage:
+    """Verify GET / serves a landing page when configured.
 
     The root URL is the first thing a user hits.
-    It redirects based on compute_phase(): unconfigured -> install-wizard,
-    ready -> web-chat (or settings).
+    When ready, it serves an HTML landing page with app links.
+    When unconfigured, it redirects to install-wizard.
     """
 
-    def test_root_returns_redirect(self):
-        client = _make_client()
-        response = client.get("/", follow_redirects=False)
-        assert response.status_code in (302, 307)
-
-    def test_root_redirects_to_app_route(self):
-        client = _make_client()
-        response = client.get("/", follow_redirects=False)
-        location = response.headers["location"]
-        assert "/apps/" in location
-
-    def test_root_follow_redirect_reaches_page(self):
+    def test_root_returns_200(self):
         client = _make_client()
         response = client.get("/")
         assert response.status_code == 200
+
+    def test_root_returns_html(self):
+        client = _make_client()
+        response = client.get("/")
+        content_type = response.headers.get("content-type", "")
+        assert "text/html" in content_type
+
+    def test_root_contains_amplifier(self):
+        client = _make_client()
+        response = client.get("/")
+        assert "Amplifier" in response.text
+
+    def test_root_contains_chat_link(self):
+        client = _make_client()
+        response = client.get("/")
+        assert "/apps/web-chat/" in response.text
+
+    def test_root_contains_settings_link(self):
+        client = _make_client()
+        response = client.get("/")
+        assert "/apps/settings/" in response.text
 
 
 class TestInstallWizardPages:
