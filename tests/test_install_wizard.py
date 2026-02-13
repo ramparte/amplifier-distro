@@ -1,17 +1,17 @@
-"""Install Wizard Tests (Refactored)
+"""Install Wizard & Settings App Tests
 
-Tests for the new quickstart-based install wizard that replaced
-the 7-step wizard. The new wizard is stateless - everything is
-derived from the filesystem.
+Tests for the quickstart install wizard and the settings app that
+manages features, tiers, providers, and bridges post-setup.
 
 Exit criteria verified:
 1. Manifest has correct name, description, and router
 2. compute_phase() returns correct phase based on filesystem state
 3. GET /detect returns structured environment detection
-4. GET /status returns phase, provider, tier, features
+4. GET /status returns phase, provider, tier, features (settings app)
 5. POST /quickstart creates bundle and settings from API key
-6. POST /features toggles features on/off
-7. POST /tier sets feature tier level
+6. POST /features toggles features on/off (settings app)
+7. POST /tier sets feature tier level (settings app)
+8. GET /bridges returns bridge status (settings app)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from amplifier_distro.server.app import AppManifest, DistroServer
 
 @pytest.fixture
 def wizard_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect all wizard file operations to a temp directory."""
+    """Redirect all file operations to a temp directory."""
     home = tmp_path / "amplifier"
     home.mkdir()
 
@@ -36,26 +36,34 @@ def wizard_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     test_bundle = home / "bundles" / "distro.yaml"
     monkeypatch.setattr("amplifier_distro.bundle_composer.BUNDLE_PATH", test_bundle)
 
-    # Redirect install wizard's AMPLIFIER_HOME
+    # Redirect AMPLIFIER_HOME in both apps
     monkeypatch.setattr(
         "amplifier_distro.server.apps.install_wizard.AMPLIFIER_HOME",
         str(home),
     )
+    monkeypatch.setattr(
+        "amplifier_distro.server.apps.settings.AMPLIFIER_HOME",
+        str(home),
+    )
 
-    # Clear provider env vars to start clean
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Clear ALL provider env vars to start clean
+    from amplifier_distro.features import PROVIDERS
+
+    for provider in PROVIDERS.values():
+        monkeypatch.delenv(provider.env_var, raising=False)
 
     return home
 
 
 @pytest.fixture
 def wizard_client(wizard_home: Path) -> TestClient:
-    """Create a TestClient with the install wizard registered."""
-    from amplifier_distro.server.apps.install_wizard import manifest
+    """Create a TestClient with both install-wizard and settings registered."""
+    from amplifier_distro.server.apps.install_wizard import manifest as wizard_manifest
+    from amplifier_distro.server.apps.settings import manifest as settings_manifest
 
     server = DistroServer()
-    server.register_app(manifest)
+    server.register_app(wizard_manifest)
+    server.register_app(settings_manifest)
     return TestClient(server.app)
 
 
@@ -95,13 +103,13 @@ class TestComputePhase:
     """Verify compute_phase() returns correct phase from filesystem state."""
 
     def test_unconfigured_when_no_settings(self, wizard_home: Path):
-        from amplifier_distro.server.apps.install_wizard import compute_phase
+        from amplifier_distro.server.apps.settings import compute_phase
 
         # No settings.yaml exists
         assert compute_phase() == "unconfigured"
 
     def test_unconfigured_when_settings_but_no_key(self, wizard_home: Path):
-        from amplifier_distro.server.apps.install_wizard import compute_phase
+        from amplifier_distro.server.apps.settings import compute_phase
 
         # Create settings.yaml but no env var
         settings = wizard_home / "settings.yaml"
@@ -111,7 +119,7 @@ class TestComputePhase:
     def test_ready_when_settings_and_key(
         self, wizard_home: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        from amplifier_distro.server.apps.install_wizard import compute_phase
+        from amplifier_distro.server.apps.settings import compute_phase
 
         # Create settings.yaml AND set env var
         settings = wizard_home / "settings.yaml"
@@ -147,30 +155,30 @@ class TestDetectEndpoint:
         assert "api_keys" in data
 
 
-# --- GET /status Tests ---
+# --- GET /apps/settings/status Tests ---
 
 
 class TestStatusEndpoint:
-    """Verify GET /status returns current setup state."""
+    """Verify GET /status returns current setup state (settings app)."""
 
     def test_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/status")
+        response = wizard_client.get("/apps/settings/status")
         assert response.status_code == 200
 
     def test_has_phase(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/status").json()
+        data = wizard_client.get("/apps/settings/status").json()
         assert "phase" in data
 
     def test_has_provider(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/status").json()
+        data = wizard_client.get("/apps/settings/status").json()
         assert "provider" in data
 
     def test_has_tier(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/status").json()
+        data = wizard_client.get("/apps/settings/status").json()
         assert "tier" in data
 
     def test_has_features(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/status").json()
+        data = wizard_client.get("/apps/settings/status").json()
         assert "features" in data
 
 
@@ -266,11 +274,11 @@ class TestQuickstartEndpoint:
         assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test123"
 
 
-# --- POST /features Tests ---
+# --- POST /apps/settings/features Tests ---
 
 
 class TestFeaturesEndpoint:
-    """Verify POST /features toggles features on/off."""
+    """Verify POST /features toggles features on/off (settings app)."""
 
     def _setup_bundle(self, client: TestClient) -> None:
         """Helper: quickstart to create initial bundle."""
@@ -282,7 +290,7 @@ class TestFeaturesEndpoint:
     def test_enable_feature(self, wizard_client: TestClient):
         self._setup_bundle(wizard_client)
         resp = wizard_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "dev-memory", "enabled": True},
         )
         assert resp.status_code == 200
@@ -293,12 +301,12 @@ class TestFeaturesEndpoint:
         self._setup_bundle(wizard_client)
         # Enable first
         wizard_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "dev-memory", "enabled": True},
         )
         # Then disable
         resp = wizard_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "dev-memory", "enabled": False},
         )
         assert resp.status_code == 200
@@ -308,17 +316,17 @@ class TestFeaturesEndpoint:
     def test_unknown_feature_returns_400(self, wizard_client: TestClient):
         self._setup_bundle(wizard_client)
         resp = wizard_client.post(
-            "/apps/install-wizard/features",
+            "/apps/settings/features",
             json={"feature_id": "nonexistent", "enabled": True},
         )
         assert resp.status_code == 400
 
 
-# --- POST /tier Tests ---
+# --- POST /apps/settings/tier Tests ---
 
 
 class TestTierEndpoint:
-    """Verify POST /tier sets the feature tier level."""
+    """Verify POST /tier sets the feature tier level (settings app)."""
 
     def _setup_bundle(self, client: TestClient) -> None:
         """Helper: quickstart to create initial bundle."""
@@ -330,7 +338,7 @@ class TestTierEndpoint:
     def test_set_tier_1(self, wizard_client: TestClient):
         self._setup_bundle(wizard_client)
         resp = wizard_client.post(
-            "/apps/install-wizard/tier",
+            "/apps/settings/tier",
             json={"tier": 1},
         )
         assert resp.status_code == 200
@@ -341,7 +349,7 @@ class TestTierEndpoint:
     def test_set_tier_returns_features_added(self, wizard_client: TestClient):
         self._setup_bundle(wizard_client)
         resp = wizard_client.post(
-            "/apps/install-wizard/tier",
+            "/apps/settings/tier",
             json={"tier": 1},
         )
         data = resp.json()
@@ -349,28 +357,28 @@ class TestTierEndpoint:
         assert "dev-memory" in data["features_added"]
 
 
-# --- GET /bridges Tests ---
+# --- GET /apps/settings/bridges Tests ---
 
 
 class TestBridgesEndpoint:
-    """Verify bridge detection for Slack, Email, and Voice."""
+    """Verify bridge detection for Slack, Email, and Voice (settings app)."""
 
     def test_returns_200(self, wizard_client: TestClient):
-        response = wizard_client.get("/apps/install-wizard/bridges")
+        response = wizard_client.get("/apps/settings/bridges")
         assert response.status_code == 200
 
     def test_has_bridges_key(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/bridges").json()
+        data = wizard_client.get("/apps/settings/bridges").json()
         assert "bridges" in data
 
     def test_contains_all_bridge_types(self, wizard_client: TestClient):
-        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        bridges = wizard_client.get("/apps/settings/bridges").json()["bridges"]
         assert "slack" in bridges
         assert "email" in bridges
         assert "voice" in bridges
 
     def test_bridge_structure(self, wizard_client: TestClient):
-        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        bridges = wizard_client.get("/apps/settings/bridges").json()["bridges"]
         for info in bridges.values():
             assert "name" in info
             assert "description" in info
@@ -378,7 +386,7 @@ class TestBridgesEndpoint:
             assert "setup_url" in info
 
     def test_email_unconfigured_by_default(self, wizard_client: TestClient):
-        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        bridges = wizard_client.get("/apps/settings/bridges").json()["bridges"]
         assert bridges["email"]["configured"] is False
         assert len(bridges["email"]["missing_keys"]) > 0
 
@@ -388,7 +396,7 @@ class TestBridgesEndpoint:
         monkeypatch.setenv("GMAIL_CLIENT_ID", "id")
         monkeypatch.setenv("GMAIL_CLIENT_SECRET", "secret")
         monkeypatch.setenv("GMAIL_REFRESH_TOKEN", "token")
-        bridges = wizard_client.get("/apps/install-wizard/bridges").json()["bridges"]
+        bridges = wizard_client.get("/apps/settings/bridges").json()["bridges"]
         assert bridges["email"]["configured"] is True
         assert bridges["email"]["missing_keys"] == []
 
@@ -397,5 +405,5 @@ class TestBridgesEndpoint:
         assert "bridges" in data
 
     def test_status_includes_bridges(self, wizard_client: TestClient):
-        data = wizard_client.get("/apps/install-wizard/status").json()
+        data = wizard_client.get("/apps/settings/status").json()
         assert "bridges" in data

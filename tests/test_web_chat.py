@@ -110,7 +110,7 @@ class TestWebChatIndexEndpoint:
 
     def test_index_contains_settings_link(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/")
-        assert "/apps/install-wizard/settings" in response.text
+        assert "/apps/settings/" in response.text
 
     def test_index_contains_message_input(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/")
@@ -294,8 +294,8 @@ class TestAppDiscovery:
         server.discover_apps(apps_dir)
         client = TestClient(server.app)
 
-        # install-wizard /status is the canonical endpoint
-        wiz = client.get("/apps/install-wizard/status")
+        # install-wizard quickstart page
+        wiz = client.get("/apps/install-wizard/")
         assert wiz.status_code == 200
 
         chat = client.get("/apps/web-chat/")

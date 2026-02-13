@@ -2,8 +2,9 @@
 
 These tests validate:
 1. GET / returns a phase-aware redirect to an app route
-2. Install-wizard app serves its HTML pages (quickstart, wizard, settings)
-3. HTML pages contain expected elements (title, Amplifier branding)
+2. Install-wizard app serves its HTML pages (quickstart, wizard)
+3. Settings app serves its HTML page
+4. HTML pages contain expected elements (title, Amplifier branding)
 """
 
 from pathlib import Path
@@ -26,7 +27,7 @@ class TestRootRedirect:
 
     The root URL is the first thing a user hits.
     It redirects based on compute_phase(): unconfigured -> install-wizard,
-    ready -> web-chat (or install-wizard/settings).
+    ready -> web-chat (or settings).
     """
 
     def test_root_returns_redirect(self):
@@ -47,11 +48,12 @@ class TestRootRedirect:
 
 
 class TestInstallWizardPages:
-    """Verify install-wizard app serves its HTML pages.
+    """Verify install-wizard app serves its HTML pages."""
 
-    Each page is self-contained within the install-wizard app
-    and served via its own route.
-    """
+    def test_quickstart_returns_200(self):
+        client = _make_client()
+        response = client.get("/apps/install-wizard/")
+        assert response.status_code == 200
 
     def test_wizard_html_returns_200(self):
         client = _make_client()
@@ -81,12 +83,22 @@ class TestInstallWizardPages:
         response = client.get("/apps/install-wizard/wizard")
         assert "step" in response.text.lower()
 
-    def test_quickstart_returns_200(self):
-        client = _make_client()
-        response = client.get("/apps/install-wizard/")
-        assert response.status_code == 200
+
+class TestSettingsPage:
+    """Verify settings app serves its HTML page."""
 
     def test_settings_returns_200(self):
         client = _make_client()
-        response = client.get("/apps/install-wizard/settings")
+        response = client.get("/apps/settings/")
         assert response.status_code == 200
+
+    def test_settings_is_html_content(self):
+        client = _make_client()
+        response = client.get("/apps/settings/")
+        content_type = response.headers.get("content-type", "")
+        assert "text/html" in content_type
+
+    def test_settings_contains_amplifier(self):
+        client = _make_client()
+        response = client.get("/apps/settings/")
+        assert "Amplifier" in response.text
