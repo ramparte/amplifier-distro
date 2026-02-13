@@ -294,6 +294,7 @@ class TestLocalBridgeCreateSession:
         }
         config = BridgeConfig(
             working_dir=Path("~/dev/test-project").expanduser(),
+            bundle_name="test-bundle",
             run_preflight=False,
         )
         return bridge, config
