@@ -1,8 +1,11 @@
-"""Data models for the email bridge."""
+"""Data models for the email bridge.
+
+Mirrors the Slack bridge model structure with email-specific fields.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 
@@ -38,19 +41,26 @@ class EmailMessage:
 
 @dataclass
 class SessionMapping:
-    """Maps an email thread to an Amplifier session."""
+    """Maps an email thread to an Amplifier session.
+
+    A mapping ties an email thread (identified by Gmail thread_id) to
+    an Amplifier session. This is the core routing table for the bridge.
+    """
 
     session_id: str
-    thread_id: str
-    sender_address: str
+    thread_id: str  # Gmail thread_id
+    sender_address: str  # The human's email address
     subject: str
-    created_at: str | None = None
-    last_activity: str | None = None
+    project_id: str = ""
+    description: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    last_activity: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     message_count: int = 0
+    is_active: bool = True
 
-    def __post_init__(self) -> None:
-        now = datetime.now(UTC).isoformat()
-        if self.created_at is None:
-            self.created_at = now
-        if self.last_activity is None:
-            self.last_activity = now
+    @property
+    def conversation_key(self) -> str:
+        """Unique key for routing: thread_id or sender:subject fallback."""
+        if self.thread_id:
+            return self.thread_id
+        return f"{self.sender_address}:{self.subject}"

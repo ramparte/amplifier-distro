@@ -1,12 +1,11 @@
 """Configuration for the email bridge.
 
-Follows Opinion #11: secrets in keys file, config in distro.yaml.
+Follows Opinion #11: secrets in keys.yaml, config in distro.yaml.
 
 Priority order (highest wins):
-1. Environment variables (EMAIL_*, GMAIL_*)
-2. keys.env or keys.yaml for secrets
-3. distro.yaml email: section for config
-4. Dataclass defaults
+1. Environment variables (GMAIL_CLIENT_ID, etc.)
+2. keys.yaml for secrets, distro.yaml for config
+3. Dataclass defaults
 """
 
 from __future__ import annotations
@@ -28,53 +27,13 @@ def _amplifier_home() -> Path:
     return Path(AMPLIFIER_HOME).expanduser()
 
 
-def _load_keys_env(path: Path) -> dict[str, Any]:
-    """Parse a .env file into a dict.
-
-    Handles both dotenv (KEY=VALUE) and YAML-ish (KEY: VALUE) formats
-    since users may mix styles in their keys file.
-    """
-    result: dict[str, Any] = {}
-    if not path.exists():
-        return result
-    try:
-        for line in path.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Try = first (dotenv), then : (YAML-ish)
-            if "=" in line:
-                key, _, value = line.partition("=")
-            elif ": " in line:
-                key, _, value = line.partition(": ")
-            else:
-                continue
-            key = key.strip()
-            value = value.strip()
-            # Strip surrounding quotes
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-                value = value[1:-1]
-            result[key] = value
-    except OSError:
-        logger.warning("Failed to read %s", path, exc_info=True)
-    return result
-
-
 def _load_keys() -> dict[str, Any]:
-    """Load keys from ~/.amplifier/keys.env (dotenv) or keys.yaml."""
-    home = _amplifier_home()
-
-    # Try keys.env first (dotenv format)
-    env_path = home / "keys.env"
-    if env_path.exists():
-        return _load_keys_env(env_path)
-
-    # Fall back to keys.yaml
-    yaml_path = home / KEYS_FILENAME
-    if not yaml_path.exists():
+    """Load ~/.amplifier/keys.yaml if it exists."""
+    path = _amplifier_home() / KEYS_FILENAME
+    if not path.exists():
         return {}
     try:
-        data = yaml.safe_load(yaml_path.read_text())
+        data = yaml.safe_load(path.read_text())
         return data if isinstance(data, dict) else {}
     except (OSError, yaml.YAMLError):
         logger.warning("Failed to read keys.yaml", exc_info=True)
@@ -92,7 +51,7 @@ def _load_distro_email() -> dict[str, Any]:
             return data["email"]
         return {}
     except (OSError, yaml.YAMLError):
-        logger.warning("Failed to read distro.yaml", exc_info=True)
+        logger.warning("Failed to read distro.yaml email section", exc_info=True)
         return {}
 
 
@@ -113,22 +72,6 @@ def _str(
     c = config.get(config_key, "")
     if c:
         return str(c)
-    return default
-
-
-def _bool(
-    env_key: str,
-    config: dict[str, Any],
-    config_key: str,
-    default: bool = False,
-) -> bool:
-    """Get bool: env > distro.yaml > default."""
-    env = os.environ.get(env_key, "")
-    if env:
-        return env.lower() in ("1", "true", "yes")
-    val = config.get(config_key)
-    if val is not None:
-        return bool(val)
     return default
 
 
@@ -162,18 +105,17 @@ class EmailConfig:
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""
-    gmail_access_token: str = ""  # Auto-refreshed, can be empty
 
-    # --- Email Settings (from distro.yaml) ---
+    # --- Email Identity (from distro.yaml) ---
     agent_address: str = ""  # e.g., agent@schillace.com
-    send_as: str = ""  # Send-As alias (if different from Gmail account)
-    agent_name: str = "Amplifier"  # Display name in From header
+    agent_name: str = "Amplifier"
+    send_as: str = ""  # Send-as address (defaults to agent_address)
 
-    # --- Behavior ---
+    # --- Behavior (from distro.yaml) ---
     poll_interval_seconds: int = 30
-    max_message_length: int = 50000  # Email can be long
-    max_sessions_per_sender: int = 10
-    response_timeout: int = 600  # 10 minutes for email
+    max_message_length: int = 50000
+    max_sessions_per_user: int = 10
+    response_timeout: int = 300
 
     # --- Session Defaults ---
     default_bundle: str | None = None
@@ -184,7 +126,11 @@ class EmailConfig:
 
     @classmethod
     def from_env(cls) -> EmailConfig:
-        """Load from keys.yaml + distro.yaml + env."""
+        """Load config from keys.yaml + distro.yaml + env overrides.
+
+        Priority: env vars > keys.yaml (secrets) > distro.yaml (config)
+        > dataclass defaults.
+        """
         keys = _load_keys()
         cfg = _load_distro_email()
         return cls(
@@ -195,28 +141,41 @@ class EmailConfig:
             gmail_refresh_token=_str(
                 "GMAIL_REFRESH_TOKEN", keys, cfg, "gmail_refresh_token"
             ),
-            gmail_access_token=_str(
-                "GMAIL_ACCESS_TOKEN", keys, cfg, "gmail_access_token"
-            ),
             agent_address=_str("EMAIL_AGENT_ADDRESS", {}, cfg, "agent_address"),
-            send_as=_str("EMAIL_SEND_AS", {}, cfg, "send_as"),
             agent_name=_str("EMAIL_AGENT_NAME", {}, cfg, "agent_name", "Amplifier"),
+            send_as=_str("EMAIL_SEND_AS", {}, cfg, "send_as"),
             poll_interval_seconds=_int(
                 "EMAIL_POLL_INTERVAL", cfg, "poll_interval_seconds", 30
             ),
-            simulator_mode=_bool("EMAIL_SIMULATOR_MODE", cfg, "simulator_mode"),
+            max_message_length=_int(
+                "EMAIL_MAX_MESSAGE_LENGTH", cfg, "max_message_length", 50000
+            ),
+            max_sessions_per_user=_int(
+                "EMAIL_MAX_SESSIONS_PER_USER", cfg, "max_sessions_per_user", 10
+            ),
+            response_timeout=_int(
+                "EMAIL_RESPONSE_TIMEOUT", cfg, "response_timeout", 300
+            ),
         )
 
     @property
+    def effective_send_as(self) -> str:
+        """The address to send email from (send_as or agent_address)."""
+        return self.send_as or self.agent_address
+
+    @property
     def is_configured(self) -> bool:
+        """Whether the Gmail credentials are configured."""
         return bool(
             self.gmail_client_id
             and self.gmail_client_secret
             and self.gmail_refresh_token
+            and self.agent_address
         )
 
     @property
     def mode(self) -> str:
+        """Current operating mode."""
         if self.simulator_mode:
             return "simulator"
         if self.is_configured:

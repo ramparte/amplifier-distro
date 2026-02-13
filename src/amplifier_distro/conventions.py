@@ -70,6 +70,7 @@ SERVER_PID_FILE = "server.pid"
 SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
 SLACK_SESSIONS_FILENAME = "slack-sessions.json"  # Slack bridge session mappings
+EMAIL_SESSIONS_FILENAME = "email-sessions.json"  # Email bridge session mappings
 
 # --- Crash logs ---
 CRASH_LOG_FILE = "crash.log"  # relative to SERVER_DIR

@@ -2,6 +2,7 @@
 
 Dispatches incoming emails to the appropriate handler:
 commands, existing sessions, or new session creation.
+Mirrors the Slack bridge event handling pattern.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import logging
 from .client import EmailClient
 from .commands import CommandHandler
 from .config import EmailConfig
-from .formatter import format_response
+from .formatter import format_response, split_message
 from .models import EmailMessage
 from .sessions import EmailSessionManager
 
@@ -19,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class EmailEventHandler:
-    """Handles incoming email events."""
+    """Handles incoming email events.
+
+    Flow:
+    1. Skip self-sent emails (loop prevention)
+    2. Check for /amp commands -> handle command -> reply
+    3. Check for existing session -> route message -> reply
+    4. Create new session -> route first message -> reply
+    """
 
     def __init__(
         self,
@@ -34,14 +42,7 @@ class EmailEventHandler:
         self._config = config
 
     async def handle_incoming_email(self, message: EmailMessage) -> None:
-        """Process an incoming email message.
-
-        Flow:
-        1. Skip if from agent (loop prevention)
-        2. If command -> handle command -> reply
-        3. If existing session -> route message -> reply
-        4. Else -> create session -> route first message -> reply
-        """
+        """Process an incoming email message."""
         agent_address = self._client.get_agent_address()
 
         # Loop prevention: skip emails from the agent itself
@@ -52,60 +53,64 @@ class EmailEventHandler:
         sender = message.from_addr
         body = message.body_text.strip()
 
-        # Check for commands
+        if not body:
+            logger.debug("Skipping empty message: %s", message.message_id)
+            return
+
+        # Truncate oversized messages
+        if len(body) > self._config.max_message_length:
+            body = body[: self._config.max_message_length]
+            body += "\n\n[Message truncated due to length]"
+
+        # Check for /amp commands
         if self._command_handler.is_command(body):
             command, args = self._command_handler.parse_command(body)
             response_text = await self._command_handler.handle(
                 command, args, sender.address, message.thread_id
             )
-            html = format_response(response_text, self._config)
-            await self._client.send_email(
-                to=sender,
-                subject=f"Re: {message.subject}",
-                body_html=html,
-                body_text=response_text,
-                in_reply_to=message.message_id,
-                thread_id=message.thread_id,
-            )
+            await self._send_reply(message, response_text)
             return
 
-        # Check for existing session
-        existing = self._session_manager.get_session(message.thread_id)
-        if existing is not None:
-            response_text = await self._session_manager.route_message(
-                message.thread_id, body
-            )
-            html = format_response(response_text, self._config)
-            await self._client.send_email(
-                to=sender,
-                subject=f"Re: {message.subject}",
-                body_html=html,
-                body_text=response_text,
-                in_reply_to=message.message_id,
-                thread_id=message.thread_id,
-            )
-            return
-
-        # New session
+        # Route to session (get existing or create new)
         try:
-            await self._session_manager.create_session(
-                sender_address=sender.address,
-                subject=message.subject,
-                thread_id=message.thread_id,
+            mapping = await self._session_manager.get_or_create_session(message)
+            response_text = await self._session_manager.send_message(
+                mapping.session_id, body
             )
-            response_text = await self._session_manager.route_message(
-                message.thread_id, body
+        except Exception:
+            logger.exception(
+                "Error processing email from %s (thread %s)",
+                sender.address,
+                message.thread_id,
             )
-            html = format_response(response_text, self._config)
-            await self._client.send_email(
-                to=sender,
-                subject=f"Re: {message.subject}",
-                body_html=html,
-                body_text=response_text,
-                in_reply_to=message.message_id,
-                thread_id=message.thread_id,
+            response_text = (
+                "I encountered an error processing your message. "
+                "Please try again or use /amp help for available commands."
             )
-        except ValueError:
-            logger.warning(
-                "Failed to create session for %s", sender.address, exc_info=True
-            )
+
+        await self._send_reply(message, response_text)
+
+    async def _send_reply(self, original: EmailMessage, response_text: str) -> None:
+        """Send a reply to an email, splitting if needed."""
+        sender = original.from_addr
+
+        # Split long responses into multiple emails
+        chunks = split_message(response_text, self._config.max_message_length)
+
+        for i, chunk in enumerate(chunks):
+            subject = f"Re: {original.subject}"
+            if len(chunks) > 1:
+                subject = f"Re: {original.subject} ({i + 1}/{len(chunks)})"
+
+            html = format_response(chunk, self._config)
+            try:
+                await self._client.send_email(
+                    to=sender,
+                    subject=subject,
+                    body_html=html,
+                    body_text=chunk,
+                    in_reply_to=original.message_id,
+                    thread_id=original.thread_id,
+                )
+            except Exception:
+                logger.exception("Failed to send reply to %s", sender.address)

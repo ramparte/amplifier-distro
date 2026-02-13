@@ -183,15 +183,21 @@ class GmailClient:
         self._service: Any = None
 
     def _get_service(self) -> Any:
-        """Lazily initialize the Gmail API service."""
+        """Lazily initialize the Gmail API service.
+
+        Uses refresh_token + client credentials for auto-refresh.
+        No access_token needed upfront - the library refreshes it.
+        """
         if self._service is None:
-            from google.oauth2.credentials import Credentials
-            from googleapiclient.discovery import build
+            from google.oauth2.credentials import (
+                Credentials,  # type: ignore[import-untyped]
+            )
+            from googleapiclient.discovery import build  # type: ignore[import-untyped]
 
             creds = Credentials(
-                token=self._config.gmail_access_token,
+                token=None,
                 refresh_token=self._config.gmail_refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
+                token_uri="https://oauth2.googleapis.com/token",  # noqa: S106
                 client_id=self._config.gmail_client_id,
                 client_secret=self._config.gmail_client_secret,
             )

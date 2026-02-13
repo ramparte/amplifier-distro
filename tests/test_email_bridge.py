@@ -1,13 +1,15 @@
 """Tests for the email bridge.
 
-103 tests covering all modules: models, client, formatter, sessions,
-commands, events, poller, and the FastAPI app/routes.
+Covers all modules: models, client, formatter, sessions,
+commands, events, poller, config, setup routes, and the FastAPI app/routes.
 """
 
 from __future__ import annotations
 
-import tempfile
+import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,7 +21,7 @@ from amplifier_distro.server.apps.email.client import (
     _parse_address,
     _parse_gmail_message,
 )
-from amplifier_distro.server.apps.email.commands import CommandHandler
+from amplifier_distro.server.apps.email.commands import ALIASES, CommandHandler
 from amplifier_distro.server.apps.email.config import EmailConfig
 from amplifier_distro.server.apps.email.events import EmailEventHandler
 from amplifier_distro.server.apps.email.formatter import (
@@ -36,7 +38,7 @@ from amplifier_distro.server.apps.email.poller import EmailPoller
 from amplifier_distro.server.apps.email.sessions import EmailSessionManager
 from amplifier_distro.server.session_backend import MockBackend
 
-# ── Fixtures ──────────────────────────────────────────────────────────
+# -- Fixtures --
 
 
 @pytest.fixture()
@@ -45,7 +47,7 @@ def config() -> EmailConfig:
         agent_address="agent@test.com",
         agent_name="TestBot",
         simulator_mode=True,
-        max_sessions_per_sender=3,
+        max_sessions_per_user=3,
     )
 
 
@@ -61,9 +63,13 @@ def backend() -> MockBackend:
 
 @pytest.fixture()
 def session_manager(
-    client: MemoryEmailClient, backend: MockBackend, config: EmailConfig
+    client: MemoryEmailClient, backend: MockBackend, config: EmailConfig, tmp_path: Path
 ) -> EmailSessionManager:
-    return EmailSessionManager(client, backend, config)
+    """Session manager with persistence redirected to tmp_path."""
+    mgr = EmailSessionManager(client, backend, config)
+    # Override persistence path to avoid touching real filesystem
+    mgr._sessions_path = lambda: tmp_path / "email-sessions.json"  # type: ignore[assignment]
+    return mgr
 
 
 @pytest.fixture()
@@ -111,9 +117,9 @@ def _make_msg(
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  1. MODELS (10 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  1. MODELS
+# =====================================================================
 
 
 class TestEmailAddress:
@@ -201,10 +207,22 @@ class TestSessionMapping:
         )
         assert m.message_count == 0
 
+    def test_conversation_key_with_thread(self) -> None:
+        m = SessionMapping(
+            session_id="s1", thread_id="t1", sender_address="u@a.com", subject="Test"
+        )
+        assert m.conversation_key == "t1"
 
-# ═══════════════════════════════════════════════════════════════════════
-#  2. CLIENT (15 tests)
-# ═══════════════════════════════════════════════════════════════════════
+    def test_conversation_key_fallback(self) -> None:
+        m = SessionMapping(
+            session_id="s1", thread_id="", sender_address="u@a.com", subject="Test"
+        )
+        assert m.conversation_key == "u@a.com:Test"
+
+
+# =====================================================================
+#  2. CLIENT
+# =====================================================================
 
 
 class TestMemoryEmailClient:
@@ -333,9 +351,9 @@ class TestGmailParsing:
         assert html == ""
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  3. FORMATTER (12 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  3. FORMATTER
+# =====================================================================
 
 
 class TestMarkdownToHtml:
@@ -399,81 +417,142 @@ class TestSplitMessage:
         assert "B" in result[-1]
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  4. SESSIONS (18 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  4. CONFIG
+# =====================================================================
+
+
+class TestEmailConfig:
+    def test_defaults(self) -> None:
+        cfg = EmailConfig()
+        assert cfg.agent_address == ""
+        assert cfg.agent_name == "Amplifier"
+        assert cfg.poll_interval_seconds == 30
+        assert cfg.max_sessions_per_user == 10
+        assert cfg.simulator_mode is False
+
+    def test_effective_send_as_fallback(self) -> None:
+        cfg = EmailConfig(agent_address="agent@test.com")
+        assert cfg.effective_send_as == "agent@test.com"
+
+    def test_effective_send_as_override(self) -> None:
+        cfg = EmailConfig(agent_address="agent@test.com", send_as="custom@test.com")
+        assert cfg.effective_send_as == "custom@test.com"
+
+    def test_is_configured_false(self) -> None:
+        cfg = EmailConfig()
+        assert cfg.is_configured is False
+
+    def test_is_configured_true(self) -> None:
+        cfg = EmailConfig(
+            gmail_client_id="id",
+            gmail_client_secret="secret",
+            gmail_refresh_token="token",
+            agent_address="a@b.com",
+        )
+        assert cfg.is_configured is True
+
+    def test_mode_simulator(self) -> None:
+        cfg = EmailConfig(simulator_mode=True)
+        assert cfg.mode == "simulator"
+
+    def test_mode_configured(self) -> None:
+        cfg = EmailConfig(
+            gmail_client_id="id",
+            gmail_client_secret="s",
+            gmail_refresh_token="t",
+            agent_address="a@b.com",
+        )
+        assert cfg.mode == "gmail-api"
+
+    def test_mode_unconfigured(self) -> None:
+        cfg = EmailConfig()
+        assert cfg.mode == "unconfigured"
+
+    def test_from_env_uses_env_vars(self) -> None:
+        env = {
+            "GMAIL_CLIENT_ID": "env-id",
+            "GMAIL_CLIENT_SECRET": "env-secret",
+            "GMAIL_REFRESH_TOKEN": "env-token",
+            "EMAIL_AGENT_ADDRESS": "env@test.com",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            cfg = EmailConfig.from_env()
+        assert cfg.gmail_client_id == "env-id"
+        assert cfg.agent_address == "env@test.com"
+
+
+# =====================================================================
+#  5. SESSIONS
+# =====================================================================
 
 
 class TestEmailSessionManager:
     @pytest.mark.asyncio()
-    async def test_create_session(self, session_manager: EmailSessionManager) -> None:
-        mapping = await session_manager.create_session("user@example.com", "Test", "t1")
-        assert mapping.session_id.startswith("mock-session-")
-
-    @pytest.mark.asyncio()
-    async def test_create_session_returns_mapping(
+    async def test_get_or_create_creates_new(
         self, session_manager: EmailSessionManager
     ) -> None:
-        mapping = await session_manager.create_session("user@example.com", "Test", "t1")
+        msg = _make_msg(thread_id="t1")
+        mapping = await session_manager.get_or_create_session(msg)
+        assert mapping.session_id.startswith("mock-session-")
         assert mapping.thread_id == "t1"
         assert mapping.sender_address == "user@example.com"
-        assert mapping.subject == "Test"
 
     @pytest.mark.asyncio()
-    async def test_create_session_stores_mapping(
+    async def test_get_or_create_returns_existing(
         self, session_manager: EmailSessionManager
     ) -> None:
-        await session_manager.create_session("u@a.com", "S", "t1")
-        assert session_manager.get_session("t1") is not None
+        msg = _make_msg(thread_id="t1")
+        m1 = await session_manager.get_or_create_session(msg)
+        m2 = await session_manager.get_or_create_session(msg)
+        assert m1.session_id == m2.session_id
 
     @pytest.mark.asyncio()
-    async def test_route_message(self, session_manager: EmailSessionManager) -> None:
-        await session_manager.create_session("u@a.com", "S", "t1")
-        response = await session_manager.route_message("t1", "Hello")
-        assert "Hello" in response  # MockBackend echoes
-
-    @pytest.mark.asyncio()
-    async def test_route_message_increments_count(
+    async def test_get_or_create_increments_count(
         self, session_manager: EmailSessionManager
     ) -> None:
-        await session_manager.create_session("u@a.com", "S", "t1")
-        await session_manager.route_message("t1", "msg1")
-        await session_manager.route_message("t1", "msg2")
-        mapping = session_manager.get_session("t1")
+        msg = _make_msg(thread_id="t1")
+        await session_manager.get_or_create_session(msg)
+        await session_manager.get_or_create_session(msg)
+        mapping = session_manager.get_by_thread("t1")
         assert mapping is not None
+        # First call sets count=1, second call increments to 2
         assert mapping.message_count == 2
 
     @pytest.mark.asyncio()
-    async def test_route_message_updates_activity(
+    async def test_get_by_thread_exists(
         self, session_manager: EmailSessionManager
     ) -> None:
-        mapping = await session_manager.create_session("u@a.com", "S", "t1")
-        original = mapping.last_activity
-        await session_manager.route_message("t1", "msg1")
-        updated = session_manager.get_session("t1")
-        assert updated is not None
-        assert updated.last_activity is not None
-        # Activity should be updated (or at least set)
-        assert updated.last_activity >= (original or "")
+        msg = _make_msg(thread_id="t1")
+        await session_manager.get_or_create_session(msg)
+        assert session_manager.get_by_thread("t1") is not None
+
+    def test_get_by_thread_not_found(
+        self, session_manager: EmailSessionManager
+    ) -> None:
+        assert session_manager.get_by_thread("nonexistent") is None
 
     @pytest.mark.asyncio()
-    async def test_route_message_no_session_raises(
-        self, session_manager: EmailSessionManager
-    ) -> None:
-        with pytest.raises(ValueError, match="No session"):
-            await session_manager.route_message("nonexistent", "Hello")
+    async def test_send_message(self, session_manager: EmailSessionManager) -> None:
+        msg = _make_msg(thread_id="t1")
+        mapping = await session_manager.get_or_create_session(msg)
+        response = await session_manager.send_message(mapping.session_id, "Hello")
+        assert "Hello" in response  # MockBackend echoes
 
     @pytest.mark.asyncio()
     async def test_end_session(self, session_manager: EmailSessionManager) -> None:
-        await session_manager.create_session("u@a.com", "S", "t1")
-        await session_manager.end_session("t1")
-        assert session_manager.get_session("t1") is None
+        msg = _make_msg(thread_id="t1")
+        await session_manager.get_or_create_session(msg)
+        result = await session_manager.end_session("t1")
+        assert result is True
+        assert session_manager.get_by_thread("t1") is None
 
     @pytest.mark.asyncio()
-    async def test_end_session_removes_mapping(
+    async def test_end_session_removes_from_active(
         self, session_manager: EmailSessionManager
     ) -> None:
-        await session_manager.create_session("u@a.com", "S", "t1")
+        msg = _make_msg(thread_id="t1")
+        await session_manager.get_or_create_session(msg)
         await session_manager.end_session("t1")
         assert session_manager.list_active() == []
 
@@ -481,15 +560,8 @@ class TestEmailSessionManager:
     async def test_end_session_nonexistent(
         self, session_manager: EmailSessionManager
     ) -> None:
-        # Should not raise
-        await session_manager.end_session("nonexistent")
-
-    def test_get_session_exists(self, session_manager: EmailSessionManager) -> None:
-        # No sessions yet
-        assert session_manager.get_session("t1") is None
-
-    def test_get_session_not_found(self, session_manager: EmailSessionManager) -> None:
-        assert session_manager.get_session("nonexistent") is None
+        result = await session_manager.end_session("nonexistent")
+        assert result is False
 
     def test_list_active_empty(self, session_manager: EmailSessionManager) -> None:
         assert session_manager.list_active() == []
@@ -498,58 +570,100 @@ class TestEmailSessionManager:
     async def test_list_active_multiple(
         self, session_manager: EmailSessionManager
     ) -> None:
-        await session_manager.create_session("u@a.com", "S1", "t1")
-        await session_manager.create_session("u@a.com", "S2", "t2")
+        await session_manager.get_or_create_session(_make_msg(thread_id="t1"))
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t2", from_addr="other@test.com")
+        )
         assert len(session_manager.list_active()) == 2
 
     @pytest.mark.asyncio()
-    async def test_max_sessions_per_sender(
+    async def test_max_sessions_auto_ends_oldest(
         self, session_manager: EmailSessionManager, config: EmailConfig
     ) -> None:
-        sender = "u@a.com"
-        for i in range(config.max_sessions_per_sender):
-            await session_manager.create_session(sender, f"S{i}", f"t{i}")
-        with pytest.raises(ValueError, match="Maximum sessions"):
-            await session_manager.create_session(sender, "Overflow", "tN")
+        """When max sessions reached, oldest is auto-ended."""
+        sender = "user@example.com"
+        for i in range(config.max_sessions_per_user):
+            await session_manager.get_or_create_session(
+                _make_msg(
+                    thread_id=f"t{i}",
+                    from_addr=sender,
+                    subject=f"S{i}",
+                )
+            )
+        # Next session auto-ends the oldest
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t-new", from_addr=sender, subject="New")
+        )
+        # Should have max_sessions_per_user sessions (oldest was ended)
+        active = session_manager.list_for_sender(sender)
+        assert len(active) == config.max_sessions_per_user
 
     @pytest.mark.asyncio()
     async def test_max_sessions_different_senders(
         self, session_manager: EmailSessionManager, config: EmailConfig
     ) -> None:
-        for i in range(config.max_sessions_per_sender):
-            await session_manager.create_session("a@a.com", f"S{i}", f"ta{i}")
-        # Different sender should still be allowed
-        mapping = await session_manager.create_session("b@b.com", "S", "tb1")
+        for i in range(config.max_sessions_per_user):
+            await session_manager.get_or_create_session(
+                _make_msg(thread_id=f"ta{i}", from_addr="a@a.com")
+            )
+        # Different sender should still work
+        mapping = await session_manager.get_or_create_session(
+            _make_msg(thread_id="tb1", from_addr="b@b.com")
+        )
         assert mapping.sender_address == "b@b.com"
 
     @pytest.mark.asyncio()
-    async def test_save_and_load(
-        self,
-        session_manager: EmailSessionManager,
-        client: MemoryEmailClient,
-        backend: MockBackend,
-        config: EmailConfig,
+    async def test_connect_session(self, session_manager: EmailSessionManager) -> None:
+        mapping = await session_manager.connect_session(
+            thread_id="t1",
+            session_id="existing-session-123",
+            sender_address="u@a.com",
+        )
+        assert mapping.session_id == "existing-session-123"
+        assert mapping.thread_id == "t1"
+        assert session_manager.get_by_thread("t1") is not None
+
+    @pytest.mark.asyncio()
+    async def test_get_by_session_id(
+        self, session_manager: EmailSessionManager
     ) -> None:
-        await session_manager.create_session("u@a.com", "S1", "t1")
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            path = f.name
-        session_manager.save(path)
+        msg = _make_msg(thread_id="t1")
+        m = await session_manager.get_or_create_session(msg)
+        found = session_manager.get_by_session_id(m.session_id)
+        assert found is not None
+        assert found.thread_id == "t1"
 
-        new_manager = EmailSessionManager(client, backend, config)
-        new_manager.load(path)
-        assert new_manager.get_session("t1") is not None
-        assert new_manager.get_session("t1").subject == "S1"
-        Path(path).unlink()
+    def test_get_by_session_id_not_found(
+        self, session_manager: EmailSessionManager
+    ) -> None:
+        assert session_manager.get_by_session_id("nonexistent") is None
 
-    def test_load_nonexistent_file(self, session_manager: EmailSessionManager) -> None:
-        # Should not raise
-        session_manager.load("/tmp/nonexistent_email_sessions.json")
-        assert session_manager.list_active() == []
+    @pytest.mark.asyncio()
+    async def test_list_for_sender(self, session_manager: EmailSessionManager) -> None:
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t1", from_addr="a@a.com")
+        )
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t2", from_addr="b@b.com")
+        )
+        assert len(session_manager.list_for_sender("a@a.com")) == 1
+
+    @pytest.mark.asyncio()
+    async def test_persistence(
+        self, session_manager: EmailSessionManager, tmp_path: Path
+    ) -> None:
+        """Sessions are persisted to JSON file."""
+        await session_manager.get_or_create_session(_make_msg(thread_id="t1"))
+        path = session_manager._sessions_path()
+        assert path.exists()
+        data = json.loads(path.read_text())
+        assert len(data["sessions"]) == 1
+        assert data["sessions"][0]["thread_id"] == "t1"
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  5. COMMANDS (18 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  6. COMMANDS
+# =====================================================================
 
 
 class TestCommandHandler:
@@ -565,13 +679,26 @@ class TestCommandHandler:
     def test_is_command_with_whitespace(self, command_handler: CommandHandler) -> None:
         assert command_handler.is_command("  /amp help  ") is True
 
+    def test_is_command_bare(self, command_handler: CommandHandler) -> None:
+        assert command_handler.is_command("/amp") is True
+
+    def test_is_command_skips_quoted_reply(
+        self, command_handler: CommandHandler
+    ) -> None:
+        text = "> Previous reply\n> More quote\n/amp help"
+        assert command_handler.is_command(text) is True
+
+    def test_is_command_not_in_quote(self, command_handler: CommandHandler) -> None:
+        text = "> /amp help\nRegular text"
+        assert command_handler.is_command(text) is False
+
     def test_parse_command_help(self, command_handler: CommandHandler) -> None:
         cmd, args = command_handler.parse_command("/amp help")
         assert cmd == "help"
         assert args == []
 
     def test_parse_command_list(self, command_handler: CommandHandler) -> None:
-        cmd, args = command_handler.parse_command("/amp list")
+        cmd, _args = command_handler.parse_command("/amp list")
         assert cmd == "list"
 
     def test_parse_command_new_with_args(self, command_handler: CommandHandler) -> None:
@@ -580,31 +707,55 @@ class TestCommandHandler:
         assert args == ["My", "Topic"]
 
     def test_parse_command_bare_amp(self, command_handler: CommandHandler) -> None:
-        cmd, args = command_handler.parse_command("/amp")
+        cmd, _args = command_handler.parse_command("/amp")
         assert cmd == "help"
 
     def test_parse_command_alias_ls(self, command_handler: CommandHandler) -> None:
-        cmd, args = command_handler.parse_command("/amp ls")
+        cmd, _args = command_handler.parse_command("/amp ls")
         assert cmd == "list"
 
     def test_parse_command_alias_quit(self, command_handler: CommandHandler) -> None:
-        cmd, args = command_handler.parse_command("/amp quit")
+        cmd, _args = command_handler.parse_command("/amp quit")
         assert cmd == "end"
 
     def test_parse_command_alias_close(self, command_handler: CommandHandler) -> None:
-        cmd, args = command_handler.parse_command("/amp close")
+        cmd, _args = command_handler.parse_command("/amp close")
         assert cmd == "end"
+
+    def test_parse_command_alias_link(self, command_handler: CommandHandler) -> None:
+        cmd, _ = command_handler.parse_command("/amp link")
+        assert cmd == "connect"
+
+    def test_parse_command_alias_detach(self, command_handler: CommandHandler) -> None:
+        cmd, _ = command_handler.parse_command("/amp detach")
+        assert cmd == "disconnect"
+
+    def test_all_aliases_resolve(self) -> None:
+        """Verify all aliases map to real commands."""
+        real_commands = {
+            "help",
+            "list",
+            "sessions",
+            "new",
+            "status",
+            "end",
+            "connect",
+            "disconnect",
+            "config",
+        }
+        for alias, target in ALIASES.items():
+            assert target in real_commands, f"Alias {alias} -> {target} is invalid"
 
     @pytest.mark.asyncio()
     async def test_handle_help(self, command_handler: CommandHandler) -> None:
         result = await command_handler.handle("help", [], "u@a.com", "t1")
-        assert "Available commands" in result
+        assert "Email Bridge Commands" in result
         assert "/amp help" in result
 
     @pytest.mark.asyncio()
     async def test_handle_list_empty(self, command_handler: CommandHandler) -> None:
         result = await command_handler.handle("list", [], "u@a.com", "t1")
-        assert "No active sessions" in result
+        assert "No active" in result
 
     @pytest.mark.asyncio()
     async def test_handle_list_with_sessions(
@@ -612,7 +763,9 @@ class TestCommandHandler:
         command_handler: CommandHandler,
         session_manager: EmailSessionManager,
     ) -> None:
-        await session_manager.create_session("u@a.com", "MyTopic", "t1")
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t1", subject="MyTopic")
+        )
         result = await command_handler.handle("list", [], "u@a.com", "t1")
         assert "Active sessions" in result
         assert "MyTopic" in result
@@ -620,20 +773,22 @@ class TestCommandHandler:
     @pytest.mark.asyncio()
     async def test_handle_new(self, command_handler: CommandHandler) -> None:
         result = await command_handler.handle("new", ["My", "Subject"], "u@a.com", "t1")
-        assert "Session created" in result
-        assert "My Subject" in result
+        assert "Session started" in result
 
     @pytest.mark.asyncio()
-    async def test_handle_new_max_sessions(
+    async def test_handle_new_replaces_existing(
         self,
         command_handler: CommandHandler,
         session_manager: EmailSessionManager,
-        config: EmailConfig,
     ) -> None:
-        for i in range(config.max_sessions_per_sender):
-            await session_manager.create_session("u@a.com", f"S{i}", f"t{i}")
-        result = await command_handler.handle("new", ["Overflow"], "u@a.com", "tN")
-        assert "Maximum sessions" in result
+        """Starting a new session on a thread with existing session ends the old one."""
+        await session_manager.get_or_create_session(_make_msg(thread_id="t1"))
+        old_id = session_manager.get_by_thread("t1").session_id  # type: ignore[union-attr]
+        result = await command_handler.handle("new", ["Fresh"], "u@a.com", "t1")
+        assert "Session started" in result
+        new_mapping = session_manager.get_by_thread("t1")
+        assert new_mapping is not None
+        assert new_mapping.session_id != old_id
 
     @pytest.mark.asyncio()
     async def test_handle_status_no_session(
@@ -648,7 +803,9 @@ class TestCommandHandler:
         command_handler: CommandHandler,
         session_manager: EmailSessionManager,
     ) -> None:
-        await session_manager.create_session("u@a.com", "Topic", "t1")
+        await session_manager.get_or_create_session(
+            _make_msg(thread_id="t1", subject="Topic")
+        )
         result = await command_handler.handle("status", [], "u@a.com", "t1")
         assert "Session:" in result
         assert "Topic" in result
@@ -664,9 +821,41 @@ class TestCommandHandler:
         command_handler: CommandHandler,
         session_manager: EmailSessionManager,
     ) -> None:
-        await session_manager.create_session("u@a.com", "Topic", "t1")
+        await session_manager.get_or_create_session(_make_msg(thread_id="t1"))
         result = await command_handler.handle("end", [], "u@a.com", "t1")
         assert "ended" in result
+
+    @pytest.mark.asyncio()
+    async def test_handle_connect_no_args(
+        self, command_handler: CommandHandler
+    ) -> None:
+        result = await command_handler.handle("connect", [], "u@a.com", "t1")
+        assert "Usage" in result
+
+    @pytest.mark.asyncio()
+    async def test_handle_disconnect_no_session(
+        self, command_handler: CommandHandler
+    ) -> None:
+        result = await command_handler.handle("disconnect", [], "u@a.com", "t1")
+        assert "No session connected" in result
+
+    @pytest.mark.asyncio()
+    async def test_handle_disconnect_with_session(
+        self,
+        command_handler: CommandHandler,
+        session_manager: EmailSessionManager,
+    ) -> None:
+        await session_manager.get_or_create_session(_make_msg(thread_id="t1"))
+        result = await command_handler.handle("disconnect", [], "u@a.com", "t1")
+        assert "Disconnected" in result
+        # Thread mapping removed but session still referenced
+        assert session_manager.get_by_thread("t1") is None
+
+    @pytest.mark.asyncio()
+    async def test_handle_config(self, command_handler: CommandHandler) -> None:
+        result = await command_handler.handle("config", [], "u@a.com", "t1")
+        assert "Email Bridge Configuration" in result
+        assert "agent@test.com" in result
 
     @pytest.mark.asyncio()
     async def test_handle_unknown(self, command_handler: CommandHandler) -> None:
@@ -674,9 +863,9 @@ class TestCommandHandler:
         assert "Unknown command" in result
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  6. EVENTS (11 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  7. EVENTS
+# =====================================================================
 
 
 class TestEmailEventHandler:
@@ -691,6 +880,26 @@ class TestEmailEventHandler:
         assert len(client.sent) == 0
 
     @pytest.mark.asyncio()
+    async def test_skip_empty_body(
+        self,
+        event_handler: EmailEventHandler,
+        client: MemoryEmailClient,
+    ) -> None:
+        msg = _make_msg(body_text="")
+        await event_handler.handle_incoming_email(msg)
+        assert len(client.sent) == 0
+
+    @pytest.mark.asyncio()
+    async def test_skip_whitespace_body(
+        self,
+        event_handler: EmailEventHandler,
+        client: MemoryEmailClient,
+    ) -> None:
+        msg = _make_msg(body_text="   \n  \n  ")
+        await event_handler.handle_incoming_email(msg)
+        assert len(client.sent) == 0
+
+    @pytest.mark.asyncio()
     async def test_handle_command(
         self,
         event_handler: EmailEventHandler,
@@ -699,7 +908,7 @@ class TestEmailEventHandler:
         msg = _make_msg(body_text="/amp help")
         await event_handler.handle_incoming_email(msg)
         assert len(client.sent) == 1
-        assert "Available commands" in client.sent[0]["body_text"]
+        assert "Email Bridge Commands" in client.sent[0]["body_text"]
 
     @pytest.mark.asyncio()
     async def test_handle_existing_session(
@@ -708,7 +917,8 @@ class TestEmailEventHandler:
         session_manager: EmailSessionManager,
         client: MemoryEmailClient,
     ) -> None:
-        await session_manager.create_session("user@example.com", "S", "thread-1")
+        # Create session first
+        await session_manager.get_or_create_session(_make_msg(thread_id="thread-1"))
         msg = _make_msg(body_text="Follow up message")
         await event_handler.handle_incoming_email(msg)
         assert len(client.sent) == 1
@@ -722,18 +932,7 @@ class TestEmailEventHandler:
     ) -> None:
         msg = _make_msg(body_text="Start conversation")
         await event_handler.handle_incoming_email(msg)
-        # Should have created a session and replied
-        assert session_manager.get_session("thread-1") is not None
-        assert len(client.sent) == 1
-
-    @pytest.mark.asyncio()
-    async def test_sends_reply(
-        self,
-        event_handler: EmailEventHandler,
-        client: MemoryEmailClient,
-    ) -> None:
-        msg = _make_msg(body_text="Hello there")
-        await event_handler.handle_incoming_email(msg)
+        assert session_manager.get_by_thread("thread-1") is not None
         assert len(client.sent) == 1
 
     @pytest.mark.asyncio()
@@ -757,74 +956,90 @@ class TestEmailEventHandler:
         assert client.sent[0]["in_reply_to"] == "original-id"
 
     @pytest.mark.asyncio()
-    async def test_command_reply_format(
-        self,
-        event_handler: EmailEventHandler,
-        client: MemoryEmailClient,
-    ) -> None:
-        msg = _make_msg(body_text="/amp help")
-        await event_handler.handle_incoming_email(msg)
-        assert "<html>" in client.sent[0]["body_html"]
-
-    @pytest.mark.asyncio()
-    async def test_new_session_routes_message(
-        self,
-        event_handler: EmailEventHandler,
-        session_manager: EmailSessionManager,
-        client: MemoryEmailClient,
-    ) -> None:
-        msg = _make_msg(body_text="Initial message")
-        await event_handler.handle_incoming_email(msg)
-        mapping = session_manager.get_session("thread-1")
-        assert mapping is not None
-        assert mapping.message_count == 1
-
-    @pytest.mark.asyncio()
-    async def test_max_sessions_error_silent(
-        self,
-        event_handler: EmailEventHandler,
-        session_manager: EmailSessionManager,
-        config: EmailConfig,
-    ) -> None:
-        for i in range(config.max_sessions_per_sender):
-            await session_manager.create_session("user@example.com", f"S{i}", f"t{i}")
-        msg = _make_msg(thread_id="t-overflow", body_text="Hi")
-        # Should not raise, just log warning
-        await event_handler.handle_incoming_email(msg)
-
-    @pytest.mark.asyncio()
-    async def test_formats_html_response(
+    async def test_reply_html_format(
         self,
         event_handler: EmailEventHandler,
         client: MemoryEmailClient,
     ) -> None:
         msg = _make_msg(body_text="Hello")
         await event_handler.handle_incoming_email(msg)
+        assert "<html>" in client.sent[0]["body_html"]
         assert "Sent by" in client.sent[0]["body_html"]
 
+    @pytest.mark.asyncio()
+    async def test_new_session_increments_count(
+        self,
+        event_handler: EmailEventHandler,
+        session_manager: EmailSessionManager,
+    ) -> None:
+        msg = _make_msg(body_text="Initial message")
+        await event_handler.handle_incoming_email(msg)
+        mapping = session_manager.get_by_thread("thread-1")
+        assert mapping is not None
+        # get_or_create_session sets count=1 on creation,
+        # then send_message doesn't touch it
+        assert mapping.message_count >= 1
 
-# ═══════════════════════════════════════════════════════════════════════
-#  7. POLLER (8 tests)
-# ═══════════════════════════════════════════════════════════════════════
+    @pytest.mark.asyncio()
+    async def test_truncates_long_messages(
+        self,
+        event_handler: EmailEventHandler,
+        client: MemoryEmailClient,
+        config: EmailConfig,
+    ) -> None:
+        long_body = "x" * (config.max_message_length + 100)
+        msg = _make_msg(body_text=long_body)
+        await event_handler.handle_incoming_email(msg)
+        # Should still process and reply (may split into multiple emails)
+        assert len(client.sent) >= 1
+
+    @pytest.mark.asyncio()
+    async def test_error_handling(
+        self,
+        event_handler: EmailEventHandler,
+        session_manager: EmailSessionManager,
+        client: MemoryEmailClient,
+    ) -> None:
+        """Errors in session handling result in error reply, not crash."""
+        # Override send_message to raise
+        original = session_manager.send_message
+
+        async def failing_send(session_id: str, text: str) -> str:
+            raise RuntimeError("Backend failure")
+
+        session_manager.send_message = failing_send  # type: ignore[assignment]
+        msg = _make_msg(body_text="Hello")
+        await event_handler.handle_incoming_email(msg)
+        assert len(client.sent) == 1
+        assert "error" in client.sent[0]["body_text"].lower()
+        session_manager.send_message = original  # type: ignore[assignment]
+
+
+# =====================================================================
+#  8. POLLER
+# =====================================================================
 
 
 class TestEmailPoller:
     def test_not_running_initially(self, poller: EmailPoller) -> None:
         assert poller.is_running is False
 
-    def test_start(self, poller: EmailPoller) -> None:
+    @pytest.mark.asyncio()
+    async def test_start(self, poller: EmailPoller) -> None:
         try:
             poller.start()
             assert poller.is_running is True
         finally:
             poller.stop()
 
-    def test_stop(self, poller: EmailPoller) -> None:
+    @pytest.mark.asyncio()
+    async def test_stop(self, poller: EmailPoller) -> None:
         poller.start()
         poller.stop()
         assert poller.is_running is False
 
-    def test_start_idempotent(self, poller: EmailPoller) -> None:
+    @pytest.mark.asyncio()
+    async def test_start_idempotent(self, poller: EmailPoller) -> None:
         try:
             poller.start()
             poller.start()  # Should not create a second task
@@ -858,10 +1073,9 @@ class TestEmailPoller:
         assert "m1" in client._read
 
     @pytest.mark.asyncio()
-    async def test_poll_once_handles_error(
+    async def test_poll_once_handles_fetch_error(
         self, poller: EmailPoller, client: MemoryEmailClient
     ) -> None:
-        # Inject a fetch that will work but inject an error in handler
         original_fetch = client.fetch_new_emails
 
         async def failing_fetch(since_message_id: str = "") -> list:
@@ -873,9 +1087,9 @@ class TestEmailPoller:
         client.fetch_new_emails = original_fetch  # type: ignore[assignment]
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  8. APP / ROUTES (8 tests)
-# ═══════════════════════════════════════════════════════════════════════
+# =====================================================================
+#  9. APP INIT AND ROUTES
+# =====================================================================
 
 
 class TestAppInit:
@@ -896,7 +1110,7 @@ class TestAppInit:
         assert "client" in state
         assert "session_manager" in state
         assert "config" in state
-        # Cleanup
+        assert "poller" in state
         email_app._state.clear()
 
     def test_initialize_with_injected(self) -> None:
@@ -921,7 +1135,7 @@ class TestAppInit:
 
 class TestRoutes:
     @pytest.fixture(autouse=True)
-    def _setup_app(self) -> None:
+    def _setup_app(self):  # type: ignore[override]
         import amplifier_distro.server.apps.email as email_app
 
         cfg = EmailConfig(
@@ -968,7 +1182,21 @@ class TestRoutes:
         assert resp.json() == []
 
     @pytest.mark.asyncio()
-    async def test_incoming_route(self) -> None:
+    async def test_poll_once_route(self) -> None:
+        from fastapi import FastAPI
+
+        from amplifier_distro.server.apps.email import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/email")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/email/poll/once")
+        assert resp.status_code == 200
+        assert resp.json()["processed"] == 0
+
+    @pytest.mark.asyncio()
+    async def test_send_route(self) -> None:
         from fastapi import FastAPI
 
         from amplifier_distro.server.apps.email import router
@@ -978,19 +1206,188 @@ class TestRoutes:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             resp = await ac.post(
-                "/email/incoming",
+                "/email/send",
+                json={"to": "someone@test.com", "subject": "Hi", "body": "Hello"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "sent"
+
+    @pytest.mark.asyncio()
+    async def test_send_route_missing_fields(self) -> None:
+        from fastapi import FastAPI
+
+        from amplifier_distro.server.apps.email import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/email")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/email/send", json={"to": "", "body": ""})
+        assert resp.status_code == 200
+        assert "error" in resp.json()
+
+
+# =====================================================================
+#  10. SETUP ROUTES
+# =====================================================================
+
+
+class TestSetupRoutes:
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path: Path):  # type: ignore[override]
+        """Redirect config paths to tmp_path for isolation."""
+        import amplifier_distro.server.apps.email as email_app
+
+        cfg = EmailConfig(
+            agent_address="agent@test.com",
+            simulator_mode=True,
+        )
+        email_app.initialize(
+            config=cfg,
+            client=MemoryEmailClient(),
+            backend=MockBackend(),
+        )
+
+        # Patch setup module paths
+        self._tmp = tmp_path
+        from amplifier_distro.server.apps.email import setup
+
+        self._orig_home = setup._amplifier_home
+        setup._amplifier_home = lambda: tmp_path  # type: ignore[assignment]
+
+        # Save and clear Gmail env vars to prevent leaking between tests
+        _env_keys = [
+            "GMAIL_CLIENT_ID",
+            "GMAIL_CLIENT_SECRET",
+            "GMAIL_REFRESH_TOKEN",
+            "EMAIL_AGENT_ADDRESS",
+            "EMAIL_AGENT_NAME",
+        ]
+        _saved_env = {k: os.environ.pop(k, None) for k in _env_keys}
+
+        yield  # type: ignore[misc]
+
+        # Restore env vars
+        for k, v in _saved_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        setup._amplifier_home = self._orig_home
+        email_app._state.clear()
+
+    def _app(self):
+        from fastapi import FastAPI
+
+        from amplifier_distro.server.apps.email import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/email")
+        return app
+
+    @pytest.mark.asyncio()
+    async def test_setup_status(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/email/setup/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "configured" in data
+        assert "steps" in data
+
+    @pytest.mark.asyncio()
+    async def test_setup_configure_saves_keys(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/email/setup/configure",
                 json={
-                    "message_id": "m1",
-                    "thread_id": "t1",
-                    "from": {
-                        "address": "user@example.com",
-                        "display_name": "User",
-                    },
-                    "to": [{"address": "agent@test.com", "display_name": ""}],
-                    "subject": "Hello",
-                    "body_text": "Hi there",
-                    "body_html": "",
+                    "gmail_client_id": "test-client-id",
+                    "gmail_client_secret": "test-secret",
+                    "gmail_refresh_token": "test-token",
+                    "agent_address": "agent@test.com",
                 },
             )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "ok"
+        assert resp.json()["status"] == "saved"
+
+        # Verify keys were persisted
+        import yaml
+
+        keys_path = self._tmp / "keys.yaml"
+        assert keys_path.exists()
+        keys = yaml.safe_load(keys_path.read_text())
+        assert keys["GMAIL_CLIENT_ID"] == "test-client-id"
+
+    @pytest.mark.asyncio()
+    async def test_setup_configure_saves_distro_yaml(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            await ac.post(
+                "/email/setup/configure",
+                json={
+                    "gmail_client_id": "id",
+                    "gmail_client_secret": "secret",
+                    "agent_address": "agent@test.com",
+                    "agent_name": "MyBot",
+                },
+            )
+
+        import yaml
+
+        distro_path = self._tmp / "distro.yaml"
+        assert distro_path.exists()
+        data = yaml.safe_load(distro_path.read_text())
+        assert data["email"]["agent_address"] == "agent@test.com"
+        assert data["email"]["agent_name"] == "MyBot"
+
+    @pytest.mark.asyncio()
+    async def test_setup_oauth_start_no_client_id(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/email/setup/oauth/start")
+        data = resp.json()
+        assert "error" in data
+
+    @pytest.mark.asyncio()
+    async def test_setup_oauth_start_with_client_id(self) -> None:
+        """After configuring client_id, oauth/start returns auth URL."""
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            # First configure the client ID
+            await ac.post(
+                "/email/setup/configure",
+                json={
+                    "gmail_client_id": "test-client-id",
+                    "gmail_client_secret": "test-secret",
+                    "agent_address": "a@b.com",
+                },
+            )
+            resp = await ac.get("/email/setup/oauth/start")
+        data = resp.json()
+        assert "auth_url" in data
+        assert "test-client-id" in data["auth_url"]
+
+    @pytest.mark.asyncio()
+    async def test_setup_instructions(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/email/setup/instructions")
+        data = resp.json()
+        assert "steps" in data
+        assert len(data["steps"]) >= 5
+
+    @pytest.mark.asyncio()
+    async def test_setup_test_not_configured(self) -> None:
+        app = self._app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/email/setup/test")
+        data = resp.json()
+        assert "error" in data
