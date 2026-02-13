@@ -7,14 +7,15 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError  # noqa: F401 - re-exported for callers
 
+from .conventions import AMPLIFIER_HOME, DISTRO_CONFIG_FILENAME
 from .schema import DistroConfig
 
 logger = logging.getLogger(__name__)
 
 
 def config_path() -> Path:
-    """Return the path to ~/.amplifier/distro.yaml, expanded."""
-    return Path("~/.amplifier/distro.yaml").expanduser()
+    """Return the path to distro.yaml, expanded."""
+    return Path(AMPLIFIER_HOME).expanduser() / DISTRO_CONFIG_FILENAME
 
 
 def load_config() -> DistroConfig:

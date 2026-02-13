@@ -36,13 +36,17 @@ def wizard_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     test_bundle = home / "bundles" / "distro.yaml"
     monkeypatch.setattr("amplifier_distro.bundle_composer.BUNDLE_PATH", test_bundle)
 
-    # Redirect AMPLIFIER_HOME in both apps
+    # Redirect AMPLIFIER_HOME in all modules that import it
     monkeypatch.setattr(
         "amplifier_distro.server.apps.install_wizard.AMPLIFIER_HOME",
         str(home),
     )
     monkeypatch.setattr(
         "amplifier_distro.server.apps.settings.AMPLIFIER_HOME",
+        str(home),
+    )
+    monkeypatch.setattr(
+        "amplifier_distro.config.AMPLIFIER_HOME",
         str(home),
     )
 
@@ -407,3 +411,118 @@ class TestBridgesEndpoint:
     def test_status_includes_bridges(self, wizard_client: TestClient):
         data = wizard_client.get("/apps/settings/status").json()
         assert "bridges" in data
+
+
+# --- Idempotency Tests ---
+
+
+class TestQuickstartIdempotency:
+    """Verify quickstart preserves existing config and settings on re-run."""
+
+    def _run_quickstart(self, client: TestClient, key: str = "sk-ant-test123"):
+        return client.post("/apps/install-wizard/quickstart", json={"api_key": key})
+
+    def test_distro_config_preserves_identity(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        """Running quickstart twice should not erase identity set between runs."""
+        import yaml as _yaml
+
+        from amplifier_distro.config import save_config
+        from amplifier_distro.schema import DistroConfig, IdentityConfig
+
+        # First quickstart — creates distro.yaml
+        self._run_quickstart(wizard_client)
+
+        # Simulate user setting identity via settings app
+        cfg = DistroConfig(
+            identity=IdentityConfig(
+                github_handle="myuser", git_email="me@example.com"
+            )
+        )
+        save_config(cfg)
+
+        # Second quickstart — should NOT erase identity
+        self._run_quickstart(wizard_client)
+
+        config_path = wizard_home / "distro.yaml"
+        data = _yaml.safe_load(config_path.read_text())
+        assert data["identity"]["github_handle"] == "myuser"
+        assert data["identity"]["git_email"] == "me@example.com"
+
+    def test_settings_preserves_extra_keys(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        """Running quickstart should not erase non-bundle keys in settings.yaml."""
+        import yaml as _yaml
+
+        # First quickstart — creates settings.yaml
+        self._run_quickstart(wizard_client)
+
+        # Simulate user adding extra config to settings.yaml
+        settings_path = wizard_home / "settings.yaml"
+        data = _yaml.safe_load(settings_path.read_text())
+        data["custom_key"] = "preserved_value"
+        settings_path.write_text(_yaml.dump(data, default_flow_style=False))
+
+        # Second quickstart — should preserve custom_key
+        self._run_quickstart(wizard_client)
+
+        data = _yaml.safe_load(settings_path.read_text())
+        assert data["custom_key"] == "preserved_value"
+
+    def test_settings_appends_to_added_list(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        """Bundle path should be appended, not replace existing added entries."""
+        import yaml as _yaml
+
+        # First quickstart
+        self._run_quickstart(wizard_client)
+
+        # Manually add another bundle to the added list
+        settings_path = wizard_home / "settings.yaml"
+        data = _yaml.safe_load(settings_path.read_text())
+        data["bundle"]["added"].insert(0, "/some/other/bundle.yaml")
+        settings_path.write_text(_yaml.dump(data, default_flow_style=False))
+
+        # Second quickstart — should append, not replace
+        self._run_quickstart(wizard_client)
+
+        data = _yaml.safe_load(settings_path.read_text())
+        added = data["bundle"]["added"]
+        assert "/some/other/bundle.yaml" in added
+        assert len(added) == 2  # other + distro bundle
+
+    def test_settings_no_duplicate_in_added(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        """Running quickstart twice should not duplicate the bundle path."""
+        import yaml as _yaml
+
+        self._run_quickstart(wizard_client)
+        self._run_quickstart(wizard_client)
+
+        settings_path = wizard_home / "settings.yaml"
+        data = _yaml.safe_load(settings_path.read_text())
+        added = data["bundle"]["added"]
+        assert len(added) == len(set(added))  # no duplicates
+
+    def test_quickstart_note_on_existing_settings(
+        self, wizard_client: TestClient, wizard_home: Path
+    ):
+        """Second quickstart should return a note about preserving settings."""
+        import yaml as _yaml
+
+        # First quickstart
+        self._run_quickstart(wizard_client)
+
+        # Add an extra key so there's something to preserve
+        settings_path = wizard_home / "settings.yaml"
+        data = _yaml.safe_load(settings_path.read_text())
+        data["extra"] = "value"
+        settings_path.write_text(_yaml.dump(data, default_flow_style=False))
+
+        # Second quickstart should include a note
+        resp = self._run_quickstart(wizard_client)
+        assert "note" in resp.json()
