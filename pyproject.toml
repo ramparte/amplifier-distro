@@ -32,9 +32,14 @@ slack = [
 amplifier = [
     "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation",
 ]
+# Email bridge with Gmail API support
+email = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.20.0",
+]
 # All optional features
 all = [
-    "amplifier-distro[slack,amplifier]",
+    "amplifier-distro[slack,email,amplifier]",
 ]
 
 [project.scripts]
