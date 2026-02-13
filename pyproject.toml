@@ -19,6 +19,7 @@ dependencies = [
     "uvicorn[standard]>=0.20.0",
     "httpx>=0.24.0",
     "python-multipart>=0.0.6",
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation",
 ]
 
 [project.optional-dependencies]
@@ -28,10 +29,6 @@ slack = [
     "slack-sdk>=3.26.0",
     "aiohttp>=3.9.0",
 ]
-# Full Amplifier session integration
-amplifier = [
-    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation",
-]
 # Email bridge with Gmail API support
 email = [
     "google-api-python-client>=2.100.0",
@@ -40,10 +37,11 @@ email = [
 # Development and testing
 dev = [
     "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
 ]
 # All optional features
 all = [
-    "amplifier-distro[slack,email,amplifier]",
+    "amplifier-distro[slack,email]",
 ]
 
 [project.scripts]

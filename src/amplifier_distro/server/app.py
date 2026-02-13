@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
@@ -636,19 +636,18 @@ class DistroServer:
                 )
 
     def _setup_root_redirect(self) -> None:
-        """Phase-aware root redirect: quickstart, web-chat, or settings."""
+        """Phase-aware root: landing page when ready, redirect when not."""
 
-        @self._app.get("/")
-        async def root() -> RedirectResponse:
+        _landing_page = Path(__file__).parent / "static" / "index.html"
+
+        @self._app.get("/", response_model=None)
+        async def root():
             from amplifier_distro.server.apps.settings import compute_phase
 
             phase = compute_phase()
             if phase == "unconfigured":
                 return RedirectResponse(url="/apps/install-wizard/")
-            # Ready: go to web-chat if available, otherwise settings
-            if "web-chat" in self._apps:
-                return RedirectResponse(url="/apps/web-chat/")
-            return RedirectResponse(url="/apps/settings/")
+            return HTMLResponse(content=_landing_page.read_text())
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.
