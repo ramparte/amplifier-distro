@@ -110,7 +110,7 @@ class TestWebChatIndexEndpoint:
 
     def test_index_contains_settings_link(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/")
-        assert "/static/settings.html" in response.text
+        assert "/apps/install-wizard/settings" in response.text
 
     def test_index_contains_message_input(self, webchat_client: TestClient):
         response = webchat_client.get("/apps/web-chat/")

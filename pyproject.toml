@@ -37,6 +37,10 @@ email = [
     "google-api-python-client>=2.100.0",
     "google-auth>=2.20.0",
 ]
+# Development and testing
+dev = [
+    "pytest>=7.0",
+]
 # All optional features
 all = [
     "amplifier-distro[slack,email,amplifier]",
