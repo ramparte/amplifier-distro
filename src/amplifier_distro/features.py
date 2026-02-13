@@ -183,13 +183,22 @@ FEATURES: dict[str, Feature] = {
         ],
         category="search",
     ),
+    "routines": Feature(
+        id="routines",
+        name="Routines",
+        description="Scheduled AI task execution with natural language management",
+        tier=2,
+        includes=["git+https://github.com/microsoft/amplifier-bundle-routines@main"],
+        category="workflow",
+        requires=[],
+    ),
 }
 
 
 TIERS: dict[int, list[str]] = {
     0: [],
     1: ["dev-memory", "deliberate-dev"],
-    2: ["agent-memory", "recipes", "stories", "session-discovery"],
+    2: ["agent-memory", "recipes", "stories", "session-discovery", "routines"],
 }
 
 
