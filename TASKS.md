@@ -64,12 +64,6 @@
   - Added: 2026-02-10
   - Tags: phase-4, containers, cloud, azure
 
-- [ ] **DISTRO-007**: Teams integration
-  - Assigned: @marklicata
-  - Priority: medium
-  - Added: 2026-02-10
-  - Tags: phase-2, teams, surfaces
-
 - [ ] **DISTRO-018**: M365 integration
   - Assigned: @robotdad
   - Priority: medium
@@ -139,4 +133,12 @@
   - Notes: Blocked on amplifier-core PR for handoff hook support.
 
 ## Completed
+
+## Blocked
+
+- [ ] **DISTRO-007**: Teams integration
+  - Assigned: @marklicata
+  - Priority: medium
+  - Added: 2026-02-10
+  - Tags: phase-2, teams, surfaces
 
