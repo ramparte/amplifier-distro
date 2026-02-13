@@ -6,6 +6,7 @@
 __pycache__/
 *.pyc
 .venv/
+build/
 dist/
 *.egg-info/
 
@@ -21,3 +22,11 @@ scripts/overnight-supervisor.sh
 
 # Project management (private team data)
 .amplifier/team.yaml
+
+# OAuth setup artifacts (user-specific credentials)
+gmail_credentials.json
+token.pickle
+oauth_setup.py
+
+# Scratch/notes files
+SCRATCH-*.md
