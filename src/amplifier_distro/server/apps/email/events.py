@@ -68,12 +68,17 @@ class EmailEventHandler:
             response_text = await self._command_handler.handle(
                 command, args, sender.address, message.thread_id
             )
-            await self._send_reply(message, response_text)
+            # Commands may or may not have an associated session
+            mapping = self._session_manager.get_by_thread(message.thread_id)
+            session_id = mapping.session_id if mapping else ""
+            await self._send_reply(message, response_text, session_id=session_id)
             return
 
         # Route to session (get existing or create new)
+        session_id = ""
         try:
             mapping = await self._session_manager.get_or_create_session(message)
+            session_id = mapping.session_id
             response_text = await self._session_manager.send_message(
                 mapping.session_id, body
             )
@@ -88,10 +93,18 @@ class EmailEventHandler:
                 "Please try again or use /amp help for available commands."
             )
 
-        await self._send_reply(message, response_text)
+        await self._send_reply(message, response_text, session_id=session_id)
 
-    async def _send_reply(self, original: EmailMessage, response_text: str) -> None:
-        """Send a reply to an email, splitting if needed."""
+    async def _send_reply(
+        self, original: EmailMessage, response_text: str, session_id: str = ""
+    ) -> None:
+        """Send a reply to an email, splitting if needed.
+
+        Args:
+            original: The original email message being replied to
+            response_text: The response text to send
+            session_id: Optional session ID to include in footer for reply threading
+        """
         sender = original.from_addr
 
         # Split long responses into multiple emails
@@ -102,7 +115,7 @@ class EmailEventHandler:
             if len(chunks) > 1:
                 subject = f"Re: {original.subject} ({i + 1}/{len(chunks)})"
 
-            html = format_response(chunk, self._config)
+            html = format_response(chunk, self._config, session_id=session_id)
             try:
                 await self._client.send_email(
                     to=sender,

@@ -399,6 +399,15 @@ class TestFormatResponse:
         result = format_response("Hi", config)
         assert "Sent by" in result
 
+    def test_includes_session_id_when_provided(self, config: EmailConfig) -> None:
+        result = format_response("Hi", config, session_id="test-session-123")
+        assert "Session: test-session-123" in result
+        assert "Sent by" in result
+
+    def test_no_session_id_when_not_provided(self, config: EmailConfig) -> None:
+        result = format_response("Hi", config)
+        assert "Session:" not in result
+
 
 class TestSplitMessage:
     def test_short_text(self) -> None:

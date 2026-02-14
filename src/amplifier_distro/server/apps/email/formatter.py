@@ -41,15 +41,27 @@ def markdown_to_html(text: str) -> str:
     return text
 
 
-def format_response(text: str, config: EmailConfig) -> str:
-    """Wrap text in an HTML email template with agent footer."""
+def format_response(text: str, config: EmailConfig, session_id: str = "") -> str:
+    """Wrap text in an HTML email template with agent footer.
+
+    Args:
+        text: The message text to format
+        config: Email configuration
+        session_id: Optional session ID to include in footer for reply threading
+    """
     html_body = markdown_to_html(text)
     agent_name = config.agent_name or "Amplifier"
+
+    footer_parts = [f"Sent by {agent_name}"]
+    if session_id:
+        footer_parts.append(f"Session: {session_id}")
+
+    footer = " • ".join(footer_parts)
 
     return (
         "<html><body>"
         f"<div>{html_body}</div>"
-        f"<hr><p><small>Sent by {agent_name}</small></p>"
+        f"<hr><p><small>{footer}</small></p>"
         "</body></html>"
     )
 
