@@ -107,24 +107,6 @@ class SlackConfig(BaseModel):
     bot_name: str = "slackbridge"
 
 
-class EmailConfig(BaseModel):
-    """Email bridge settings (non-secret).
-
-    Secrets (gmail_client_id, gmail_client_secret, gmail_refresh_token)
-    live in keys.yaml per Opinion #11.
-    """
-
-    agent_address: str = ""  # e.g., agent@schillace.com
-    agent_name: str = "Amplifier"
-    send_as: str = ""  # Send-as address (defaults to agent_address)
-    poll_interval_seconds: int = 30
-    max_message_length: int = 50000
-    max_sessions_per_user: int = 10
-    response_timeout: int = 300
-    default_bundle: str | None = None
-    default_working_dir: str = "~"
-
-
 class VoiceConfig(BaseModel):
     """Voice bridge settings for OpenAI Realtime API.
 
@@ -210,7 +192,6 @@ class DistroConfig(BaseModel):
     backup: BackupConfig = Field(default_factory=BackupConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
     kepler: KeplerConfig = Field(default_factory=KeplerConfig)

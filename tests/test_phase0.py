@@ -288,12 +288,11 @@ class TestPreflightChecks:
             "Workspace",
             "Memory store",
             "Amplifier CLI",
-            "Email bridge",
         ]
         for req in required:
             assert req in check_names, f"Missing pre-flight check: {req}"
-        assert len(report.checks) == 9, (
-            f"Expected exactly 9 checks, got {len(report.checks)}: {check_names}"
+        assert len(report.checks) == 8, (
+            f"Expected exactly 8 checks, got {len(report.checks)}: {check_names}"
         )
 
     @patch("amplifier_distro.preflight.shutil.which", return_value=None)

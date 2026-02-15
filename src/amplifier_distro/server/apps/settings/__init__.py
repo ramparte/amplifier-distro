@@ -44,17 +44,6 @@ _BRIDGE_DEFS: dict[str, dict[str, Any]] = {
         "optional_keys": ["SLACK_APP_TOKEN"],
         "setup_url": "/apps/slack/setup/status",
     },
-    "email": {
-        "name": "Email",
-        "description": "Send and receive email through Gmail API",
-        "required_keys": [
-            "GMAIL_CLIENT_ID",
-            "GMAIL_CLIENT_SECRET",
-            "GMAIL_REFRESH_TOKEN",
-        ],
-        "optional_keys": ["EMAIL_AGENT_ADDRESS"],
-        "setup_url": "/apps/email/setup/status",
-    },
     "voice": {
         "name": "Voice",
         "description": "Real-time voice conversations via OpenAI Realtime API",

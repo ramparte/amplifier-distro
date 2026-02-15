@@ -131,38 +131,7 @@ def run_preflight() -> PreflightReport:
             )
         )
 
-    # Check 9: Email bridge (optional - warning only)
-    _check_email_bridge(report)
-
     return report
-
-
-def _check_email_bridge(report: PreflightReport) -> None:
-    """Check email bridge configuration (optional, warning only)."""
-    required = ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"]
-    present = [k for k in required if os.environ.get(k)]
-
-    if len(present) == len(required):
-        report.checks.append(CheckResult("Email bridge", True, "Gmail credentials set"))
-    elif present:
-        missing = [k for k in required if k not in present]
-        report.checks.append(
-            CheckResult(
-                "Email bridge",
-                False,
-                f"Partial config - missing: {', '.join(missing)}",
-                severity="warning",
-            )
-        )
-    else:
-        report.checks.append(
-            CheckResult(
-                "Email bridge",
-                False,
-                "Not configured (optional)",
-                severity="warning",
-            )
-        )
 
 
 def _check_api_key(report: PreflightReport, key_name: str) -> None:
