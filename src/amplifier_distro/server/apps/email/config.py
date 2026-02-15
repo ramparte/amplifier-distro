@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,14 @@ def _str(
     return default
 
 
+def _list_str(config: dict[str, Any], config_key: str) -> list[str]:
+    """Get list of strings from distro.yaml config."""
+    val = config.get(config_key)
+    if isinstance(val, list):
+        return [str(v) for v in val if v]
+    return []
+
+
 def _int(
     env_key: str,
     config: dict[str, Any],
@@ -121,6 +129,9 @@ class EmailConfig:
     default_bundle: str | None = None
     default_working_dir: str = "~"
 
+    # --- Security ---
+    allowed_senders: list[str] = field(default_factory=list)
+
     # --- Mode ---
     simulator_mode: bool = False
 
@@ -156,6 +167,7 @@ class EmailConfig:
             response_timeout=_int(
                 "EMAIL_RESPONSE_TIMEOUT", cfg, "response_timeout", 300
             ),
+            allowed_senders=_list_str(cfg, "allowed_senders"),
         )
 
     @property

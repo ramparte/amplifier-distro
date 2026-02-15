@@ -40,6 +40,7 @@ class EmailEventHandler:
         self._session_manager = session_manager
         self._command_handler = command_handler
         self._config = config
+        self._warned_open_access = False
 
     async def handle_incoming_email(self, message: EmailMessage) -> None:
         """Process an incoming email message."""
@@ -49,6 +50,24 @@ class EmailEventHandler:
         if message.from_addr.address == agent_address:
             logger.debug("Skipping self-sent message: %s", message.message_id)
             return
+
+        # Sender allowlist: only process emails from configured senders
+        allowed = self._config.allowed_senders
+        sender_addr = message.from_addr.address.lower()
+        if allowed:
+            if sender_addr not in [a.lower() for a in allowed]:
+                logger.warning(
+                    "Rejecting email from unauthorized sender %s (message %s)",
+                    sender_addr,
+                    message.message_id,
+                )
+                return
+        elif not self._warned_open_access:
+            logger.warning(
+                "No allowed_senders configured — accepting email from ANY sender. "
+                "Set email.allowed_senders in distro.yaml to restrict access."
+            )
+            self._warned_open_access = True
 
         sender = message.from_addr
         body = message.body_text.strip()
