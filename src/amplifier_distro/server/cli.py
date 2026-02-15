@@ -451,13 +451,14 @@ def _run_foreground(
         logger=logger,
     )
 
+    # Tailscale HTTPS: auto-detect and set up reverse proxy
+    ts_url = _setup_tailscale(port)
+
     click.echo(f"Starting Amplifier Distro Server on {host}:{port}")
-    if host == "0.0.0.0":
-        click.echo(f"  Local:     http://127.0.0.1:{port}")
-        _show_tailscale_url(port)
-    else:
-        click.echo(f"  URL: http://{host}:{port}")
-    click.echo(f"  API docs:  http://{host}:{port}/api/docs")
+    click.echo(f"  Local: http://{host}:{port}")
+    if ts_url:
+        click.echo(f"  HTTPS: {ts_url}  (Tailscale)")
+    click.echo(f"  API docs: http://{host}:{port}/api/docs")
 
     if dev:
         click.echo(
@@ -470,6 +471,7 @@ def _run_foreground(
 
     if reload:
         import os as _os
+
         _os.environ["_AMPLIFIER_DEV_MODE"] = "1" if dev else ""
         if apps_dir:
             _os.environ["_AMPLIFIER_APPS_DIR"] = apps_dir
@@ -503,22 +505,23 @@ def _run_foreground(
         logger.exception("Auto-backup error")
 
 
-def _show_tailscale_url(port: int) -> None:
-    """Show Tailscale URL if available."""
-    import subprocess
+def _setup_tailscale(port: int) -> str | None:
+    """Auto-detect Tailscale and set up HTTPS reverse proxy.
 
-    try:
-        result = subprocess.run(
-            ["tailscale", "ip", "-4"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            ts_ip = result.stdout.strip().split("\n")[0]
-            click.echo(f"  Tailscale: http://{ts_ip}:{port}")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    If Tailscale is connected, runs ``tailscale serve --bg <port>`` so the
+    server is reachable at ``https://<magicDNS>`` with auto-provisioned TLS.
+    Registers atexit cleanup to tear down serve on exit.
+
+    Returns the HTTPS URL on success, or None if Tailscale is unavailable.
+    """
+    import atexit
+
+    from amplifier_distro import tailscale
+
+    url = tailscale.start_serve(port)
+    if url:
+        atexit.register(tailscale.stop_serve)
+    return url
 
 
 def _create_default_config() -> None:

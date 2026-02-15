@@ -234,6 +234,7 @@ class TestSetTier:
             "recipes",
             "stories",
             "session-discovery",
+            "routines",
         }
 
     def test_set_tier_0_adds_nothing(self):
@@ -261,6 +262,7 @@ class TestGetCurrentTier:
             "recipes",
             "stories",
             "session-discovery",
+            "routines",
         ]
         bundle_composer.write("anthropic", all_features)
         assert bundle_composer.get_current_tier() == 2

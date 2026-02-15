@@ -94,13 +94,14 @@ class TestFeatures:
         "recipes",
         "stories",
         "session-discovery",
+        "routines",
     }
 
     def test_has_all_expected_features(self):
         assert set(FEATURES.keys()) == self.EXPECTED_IDS
 
-    def test_count_is_six(self):
-        assert len(FEATURES) == 6
+    def test_count_is_seven(self):
+        assert len(FEATURES) == 7
 
     def test_each_feature_is_feature_type(self):
         for fid, feature in FEATURES.items():
@@ -129,6 +130,7 @@ class TestFeatures:
             "recipes",
             "stories",
             "session-discovery",
+            "routines",
         }
 
 
@@ -162,9 +164,9 @@ class TestFeaturesForTier:
         result = features_for_tier(1)
         assert result == ["dev-memory", "deliberate-dev"]
 
-    def test_tier_2_returns_all_six_features(self):
+    def test_tier_2_returns_all_seven_features(self):
         result = features_for_tier(2)
-        assert len(result) == 6
+        assert len(result) == 7
         assert set(result) == {
             "dev-memory",
             "deliberate-dev",
@@ -172,6 +174,7 @@ class TestFeaturesForTier:
             "recipes",
             "stories",
             "session-discovery",
+            "routines",
         }
 
     def test_tier_2_includes_tier_1(self):
@@ -199,4 +202,5 @@ class TestTiers:
             "recipes",
             "stories",
             "session-discovery",
+            "routines",
         }
