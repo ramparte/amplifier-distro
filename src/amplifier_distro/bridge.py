@@ -885,10 +885,15 @@ class LocalBridge:
 
         prefs = provider_preferences or []
         if not prefs:
-            # Fall back to distro.yaml default provider
+            # Fall back to distro.yaml kepler config
             distro = self._load_distro_config()
-            default = distro.get("default_provider", "anthropic")
-            prefs = [{"provider": default}]
+            kepler = distro.get("kepler", {})
+            default_provider = kepler.get("default_provider", "anthropic")
+            default_model = kepler.get("default_model", "")
+            pref: dict[str, str] = {"provider": default_provider}
+            if default_model:
+                pref["model"] = default_model
+            prefs = [pref]
 
         providers: list[dict[str, Any]] = []
         for i, pref in enumerate(prefs):
