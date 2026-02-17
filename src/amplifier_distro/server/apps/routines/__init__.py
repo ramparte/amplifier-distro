@@ -228,6 +228,7 @@ class SchedulerService:
             working_dir=str(Path.home()),
             bundle_name="routines",
             description=f"Routine execution: {name}",
+            surface="routines",
         )
 
         prompt = (

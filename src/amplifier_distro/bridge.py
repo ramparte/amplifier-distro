@@ -71,6 +71,10 @@ class BridgeConfig:
     display: BridgeDisplaySystem | None = None
     # Streaming callback
     on_stream: Callable[[str, dict[str, Any]], Any] | None = None
+    # Surface identity (e.g., "slack", "web-chat", "routines").
+    # When set, used as project_id for server surfaces so each surface
+    # gets its own handoff namespace. See #22.
+    surface: str = ""
 
 
 @dataclass
@@ -175,11 +179,14 @@ class AmplifierBridge(Protocol):
         """Get the current distro configuration."""
         ...
 
-    def get_project_id(self, working_dir: Path | None = None) -> str:
-        """Derive project ID from working directory.
+    def get_project_id(
+        self, working_dir: Path | None = None, surface: str = ""
+    ) -> str:
+        """Derive project ID from working directory or surface name.
 
         Uses workspace_root from distro.yaml to determine the project
-        slug. E.g., ~/dev/amplifier-distro -> "amplifier-distro"
+        slug. E.g., ~/dev/amplifier-distro -> "amplifier-distro".
+        When *surface* is set, it IS the project identity (#22).
         """
         ...
 
@@ -285,7 +292,7 @@ class LocalBridge:
         bundle_ref = self._resolve_distro_bundle(config.bundle_name)
 
         # 5. Get project ID and check for handoff
-        project_id = self.get_project_id(config.working_dir)
+        project_id = self.get_project_id(config.working_dir, surface=config.surface)
         handoff = await self.get_handoff(project_id)
         inject = list(config.inject_context or [])
         if handoff:
@@ -671,8 +678,16 @@ class LocalBridge:
         """Get distro config as dict."""
         return self._load_distro_config()
 
-    def get_project_id(self, working_dir: Path | None = None) -> str:
-        """Derive project ID from working directory."""
+    def get_project_id(self, working_dir: Path | None = None, surface: str = "") -> str:
+        """Derive project ID from working directory or surface name.
+
+        When *surface* is set (e.g. "slack", "web-chat"), it IS the
+        project identity. This gives each server surface its own handoff
+        namespace so context doesn't bleed between surfaces (#22).
+        """
+        if surface:
+            return surface
+
         cwd = working_dir or Path.cwd()
         distro = self._load_distro_config()
         workspace = Path(distro.get("workspace_root", "~/dev")).expanduser()

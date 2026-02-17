@@ -48,6 +48,7 @@ class SessionBackend(Protocol):
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        surface: str = "",
     ) -> SessionInfo:
         """Create a new Amplifier session. Returns session info."""
         ...
@@ -94,6 +95,7 @@ class MockBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        surface: str = "",
     ) -> SessionInfo:
         self._session_counter += 1
         session_id = f"mock-session-{self._session_counter:04d}"
@@ -177,6 +179,7 @@ class BridgeBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        surface: str = "",
     ) -> SessionInfo:
         from pathlib import Path
 
@@ -186,6 +189,7 @@ class BridgeBackend:
             working_dir=Path(working_dir).expanduser(),
             bundle_name=bundle_name,
             run_preflight=False,  # Server already validated
+            surface=surface,
         )
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
@@ -196,6 +200,7 @@ class BridgeBackend:
             working_dir=str(handle.working_dir),
             is_active=True,
             description=description,
+            created_by_app=surface,
         )
 
     async def send_message(self, session_id: str, message: str) -> str:

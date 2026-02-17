@@ -188,6 +188,7 @@ class SlackSessionManager:
             working_dir=self._config.default_working_dir,
             bundle_name=self._config.default_bundle,
             description=description,
+            surface="slack",
         )
 
         # Determine the conversation key
