@@ -139,6 +139,12 @@ def init() -> None:
         click.echo(f"  '{ws}' doesn't look like a path (should start with /, ~, or .)")
     config.workspace_root = ws
 
+    # Ensure workspace directory exists
+    ws_path = Path(ws).expanduser().resolve()
+    if not ws_path.exists():
+        click.echo(f"  Creating {ws_path}")
+        ws_path.mkdir(parents=True)
+
     # Save
     save_config(config)
     click.echo(f"\nSaved to {path}")
