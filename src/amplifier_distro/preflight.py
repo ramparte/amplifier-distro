@@ -62,7 +62,7 @@ def run_preflight() -> PreflightReport:
                     "GitHub CLI", False, "Not authenticated. Run 'gh auth login'"
                 )
             )
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         report.checks.append(CheckResult("GitHub CLI", False, "gh CLI not installed"))
     except subprocess.TimeoutExpired:
         report.checks.append(

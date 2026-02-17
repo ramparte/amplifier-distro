@@ -1,0 +1,30 @@
+{
+  "name": "Amplifier Distro",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "bash scripts/install.sh",
+  "postStartCommand": "amp-distro-server --dev",
+
+  "forwardPorts": [8400],
+  "portsAttributes": {
+    "8400": {
+      "label": "Amplifier",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

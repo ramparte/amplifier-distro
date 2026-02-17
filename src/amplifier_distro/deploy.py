@@ -219,7 +219,7 @@ def _generate_docker_compose(target: DeployTarget) -> str:
           amplifier:
             build:
               context: .
-              dockerfile: Dockerfile.prod
+              dockerfile: Dockerfile
             ports:
               - "{port}:{port}"
             environment:
