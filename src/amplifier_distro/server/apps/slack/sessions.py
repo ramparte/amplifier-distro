@@ -119,7 +119,9 @@ class SlackSessionManager:
                 }
                 for m in self._mappings.values()
             ]
-            self._persistence_path.write_text(json.dumps(data, indent=2))
+            from amplifier_distro.fileutil import atomic_write
+
+            atomic_write(self._persistence_path, json.dumps(data, indent=2))
         except OSError:
             logger.warning("Failed to save session mappings", exc_info=True)
 

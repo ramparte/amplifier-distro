@@ -48,9 +48,11 @@ def save_config(config: DistroConfig) -> None:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    from amplifier_distro.fileutil import atomic_write
+
     data = config.model_dump()
     text = yaml.dump(data, default_flow_style=False, sort_keys=False)
-    path.write_text(text)
+    atomic_write(path, text)
 
 
 def detect_github_identity() -> tuple[str, str]:
