@@ -22,13 +22,14 @@ here exists so you don't have to make it.
 
 ## Install
 
-
 ### General installation (for most users just wanting to try things out)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/scripts/install.sh | bash
 amp-distro init
 ```
+
+This will install [uv](https://astral.sh/uv/) if you don't have it already, and use it to install all the Amplifier components to your system.
 
 ### Developer
 
@@ -37,6 +38,8 @@ git clone https://github.com/ramparte/amplifier-distro && cd amplifier-distro
 bash scripts/install.sh
 source .venv/bin/activate
 ```
+
+This will clone the Amplifier distro files locally and install components in "editable" mode, which is handy if you want to modify them.
 
 ### GitHub Codespace
 
@@ -48,7 +51,7 @@ Opens a browser-based environment with everything installed.
 
 ```bash
 docker build -t amplifier-distro .
-docker run -p 8400:8400 amplifier-distro # runs the web server
+docker run -p 8400:8400 amplifier-distro # runs the web server, for example
 ```
 
 ## Usage
