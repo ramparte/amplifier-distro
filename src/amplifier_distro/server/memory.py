@@ -233,7 +233,9 @@ class MemoryService:
         """Save the memory store to disk."""
         self._ensure_dir()
         data = {"memories": [m.model_dump() for m in store.memories]}
-        self._store_path.write_text(yaml.dump(data, default_flow_style=False))
+        from amplifier_distro.fileutil import atomic_write
+
+        atomic_write(self._store_path, yaml.dump(data, default_flow_style=False))
 
     def _load_work_log(self) -> WorkLog:
         """Load the work log from disk."""
@@ -250,7 +252,9 @@ class MemoryService:
         """Save the work log to disk."""
         self._ensure_dir()
         data = {"items": [item.model_dump() for item in log.items]}
-        self._work_log_path.write_text(yaml.dump(data, default_flow_style=False))
+        from amplifier_distro.fileutil import atomic_write
+
+        atomic_write(self._work_log_path, yaml.dump(data, default_flow_style=False))
 
     def _next_id(self, store: MemoryStore) -> str:
         """Generate the next memory ID (mem-001, mem-002, etc.)."""
