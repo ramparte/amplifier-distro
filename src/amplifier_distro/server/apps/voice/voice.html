@@ -202,19 +202,85 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ------------------------------------------------------------------ */
-/*  Transcript                                                         */
+/*  Toggle Switch                                                      */
 /* ------------------------------------------------------------------ */
-.transcript-section {
-  margin-top: 24px;
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
-.transcript-label {
+.toggle-row .toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-row .spacer {
+  flex: 1;
+}
+
+.toggle-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Transcript                                                         */
+/* ------------------------------------------------------------------ */
+.transcript-section {
+  margin-top: 24px;
 }
 
 .transcript {
@@ -258,6 +324,11 @@ body {
 
 .transcript .entry .text {
   color: var(--text-primary);
+}
+
+.transcript .entry .text.placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 /* ------------------------------------------------------------------ */
@@ -322,8 +393,26 @@ audio { display: none; }
   <div id="feedback"></div>
 
   <div class="transcript-section">
-    <div class="transcript-label">Transcript</div>
-    <div class="transcript" id="transcript"></div>
+    <div class="toggle-row">
+      <div class="toggle-group">
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleTranscript" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label" onclick="document.getElementById('toggleTranscript').click()">Show transcript</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="toggle-group" id="userMessagesGroup">
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleUserMessages">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label" onclick="document.getElementById('toggleUserMessages').click()">Show your messages</span>
+      </div>
+    </div>
+    <div id="transcriptPanel">
+      <div class="transcript" id="transcript"></div>
+    </div>
   </div>
 
   <hr class="divider">
@@ -348,6 +437,10 @@ const voiceBtn = document.getElementById('voiceBtn');
 const feedback = document.getElementById('feedback');
 const transcript = document.getElementById('transcript');
 const remoteAudio = document.getElementById('remoteAudio');
+const toggleTranscript = document.getElementById('toggleTranscript');
+const toggleUserMessages = document.getElementById('toggleUserMessages');
+const transcriptPanel = document.getElementById('transcriptPanel');
+const userMessagesGroup = document.getElementById('userMessagesGroup');
 
 // Base path for API calls (works when mounted at /apps/voice/)
 const BASE = window.location.pathname.replace(/\/$/, '');
@@ -356,6 +449,21 @@ let peerConnection = null;
 let localStream = null;
 let dataChannel = null;
 let isConnected = false;
+
+/* ------------------------------------------------------------------ */
+/*  Transcript toggle handlers                                         */
+/* ------------------------------------------------------------------ */
+toggleTranscript.addEventListener('change', function() {
+  transcriptPanel.style.display = this.checked ? '' : 'none';
+  userMessagesGroup.style.display = this.checked ? '' : 'none';
+});
+
+toggleUserMessages.addEventListener('change', function() {
+  const show = this.checked;
+  transcript.querySelectorAll('.entry[data-role="user"]').forEach(function(el) {
+    el.style.display = show ? '' : 'none';
+  });
+});
 
 /* ------------------------------------------------------------------ */
 /*  Status check on load                                               */
@@ -560,9 +668,9 @@ function handleDataChannelMessage(raw) {
     const msg = JSON.parse(raw);
     const type = msg.type || '';
 
-    // User speech transcript
+    // User speech transcript (fills the placeholder created on speech_started)
     if (type === 'conversation.item.input_audio_transcription.completed') {
-      addTranscript('user', msg.transcript || '');
+      fillUserPlaceholder(msg.transcript || '');
       micRing.className = 'mic-ring active';
     }
 
@@ -576,9 +684,10 @@ function handleDataChannelMessage(raw) {
       finalizeAssistantEntry();
     }
 
-    // Visual feedback: user is speaking
+    // Visual feedback: user is speaking + create placeholder for transcript
     if (type === 'input_audio_buffer.speech_started') {
       micRing.className = 'mic-ring listening';
+      createUserPlaceholder();
     }
 
     if (type === 'input_audio_buffer.speech_stopped') {
@@ -601,13 +710,54 @@ function handleDataChannelMessage(raw) {
 /*  Transcript helpers                                                 */
 /* ------------------------------------------------------------------ */
 let currentAssistantEntry = null;
+let pendingUserEntry = null;
+
+function createUserPlaceholder() {
+  // Reserve a slot now so the user message appears above the assistant reply
+  pendingUserEntry = document.createElement('div');
+  pendingUserEntry.className = 'entry';
+  pendingUserEntry.setAttribute('data-role', 'user');
+  pendingUserEntry.innerHTML = '<div class="role user">you</div>'
+    + '<div class="text placeholder">...</div>';
+  if (!toggleUserMessages.checked) {
+    pendingUserEntry.style.display = 'none';
+  }
+  transcript.appendChild(pendingUserEntry);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function fillUserPlaceholder(text) {
+  if (!text.trim()) {
+    // Empty transcript - remove the placeholder
+    if (pendingUserEntry) {
+      pendingUserEntry.remove();
+      pendingUserEntry = null;
+    }
+    return;
+  }
+  if (pendingUserEntry) {
+    // Fill the existing placeholder
+    var textEl = pendingUserEntry.querySelector('.text');
+    textEl.textContent = text;
+    textEl.classList.remove('placeholder');
+    pendingUserEntry = null;
+  } else {
+    // No placeholder (edge case) - append normally
+    addTranscript('user', text);
+  }
+  transcript.scrollTop = transcript.scrollHeight;
+}
 
 function addTranscript(role, text) {
   if (!text.trim()) return;
   const entry = document.createElement('div');
   entry.className = 'entry';
+  entry.setAttribute('data-role', role);
   entry.innerHTML = '<div class="role ' + role + '">' + role + '</div>'
     + '<div class="text">' + esc(text) + '</div>';
+  if (role === 'user' && !toggleUserMessages.checked) {
+    entry.style.display = 'none';
+  }
   transcript.appendChild(entry);
   transcript.scrollTop = transcript.scrollHeight;
   currentAssistantEntry = null;
@@ -617,6 +767,7 @@ function appendAssistantDelta(delta) {
   if (!currentAssistantEntry) {
     currentAssistantEntry = document.createElement('div');
     currentAssistantEntry.className = 'entry';
+    currentAssistantEntry.setAttribute('data-role', 'assistant');
     currentAssistantEntry.innerHTML = '<div class="role assistant">assistant</div>'
       + '<div class="text"></div>';
     transcript.appendChild(currentAssistantEntry);
