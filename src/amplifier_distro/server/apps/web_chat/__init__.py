@@ -211,6 +211,7 @@ async def create_session(request: Request) -> JSONResponse:
             info = await backend.create_session(
                 working_dir=body.get("working_dir", "~"),
                 description=body.get("description", "Web chat session"),
+                surface="web-chat",
             )
             _active_session_id = info.session_id
 

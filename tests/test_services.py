@@ -232,6 +232,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         # Mock handle that run() returns a response
         mock_handle = MagicMock()
@@ -274,15 +277,19 @@ class TestBridgeBackendReconnectLock:
         """Normal send_message with cached handle doesn't touch locks."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import BridgeBackend, SessionMeta
 
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         mock_handle = MagicMock()
         mock_handle.run = AsyncMock(return_value="cached response")
 
         backend._sessions = {"sess-456": mock_handle}
+        backend._meta["sess-456"] = SessionMeta(created_by_surface="test")
         backend._bridge = MagicMock()
 
         result = await backend.send_message("sess-456", "hi")
@@ -304,6 +311,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         handles = {}
         resume_count = 0
@@ -343,6 +353,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         mock_handle = MagicMock()
         mock_handle.session_id = "sess-cleanup"
@@ -368,6 +381,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         backend._bridge = MagicMock()
         backend._bridge.resume_session = AsyncMock(
@@ -390,6 +406,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
 
         call_count = 0
 
@@ -417,3 +436,224 @@ class TestBridgeBackendReconnectLock:
         result = await backend.send_message("sess-retry", "attempt 2")
         assert result == "recovered"
         assert call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# SessionMeta and session lifecycle tests (#21, #24)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionMeta:
+    """Verify SessionMeta lifecycle tracking."""
+
+    def test_meta_tracks_creation_time(self):
+        from amplifier_distro.server.session_backend import SessionMeta
+
+        meta = SessionMeta(created_by_surface="slack")
+        assert meta.created_by_surface == "slack"
+        assert meta.created_at > 0
+        assert meta.last_active > 0
+        assert meta.idle_seconds >= 0
+
+    def test_touch_updates_last_active(self):
+        import time
+
+        from amplifier_distro.server.session_backend import SessionMeta
+
+        meta = SessionMeta()
+        old_active = meta.last_active
+        time.sleep(0.05)
+        meta.touch()
+        assert meta.last_active > old_active
+
+    def test_idle_seconds_increases(self):
+        import time
+
+        from amplifier_distro.server.session_backend import SessionMeta
+
+        meta = SessionMeta()
+        time.sleep(0.05)
+        assert meta.idle_seconds >= 0.04
+
+
+class TestBridgeBackendSessionCap:
+    """Verify global session cap enforcement (#21)."""
+
+    @pytest.mark.asyncio
+    async def test_cap_rejects_when_full(self):
+        """Creating a session beyond the cap raises RuntimeError."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 2
+        backend._idle_timeout = 3600
+        backend._bridge = MagicMock()
+
+        # Fill the pool with fake sessions
+        for i in range(2):
+            sid = f"sess-{i}"
+            backend._sessions[sid] = MagicMock()
+            from amplifier_distro.server.session_backend import SessionMeta
+
+            backend._meta[sid] = SessionMeta(created_by_surface="test")
+            # Make them recently active (not idle)
+            backend._meta[sid].touch()
+
+        with pytest.raises(RuntimeError, match="Session limit reached"):
+            await backend.create_session(working_dir="~", description="overflow")
+
+    @pytest.mark.asyncio
+    async def test_cap_evicts_idle_before_rejecting(self):
+        """When cap is hit, idle sessions are evicted to make room."""
+        import time
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend, SessionMeta
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 2
+        backend._idle_timeout = 0.01  # 10ms timeout for testing
+        backend._bridge = MagicMock()
+
+        # Fill pool with sessions that will be idle
+        for i in range(2):
+            sid = f"sess-{i}"
+            backend._sessions[sid] = MagicMock()
+            backend._meta[sid] = SessionMeta(created_by_surface="test")
+
+        # Wait for them to become idle
+        time.sleep(0.02)
+
+        # Mock the bridge.create_session for the new session
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-new"
+        mock_handle.project_id = "test"
+        mock_handle.working_dir = "~"
+        backend._bridge.create_session = AsyncMock(return_value=mock_handle)
+
+        info = await backend.create_session(working_dir="~", description="new")
+        assert info.session_id == "sess-new"
+        # Old sessions should have been evicted
+        assert "sess-0" not in backend._sessions
+        assert "sess-1" not in backend._sessions
+
+
+class TestBridgeBackendMetadata:
+    """Verify session metadata tracking (#24)."""
+
+    @pytest.mark.asyncio
+    async def test_create_session_tracks_surface(self):
+        """create_session stores surface name in metadata."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
+        backend._bridge = MagicMock()
+
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-meta"
+        mock_handle.project_id = "test"
+        mock_handle.working_dir = "~"
+        backend._bridge.create_session = AsyncMock(return_value=mock_handle)
+
+        info = await backend.create_session(
+            working_dir="~", description="test", surface="slack"
+        )
+        assert info.created_by_app == "slack"
+        assert "sess-meta" in backend._meta
+        assert backend._meta["sess-meta"].created_by_surface == "slack"
+
+    @pytest.mark.asyncio
+    async def test_send_message_updates_last_active(self):
+        """send_message touches the session metadata."""
+        import time
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend, SessionMeta
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
+        backend._bridge = MagicMock()
+
+        mock_handle = MagicMock()
+        mock_handle.run = AsyncMock(return_value="reply")
+        backend._sessions["sess-active"] = mock_handle
+        backend._meta["sess-active"] = SessionMeta(created_by_surface="web")
+
+        old_active = backend._meta["sess-active"].last_active
+        time.sleep(0.05)
+
+        await backend.send_message("sess-active", "ping")
+
+        assert backend._meta["sess-active"].last_active > old_active
+
+    @pytest.mark.asyncio
+    async def test_end_session_cleans_up_metadata(self):
+        """end_session removes the metadata entry."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend, SessionMeta
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
+        backend._bridge = MagicMock()
+        backend._bridge.end_session = AsyncMock()
+
+        mock_handle = MagicMock()
+        backend._sessions["sess-end"] = mock_handle
+        backend._meta["sess-end"] = SessionMeta(created_by_surface="email")
+
+        await backend.end_session("sess-end")
+
+        assert "sess-end" not in backend._sessions
+        assert "sess-end" not in backend._meta
+
+    @pytest.mark.asyncio
+    async def test_list_active_sessions_includes_metadata(self):
+        """list_active_sessions returns metadata fields."""
+        from unittest.mock import MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend, SessionMeta
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+        backend._meta = {}
+        backend._max_sessions = 50
+        backend._idle_timeout = 3600
+        backend._bridge = MagicMock()
+
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-list"
+        mock_handle.project_id = "proj"
+        mock_handle.working_dir = "~"
+        backend._sessions["sess-list"] = mock_handle
+        backend._meta["sess-list"] = SessionMeta(created_by_surface="slack")
+
+        sessions = backend.list_active_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].created_by_app == "slack"
+        assert sessions[0].created_at > 0
+        assert sessions[0].idle_seconds >= 0

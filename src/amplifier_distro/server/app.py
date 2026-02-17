@@ -499,6 +499,7 @@ class DistroServer:
                     working_dir=body.get("working_dir", "."),
                     bundle_name=body.get("bundle_name"),
                     description=body.get("description", ""),
+                    surface="api",
                 )
                 return JSONResponse(
                     content={
@@ -648,6 +649,7 @@ class DistroServer:
             if phase == "unconfigured":
                 return RedirectResponse(url="/apps/install-wizard/")
             return HTMLResponse(content=_landing_page.read_text())
+
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.
