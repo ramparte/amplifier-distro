@@ -43,6 +43,12 @@ from amplifier_distro.conventions import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of transcript messages to replay on session resume.
+# Bounds memory usage and prevents overflowing the LLM context window.
+# Empirical testing: 100 messages from a tool-heavy session can reach
+# ~103K tokens, which fills a 128K model. 50 is a safer default.
+_MAX_RESUME_MESSAGES = 50
+
 
 def _encode_cwd(working_dir: Path) -> str:
     """Encode working directory to project directory name.
@@ -495,19 +501,60 @@ class LocalBridge:
             )
 
         # 8. Load previous transcript and inject as context
+        #
+        # Fixes applied (issues #23, #25):
+        #  - Stream file line-by-line instead of read_text() to avoid
+        #    loading multi-MB transcripts into memory at once.
+        #  - Keep only the last MAX_RESUME_MESSAGES to bound memory and
+        #    avoid overflowing the LLM context window.
+        #  - Preserve full message structure (tool_calls, tool_call_id,
+        #    name) instead of only role+content, so the resumed session
+        #    remembers what was *done*, not just what was *said*.
         transcript_file = session_dir / TRANSCRIPT_FILENAME
         if transcript_file.exists():
             try:
-                messages = []
-                for line in transcript_file.read_text().splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = json.loads(line)
-                    role = entry.get("role", "user")
-                    content = entry.get("content", "")
-                    if content:
-                        messages.append({"role": role, "content": content})
+                messages: list[dict[str, Any]] = []
+                with transcript_file.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            # Skip malformed lines (e.g. truncated by crash)
+                            logger.debug("Skipping malformed transcript line")
+                            continue
+                        # Preserve all fields the LLM API accepts
+                        msg: dict[str, Any] = {}
+                        for key in (
+                            "role",
+                            "content",
+                            "tool_calls",
+                            "tool_call_id",
+                            "name",
+                        ):
+                            if key in entry:
+                                msg[key] = entry[key]
+                        if msg.get("role"):
+                            messages.append(msg)
+
+                # Keep only the tail to bound memory and context size
+                max_messages = _MAX_RESUME_MESSAGES
+                if len(messages) > max_messages:
+                    logger.info(
+                        "Transcript has %d messages; truncating to last %d",
+                        len(messages),
+                        max_messages,
+                    )
+                    messages = messages[-max_messages:]
+
+                # Ensure window doesn't start with orphaned tool results
+                # (from slicing mid-tool-call sequence). Orphaned tool
+                # messages without a preceding assistant+tool_calls cause
+                # provider API validation errors (400).
+                while messages and messages[0].get("role") == "tool":
+                    messages.pop(0)
 
                 if messages:
                     try:
