@@ -36,7 +36,7 @@ def get_dns_name() -> str | None:
         dns = data.get("Self", {}).get("DNSName", "").rstrip(".")
         return dns or None
 
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired, json.JSONDecodeError):
         return None
 
 

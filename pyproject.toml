@@ -55,6 +55,9 @@ amp-distro-server = "amplifier_distro.server.cli:serve"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+amplifier_distro = ["**/*.html"]
+
 # ── Code Quality ────────────────────────────────────────────
 [tool.ruff]
 target-version = "py311"
