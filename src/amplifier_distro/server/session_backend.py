@@ -14,6 +14,7 @@ server level so all apps share a single session pool.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -171,6 +172,7 @@ class BridgeBackend:
 
         self._bridge = LocalBridge()
         self._sessions: dict[str, Any] = {}  # session_id -> SessionHandle
+        self._reconnect_locks: dict[str, asyncio.Lock] = {}
 
     async def create_session(
         self,
@@ -201,8 +203,19 @@ class BridgeBackend:
     async def send_message(self, session_id: str, message: str) -> str:
         handle = self._sessions.get(session_id)
         if handle is None:
-            # Session handle lost (server restart). Try to reconnect.
-            handle = await self._reconnect(session_id)
+            # Session handle lost (server restart). Use per-session lock
+            # to prevent concurrent reconnects for the same session_id.
+            lock = self._reconnect_locks.setdefault(session_id, asyncio.Lock())
+            try:
+                async with lock:
+                    # Double-check: another coroutine may have reconnected
+                    # while we waited for the lock.
+                    handle = self._sessions.get(session_id)
+                    if handle is None:
+                        handle = await self._reconnect(session_id)
+            finally:
+                # Clean up lock entry on both success and failure paths
+                self._reconnect_locks.pop(session_id, None)
         return await handle.run(message)
 
     async def _reconnect(self, session_id: str) -> Any:

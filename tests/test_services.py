@@ -206,3 +206,214 @@ class TestMockBackendOperations:
         assert history[0]["role"] == "user"
         assert history[0]["content"] == "first"
         assert history[1]["role"] == "assistant"
+
+
+# ---------------------------------------------------------------------------
+# BridgeBackend reconnect lock tests (#20)
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeBackendReconnectLock:
+    """Verify that concurrent reconnects for the same session are serialized.
+
+    Uses a mock bridge to track how many times resume_session is called.
+    Two concurrent send_message calls for a missing session should trigger
+    exactly ONE resume, not two.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reconnect_calls_resume_once(self):
+        """Two concurrent send_message to missing session = one reconnect."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+
+        # Mock handle that run() returns a response
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-123"
+        mock_handle.project_id = "test"
+        mock_handle.working_dir = "~"
+        mock_handle.run = AsyncMock(return_value="response")
+
+        # Track resume calls
+        resume_count = 0
+
+        async def fake_resume(session_id, config=None):
+            nonlocal resume_count
+            resume_count += 1
+            # Simulate slow resume (bundle load + transcript replay)
+            await asyncio.sleep(0.1)
+            return mock_handle
+
+        backend._bridge = MagicMock()
+        backend._bridge.resume_session = AsyncMock(side_effect=fake_resume)
+
+        # Fire two concurrent send_message calls
+        results = await asyncio.gather(
+            backend.send_message("sess-123", "hello"),
+            backend.send_message("sess-123", "world"),
+        )
+
+        # Both should succeed
+        assert results[0] == "response"
+        assert results[1] == "response"
+
+        # But resume should only be called ONCE
+        assert resume_count == 1, (
+            f"Expected 1 reconnect, got {resume_count}. "
+            "The per-session lock should prevent duplicate reconnects."
+        )
+
+    @pytest.mark.asyncio
+    async def test_cached_session_bypasses_lock(self):
+        """Normal send_message with cached handle doesn't touch locks."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._reconnect_locks = {}
+
+        mock_handle = MagicMock()
+        mock_handle.run = AsyncMock(return_value="cached response")
+
+        backend._sessions = {"sess-456": mock_handle}
+        backend._bridge = MagicMock()
+
+        result = await backend.send_message("sess-456", "hi")
+        assert result == "cached response"
+
+        # Bridge should never be called (no reconnect needed)
+        backend._bridge.resume_session.assert_not_called()
+        # No locks should have been created
+        assert len(backend._reconnect_locks) == 0
+
+    @pytest.mark.asyncio
+    async def test_different_sessions_reconnect_independently(self):
+        """Two different missing sessions reconnect in parallel (no blocking)."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+
+        handles = {}
+        resume_count = 0
+
+        async def fake_resume(session_id, config=None):
+            nonlocal resume_count
+            resume_count += 1
+            await asyncio.sleep(0.05)
+            h = MagicMock()
+            h.session_id = session_id
+            h.project_id = "test"
+            h.working_dir = "~"
+            h.run = AsyncMock(return_value=f"response-{session_id}")
+            handles[session_id] = h
+            return h
+
+        backend._bridge = MagicMock()
+        backend._bridge.resume_session = AsyncMock(side_effect=fake_resume)
+
+        results = await asyncio.gather(
+            backend.send_message("sess-A", "hello"),
+            backend.send_message("sess-B", "world"),
+        )
+
+        assert results[0] == "response-sess-A"
+        assert results[1] == "response-sess-B"
+        # Both sessions should reconnect (different session IDs)
+        assert resume_count == 2
+
+    @pytest.mark.asyncio
+    async def test_lock_cleaned_up_after_successful_reconnect(self):
+        """Lock entry is removed after successful reconnect."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-cleanup"
+        mock_handle.project_id = "test"
+        mock_handle.working_dir = "~"
+        mock_handle.run = AsyncMock(return_value="ok")
+
+        backend._bridge = MagicMock()
+        backend._bridge.resume_session = AsyncMock(return_value=mock_handle)
+
+        await backend.send_message("sess-cleanup", "hi")
+
+        # Lock should be cleaned up after successful reconnect
+        assert "sess-cleanup" not in backend._reconnect_locks
+
+    @pytest.mark.asyncio
+    async def test_reconnect_failure_cleans_up_lock(self):
+        """Lock entry is removed even when reconnect fails."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+
+        backend._bridge = MagicMock()
+        backend._bridge.resume_session = AsyncMock(
+            side_effect=FileNotFoundError("session dir gone")
+        )
+
+        with pytest.raises(ValueError, match="Unknown session"):
+            await backend.send_message("sess-gone", "hello")
+
+        # Lock should be cleaned up even on failure
+        assert "sess-gone" not in backend._reconnect_locks
+
+    @pytest.mark.asyncio
+    async def test_reconnect_failure_does_not_deadlock_retry(self):
+        """After failed reconnect, a retry can proceed (not deadlocked)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        backend = BridgeBackend.__new__(BridgeBackend)
+        backend._sessions = {}
+        backend._reconnect_locks = {}
+
+        call_count = 0
+
+        mock_handle = MagicMock()
+        mock_handle.session_id = "sess-retry"
+        mock_handle.project_id = "test"
+        mock_handle.working_dir = "~"
+        mock_handle.run = AsyncMock(return_value="recovered")
+
+        async def fail_then_succeed(session_id, config=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("bridge temporarily down")
+            return mock_handle
+
+        backend._bridge = MagicMock()
+        backend._bridge.resume_session = AsyncMock(side_effect=fail_then_succeed)
+
+        # First call fails
+        with pytest.raises(ValueError):
+            await backend.send_message("sess-retry", "attempt 1")
+
+        # Second call should succeed (not deadlocked by stale lock)
+        result = await backend.send_message("sess-retry", "attempt 2")
+        assert result == "recovered"
+        assert call_count == 2
