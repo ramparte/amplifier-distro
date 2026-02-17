@@ -202,19 +202,80 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ------------------------------------------------------------------ */
-/*  Transcript                                                         */
+/*  Toggle Switch                                                      */
 /* ------------------------------------------------------------------ */
-.transcript-section {
-  margin-top: 24px;
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
-.transcript-label {
+.toggle-row.sub {
+  margin-left: 20px;
+  margin-bottom: 12px;
+}
+
+.toggle-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Transcript                                                         */
+/* ------------------------------------------------------------------ */
+.transcript-section {
+  margin-top: 24px;
 }
 
 .transcript {
@@ -322,8 +383,23 @@ audio { display: none; }
   <div id="feedback"></div>
 
   <div class="transcript-section">
-    <div class="transcript-label">Transcript</div>
-    <div class="transcript" id="transcript"></div>
+    <div class="toggle-row">
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggleTranscript" checked>
+        <span class="toggle-slider"></span>
+      </label>
+      <span class="toggle-label" onclick="document.getElementById('toggleTranscript').click()">Transcript</span>
+    </div>
+    <div id="transcriptPanel">
+      <div class="toggle-row sub">
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleUserMessages">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="toggle-label" onclick="document.getElementById('toggleUserMessages').click()">Show user messages</span>
+      </div>
+      <div class="transcript" id="transcript"></div>
+    </div>
   </div>
 
   <hr class="divider">
@@ -348,6 +424,9 @@ const voiceBtn = document.getElementById('voiceBtn');
 const feedback = document.getElementById('feedback');
 const transcript = document.getElementById('transcript');
 const remoteAudio = document.getElementById('remoteAudio');
+const toggleTranscript = document.getElementById('toggleTranscript');
+const toggleUserMessages = document.getElementById('toggleUserMessages');
+const transcriptPanel = document.getElementById('transcriptPanel');
 
 // Base path for API calls (works when mounted at /apps/voice/)
 const BASE = window.location.pathname.replace(/\/$/, '');
@@ -356,6 +435,20 @@ let peerConnection = null;
 let localStream = null;
 let dataChannel = null;
 let isConnected = false;
+
+/* ------------------------------------------------------------------ */
+/*  Transcript toggle handlers                                         */
+/* ------------------------------------------------------------------ */
+toggleTranscript.addEventListener('change', function() {
+  transcriptPanel.style.display = this.checked ? '' : 'none';
+});
+
+toggleUserMessages.addEventListener('change', function() {
+  const show = this.checked;
+  transcript.querySelectorAll('.entry[data-role="user"]').forEach(function(el) {
+    el.style.display = show ? '' : 'none';
+  });
+});
 
 /* ------------------------------------------------------------------ */
 /*  Status check on load                                               */
@@ -606,8 +699,12 @@ function addTranscript(role, text) {
   if (!text.trim()) return;
   const entry = document.createElement('div');
   entry.className = 'entry';
+  entry.setAttribute('data-role', role);
   entry.innerHTML = '<div class="role ' + role + '">' + role + '</div>'
     + '<div class="text">' + esc(text) + '</div>';
+  if (role === 'user' && !toggleUserMessages.checked) {
+    entry.style.display = 'none';
+  }
   transcript.appendChild(entry);
   transcript.scrollTop = transcript.scrollHeight;
   currentAssistantEntry = null;
@@ -617,6 +714,7 @@ function appendAssistantDelta(delta) {
   if (!currentAssistantEntry) {
     currentAssistantEntry = document.createElement('div');
     currentAssistantEntry.className = 'entry';
+    currentAssistantEntry.setAttribute('data-role', 'assistant');
     currentAssistantEntry.innerHTML = '<div class="role assistant">assistant</div>'
       + '<div class="text"></div>';
     transcript.appendChild(currentAssistantEntry);

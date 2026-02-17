@@ -216,6 +216,7 @@ async def create_session() -> JSONResponse:
         "voice": vcfg["voice"],
         "modalities": ["audio", "text"],
         "instructions": instructions,
+        "input_audio_transcription": {"model": "whisper-1"},
     }
 
     if vcfg["tools_enabled"]:
