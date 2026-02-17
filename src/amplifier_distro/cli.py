@@ -19,7 +19,7 @@ from .config import (
 from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
-from .schema import DistroConfig, IdentityConfig, looks_like_path
+from .schema import DistroConfig, IdentityConfig, looks_like_path, normalize_path
 from .update_check import check_for_updates, get_version_info, run_self_update
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,12 @@ def init() -> None:
             break
         click.echo(f"  '{ws}' doesn't look like a path (should start with /, ~, or .)")
     config.workspace_root = ws
+
+    # Ensure workspace directory exists
+    ws_path = Path(normalize_path(ws)).resolve()
+    if not ws_path.exists():
+        click.echo(f"  Creating {ws_path}")
+    ws_path.mkdir(parents=True, exist_ok=True)
 
     # Save
     save_config(config)
