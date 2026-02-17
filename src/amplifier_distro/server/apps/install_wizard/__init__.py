@@ -62,29 +62,47 @@ def _distro_config_path() -> Path:
     return _amplifier_home() / DISTRO_CONFIG_FILENAME
 
 
-def _write_settings(bundle_path: Path) -> None:
-    """Write ~/.amplifier/settings.yaml pointing to the generated bundle."""
-    settings = {
-        "bundle": {
-            "active": bundle_composer.BUNDLE_NAME,
-            "added": [str(bundle_path)],
-        }
-    }
+def _write_settings(bundle_path: Path) -> dict[str, str]:
+    """Update bundle in ~/.amplifier/settings.yaml (idempotent).
+
+    Loads existing settings if present, preserving all fields.
+    Only updates bundle.active and bundle.added.
+
+    Returns a note dict: {"note": "..."} if existing settings were
+    preserved, empty dict otherwise.
+    """
     path = _settings_path()
+    existing: dict = {}
+    if path.exists():
+        existing = yaml.safe_load(path.read_text()) or {}
+
+    bundle_data = existing.get("bundle", {})
+    bundle_data["active"] = bundle_composer.BUNDLE_NAME
+    added = bundle_data.get("added", [])
+    bp_str = str(bundle_path)
+    if bp_str not in added:
+        added.append(bp_str)
+    bundle_data["added"] = added
+    existing["bundle"] = bundle_data
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.dump(settings, default_flow_style=False, sort_keys=False))
+    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False))
+
+    if len(existing) > 1:  # had keys beyond "bundle"
+        return {"note": "Active bundle updated; existing settings preserved."}
+    return {}
 
 
 def _write_distro_config() -> None:
-    """Write ~/.amplifier/distro.yaml with permissive defaults."""
-    config = {
-        "workspace_root": str(Path.home() / "dev"),
-        "cache": {"max_age_hours": 168},
-        "identity": {},
-    }
-    path = _distro_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+    """Ensure ~/.amplifier/distro.yaml exists (idempotent).
+
+    Loads existing config if present, preserving all fields.
+    Creates with defaults if missing.
+    """
+    from amplifier_distro.config import load_config, save_config
+
+    config = load_config()
+    save_config(config)
 
 
 # --- HTML Pages ---
@@ -237,17 +255,19 @@ async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
     # Step 4: Generate Tier 0 bundle
     bp = bundle_composer.write(provider_id)
 
-    # Step 5: Write settings.yaml
-    _write_settings(bp)
+    # Step 5: Write settings.yaml (preserves existing keys)
+    note = _write_settings(bp)
 
-    # Step 6: Write distro.yaml
+    # Step 6: Ensure distro.yaml exists
     _write_distro_config()
 
-    return {
+    result = {
         "status": "ready",
         "provider": provider_id,
         "model": provider.default_model,
     }
+    result.update(note)
+    return result
 
 
 manifest = AppManifest(
