@@ -22,26 +22,12 @@ here exists so you don't have to make it.
 
 ## Install
 
-### One-click (GitHub Codespaces)
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=ramparte/amplifier-distro)
-
-Opens a browser-based environment with everything installed. The web UI launches automatically at port 8400.
-
-### Local install
+### General installation (for most users just wanting to try things out)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/scripts/install.sh | bash
 amp-distro init
-amp-distro-server
-```
-
-Then open http://localhost:8400. Requires Python 3.11+; the script installs [uv](https://docs.astral.sh/uv/) if needed.
-
-### Docker
-
-```bash
-docker run -p 8400:8400 ghcr.io/ramparte/amplifier-distro
 ```
 
 ### Developer
@@ -50,7 +36,19 @@ docker run -p 8400:8400 ghcr.io/ramparte/amplifier-distro
 git clone https://github.com/ramparte/amplifier-distro && cd amplifier-distro
 bash scripts/install.sh
 source .venv/bin/activate
-amp-distro-server --dev
+```
+
+### GitHub Codespace
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=ramparte/amplifier-distro)
+
+Opens a browser-based environment with everything installed.
+
+### Docker (for isolated testing)
+
+```bash
+docker build -t amplifier-distro .
+docker run -p 8400:8400 amplifier-distro # runs the web server
 ```
 
 ## Usage
