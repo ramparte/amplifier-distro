@@ -85,7 +85,7 @@ class TestDistroYamlSchema:
 
     def test_default_bundle_config(self):
         config = DistroConfig()
-        assert config.bundle.active == "my-amplifier"
+        assert config.bundle.active is None
         assert config.bundle.validate_on_start is True
         assert config.bundle.strict is True
 
