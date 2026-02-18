@@ -42,18 +42,28 @@ install_editable() {
     echo ""
 
     echo "[1/3] Installing amplifier-distro (editable)..."
-    uv venv
+    if [ ! -d ".venv" ]; then
+        uv venv
+    fi
     export VIRTUAL_ENV="$PWD/.venv"
     export PATH="$PWD/.venv/bin:$PATH"
     uv pip install -e ".[all,dev]"
 
     echo ""
-    echo "[2/3] Installing Amplifier CLI..."
-    uv tool install --force "git+${AMPLIFIER_URL}"
+    if command -v amplifier &>/dev/null; then
+        echo "[2/3] Amplifier CLI already installed — skipping (use 'amplifier update' to upgrade)"
+    else
+        echo "[2/3] Installing Amplifier CLI..."
+        uv tool install --force "git+${AMPLIFIER_URL}"
+    fi
 
     echo ""
-    echo "[3/3] Installing amplifier-tui..."
-    uv tool install --force "git+${TUI_URL}"
+    if command -v amplifier-tui &>/dev/null; then
+        echo "[3/3] amplifier-tui already installed — skipping (reinstall with: uv tool install --force git+${TUI_URL})"
+    else
+        echo "[3/3] Installing amplifier-tui..."
+        uv tool install --force "git+${TUI_URL}"
+    fi
 }
 
 # ── Standalone install (no source checkout) ──────────────────────
@@ -65,12 +75,20 @@ install_standalone() {
     uv tool install "git+${REPO_URL}"
 
     echo ""
-    echo "[2/3] Installing Amplifier CLI..."
-    uv tool install "git+${AMPLIFIER_URL}"
+    if command -v amplifier &>/dev/null; then
+        echo "[2/3] Amplifier CLI already installed — skipping (use 'amplifier update' to upgrade)"
+    else
+        echo "[2/3] Installing Amplifier CLI..."
+        uv tool install "git+${AMPLIFIER_URL}"
+    fi
 
     echo ""
-    echo "[3/3] Installing amplifier-tui..."
-    uv tool install "git+${TUI_URL}"
+    if command -v amplifier-tui &>/dev/null; then
+        echo "[3/3] amplifier-tui already installed — skipping (reinstall with: uv tool install --force git+${TUI_URL})"
+    else
+        echo "[3/3] Installing amplifier-tui..."
+        uv tool install "git+${TUI_URL}"
+    fi
 }
 
 # ── Main ─────────────────────────────────────────────────────────
