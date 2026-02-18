@@ -367,6 +367,11 @@ class LocalBridge:
             / sid
         )
 
+        # 9b. Register transcript persistence hooks
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        register_transcript_hooks(session, session_dir)
+
         logger.info(
             "Session created: id=%s project=%s bundle=%s",
             sid,
@@ -493,6 +498,11 @@ class LocalBridge:
                 "Could not register streaming hooks"
                 " (amplifier-core events not available)"
             )
+
+        # 7b. Register transcript persistence hooks
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        register_transcript_hooks(session, session_dir)
 
         # 8. Load previous transcript and inject as context
         #
