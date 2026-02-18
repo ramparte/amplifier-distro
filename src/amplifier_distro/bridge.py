@@ -477,17 +477,12 @@ class LocalBridge:
         streaming = BridgeStreamingHook(on_event=config.on_stream)
 
         # 6. Create session (preserving original session ID)
-        # Pass session_dir as session_cwd so amplifier-core writes events
-        # to the SAME directory the original session used, not the server's
-        # CWD. Without this, core creates a second session directory under
-        # a different project path, causing duplicate-directory errors on
-        # subsequent resumes.
         session = await prepared.create_session(
             session_id=session_id,
             is_resumed=True,
             approval_system=approval,
             display_system=display,
-            session_cwd=session_dir,
+            session_cwd=config.working_dir,
         )
 
         # 7. Register streaming hooks
