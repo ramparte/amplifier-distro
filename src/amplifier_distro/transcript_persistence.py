@@ -62,7 +62,9 @@ def write_transcript(session_dir: Path, messages: list[dict[str, Any]]) -> None:
     lines: list[str] = []
     for msg in messages:
         msg_dict = (
-            msg if isinstance(msg, dict) else getattr(msg, "model_dump", lambda: msg)()
+            msg
+            if isinstance(msg, dict)
+            else getattr(msg, "model_dump", lambda _m=msg: _m)()
         )
         if msg_dict.get("role") in _EXCLUDED_ROLES:
             continue
