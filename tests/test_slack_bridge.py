@@ -604,6 +604,27 @@ class TestSlackSessionManager:
         u2_sessions = session_manager.list_user_sessions("U2")
         assert len(u2_sessions) == 1
 
+    def test_rekey_mapping_moves_bare_key_to_thread_key(self, session_manager):
+        """rekey_mapping() upgrades bare channel_id key to channel_id:thread_ts."""
+        asyncio.run(session_manager.create_session("C_HUB", None, "U1", "rekey test"))
+
+        assert session_manager.get_mapping("C_HUB") is not None
+        assert session_manager.get_mapping("C_HUB", "1234567890.000001") is None
+
+        session_manager.rekey_mapping("C_HUB", "1234567890.000001")
+
+        assert session_manager.get_mapping("C_HUB") is None
+
+        mapping = session_manager.get_mapping("C_HUB", "1234567890.000001")
+        assert mapping is not None
+        assert mapping.thread_ts == "1234567890.000001"
+        assert mapping.description == "rekey test"
+
+    def test_rekey_mapping_no_op_when_key_missing(self, session_manager):
+        """rekey_mapping() is safe when the bare key doesn't exist — no exception."""
+        session_manager.rekey_mapping("C_NONEXISTENT", "ts.0")
+        assert session_manager.get_mapping("C_NONEXISTENT") is None
+
 
 # --- Command Handler Tests ---
 
