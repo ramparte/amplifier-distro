@@ -370,3 +370,131 @@ class TestWebChatSessionManager:
         info2 = asyncio.run(mgr.create_session())
         assert mgr.active_session_id == info2.session_id
         assert mgr.active_session_id != info1.session_id
+
+
+class TestWebChatSessionList:
+    """Verify session list and resume functionality."""
+
+    def test_list_sessions_empty(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+        assert mgr.list_sessions() == []
+
+    def test_list_sessions_includes_inactive(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        asyncio.run(mgr.create_session())
+        asyncio.run(mgr.create_session())  # deactivates first
+
+        sessions = mgr.list_sessions()
+        assert len(sessions) == 2
+
+    def test_list_sessions_sorted_by_last_active(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        asyncio.run(mgr.create_session(description="first"))
+        asyncio.run(mgr.create_session(description="second"))
+
+        sessions = mgr.list_sessions()
+        # Most recent first
+        assert sessions[0].description == "second"
+
+    def test_resume_session(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        info1 = asyncio.run(mgr.create_session(description="first"))
+        info2 = asyncio.run(mgr.create_session(description="second"))
+        assert mgr.active_session_id == info2.session_id
+
+        # Resume first session
+        asyncio.run(mgr.resume_session(info1.session_id))
+        assert mgr.active_session_id == info1.session_id
+
+    def test_resume_unknown_session_raises(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        with pytest.raises(ValueError, match="Unknown session"):
+            asyncio.run(mgr.resume_session("nonexistent"))
+
+    def test_resume_current_session_is_noop(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        info = asyncio.run(mgr.create_session())
+        asyncio.run(mgr.resume_session(info.session_id))
+        assert mgr.active_session_id == info.session_id
+
+
+class TestWebChatSessionsAPI:
+    """Test GET /api/sessions and POST /api/session/resume endpoints."""
+
+    def test_list_sessions_empty(self, webchat_client: TestClient):
+        resp = webchat_client.get("/apps/web-chat/api/sessions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sessions"] == []
+
+    def test_list_sessions_after_create(self, webchat_client: TestClient):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        resp = webchat_client.get("/apps/web-chat/api/sessions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["sessions"]) >= 1
+        assert data["sessions"][0]["is_active"] is True
+
+    def test_resume_session(self, webchat_client: TestClient):
+        # Create two sessions (second deactivates first)
+        r1 = webchat_client.post("/apps/web-chat/api/session", json={}).json()
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        # Resume first session
+        resp = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": r1["session_id"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["resumed"] is True
+        assert data["session_id"] == r1["session_id"]
+
+        # Verify it's now active in session list
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()
+        active = [s for s in sessions["sessions"] if s["is_active"]]
+        assert len(active) == 1
+        assert active[0]["session_id"] == r1["session_id"]
+
+    def test_resume_unknown_session_returns_404(self, webchat_client: TestClient):
+        resp = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": "nonexistent"},
+        )
+        assert resp.status_code == 404
+
+    def test_resume_missing_session_id_returns_400(self, webchat_client: TestClient):
+        resp = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={},
+        )
+        assert resp.status_code == 400

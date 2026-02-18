@@ -435,6 +435,79 @@ class TestSlackMigration:
         assert found is not None
         assert found.extra["channel_id"] == "C1"
 
+
+class TestRegistryReactivate:
+    """Test reactivate method."""
+
+    def test_reactivate_inactive_session(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        reg.register(routing_key="k1", session_id="s1", user_id="U1")
+        reg.deactivate("k1")
+        m = reg.lookup("k1")
+        assert m is not None
+        assert m.is_active is False
+
+        reg.reactivate("k1")
+        m = reg.lookup("k1")
+        assert m is not None
+        assert m.is_active is True
+
+    def test_reactivate_updates_last_active(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        reg.register(routing_key="k1", session_id="s1", user_id="U1")
+        reg.deactivate("k1")
+        m = reg.lookup("k1")
+        assert m is not None
+        old_ts = m.last_active
+
+        reg.reactivate("k1")
+        m = reg.lookup("k1")
+        assert m is not None
+        assert m.last_active >= old_ts
+
+    def test_reactivate_missing_key_is_noop(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        reg.reactivate("nonexistent")  # no error
+
+    def test_reactivate_already_active_is_noop(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        reg.register(routing_key="k1", session_id="s1", user_id="U1")
+        reg.reactivate("k1")  # already active, should not error
+        m = reg.lookup("k1")
+        assert m is not None
+        assert m.is_active is True
+
+
+class TestRegistryListAll:
+    """Test list_all method."""
+
+    def test_list_all_includes_inactive(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        reg.register(routing_key="k1", session_id="s1", user_id="U1")
+        reg.register(routing_key="k2", session_id="s2", user_id="U1")
+        reg.deactivate("k1")
+
+        all_sessions = reg.list_all()
+        assert len(all_sessions) == 2
+        active = reg.list_active()
+        assert len(active) == 1
+
+    def test_list_all_empty(self):
+        from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
+
+        reg = SurfaceSessionRegistry("test", persistence_path=None)
+        assert reg.list_all() == []
+
     def test_new_format_loads_normally(self, tmp_path):
         """New format with routing_key loads without migration."""
         from amplifier_distro.server.surface_registry import SurfaceSessionRegistry

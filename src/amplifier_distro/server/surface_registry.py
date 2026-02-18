@@ -216,6 +216,15 @@ class SurfaceSessionRegistry:
         mapping.is_active = False
         self._save()
 
+    def reactivate(self, routing_key: str) -> None:
+        """Mark an inactive mapping as active again."""
+        mapping = self._mappings.get(routing_key)
+        if mapping is None:
+            return
+        mapping.is_active = True
+        mapping.last_active = datetime.now(UTC).isoformat()
+        self._save()
+
     def remove(self, routing_key: str) -> SessionMapping | None:
         """Remove a mapping entirely. Returns the removed mapping or None."""
         mapping = self._mappings.pop(routing_key, None)
@@ -228,6 +237,10 @@ class SurfaceSessionRegistry:
     def list_active(self) -> list[SessionMapping]:
         """List all active mappings."""
         return [m for m in self._mappings.values() if m.is_active]
+
+    def list_all(self) -> list[SessionMapping]:
+        """List all mappings (active and inactive)."""
+        return list(self._mappings.values())
 
     def list_for_user(self, user_id: str) -> list[SessionMapping]:
         """List active mappings for a specific user."""

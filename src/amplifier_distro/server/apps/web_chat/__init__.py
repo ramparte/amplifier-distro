@@ -208,6 +208,34 @@ class WebChatSessionManager:
             await self._end_active(active_id)
             return True
 
+    def list_sessions(self) -> list:
+        """List all sessions (active and inactive), most recent first."""
+        sessions = self._registry.list_all()
+        sessions.sort(key=lambda s: s.last_active, reverse=True)
+        return sessions
+
+    async def resume_session(self, session_id: str):
+        """Resume a previous session, making it the active one.
+
+        Deactivates the current session and reactivates the target.
+        The backend will auto-reconnect on next send_message().
+
+        Raises ValueError if session_id not found in registry.
+        """
+        async with self._lock:
+            mapping = self._registry.lookup_by_session_id(session_id)
+            if mapping is None:
+                raise ValueError(f"Unknown session: {session_id}")
+
+            # Deactivate current active session (if any)
+            current_id = self.active_session_id
+            if current_id and current_id != session_id:
+                await self._end_active(current_id)
+
+            # Reactivate the target
+            self._registry.reactivate(mapping.routing_key)
+            return mapping
+
     async def _end_active(self, session_id: str) -> None:
         """Deactivate and end a session."""
         mapping = self._registry.lookup_by_session_id(session_id)
@@ -385,6 +413,62 @@ async def end_session() -> JSONResponse:
 
     ended = await mgr.end_session()
     return JSONResponse(content={"ended": ended, "session_id": session_id})
+
+
+@router.get("/api/sessions")
+async def list_sessions() -> JSONResponse:
+    """List all web chat sessions (active and inactive)."""
+    mgr = _get_manager()
+    sessions = mgr.list_sessions()
+    return JSONResponse(
+        content={
+            "sessions": [
+                {
+                    "session_id": m.session_id,
+                    "description": m.description or "Web chat session",
+                    "created_at": m.created_at,
+                    "last_active": m.last_active,
+                    "is_active": m.is_active,
+                    "project_id": m.project_id,
+                }
+                for m in sessions
+            ],
+        }
+    )
+
+
+@router.post("/api/session/resume")
+async def resume_session(request: Request) -> JSONResponse:
+    """Resume a previous web chat session."""
+    body = await request.json()
+    session_id = body.get("session_id")
+    if not session_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "session_id is required"},
+        )
+
+    try:
+        mgr = _get_manager()
+        mapping = await mgr.resume_session(session_id)
+        return JSONResponse(
+            content={
+                "session_id": mapping.session_id,
+                "project_id": mapping.project_id,
+                "resumed": True,
+            }
+        )
+    except ValueError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"error": str(e)},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Session resume failed: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "type": type(e).__name__},
+        )
 
 
 manifest = AppManifest(

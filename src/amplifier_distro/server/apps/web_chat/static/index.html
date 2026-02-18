@@ -372,6 +372,7 @@ body {
     </div>
   </div>
   <div class="header-right">
+    <button id="sessionsBtn" onclick="toggleSessions()" title="Sessions" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:var(--radius);">Sessions</button>
     <a href="/apps/settings/" class="settings-btn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -379,6 +380,15 @@ body {
       <span>Settings</span>
     </a>
   </div>
+</div>
+
+<div id="sessionsDropdown" style="display:none;position:absolute;right:16px;top:52px;width:300px;max-height:400px;overflow-y:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:20;padding:8px 0;">
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border);">
+        <button onclick="createNewSession()" style="width:100%;padding:8px;background:var(--accent);color:white;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;">+ New Session</button>
+    </div>
+    <div id="sessionsList" style="padding:4px 0;">
+        <div style="padding:12px;color:var(--text-secondary);font-size:13px;text-align:center;">No sessions yet</div>
+    </div>
 </div>
 
 <!-- Chat Messages -->
@@ -562,6 +572,106 @@ messageInput.addEventListener('keydown', (e) => {
 });
 
 sendBtn.addEventListener('click', sendMessage);
+
+/* ------------------------------------------------------------------ */
+/*  Sessions Dropdown                                                  */
+/* ------------------------------------------------------------------ */
+let sessionsOpen = false;
+
+function toggleSessions() {
+    sessionsOpen = !sessionsOpen;
+    const dd = document.getElementById('sessionsDropdown');
+    if (sessionsOpen) {
+        loadSessions();
+        dd.style.display = 'block';
+    } else {
+        dd.style.display = 'none';
+    }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    const dd = document.getElementById('sessionsDropdown');
+    const btn = document.getElementById('sessionsBtn');
+    if (sessionsOpen && !dd.contains(e.target) && e.target !== btn) {
+        sessionsOpen = false;
+        dd.style.display = 'none';
+    }
+});
+
+async function loadSessions() {
+    try {
+        const res = await fetch('./api/sessions');
+        const data = await res.json();
+        renderSessionList(data.sessions || []);
+    } catch (e) {
+        console.error('Failed to load sessions:', e);
+    }
+}
+
+function renderSessionList(sessions) {
+    const list = document.getElementById('sessionsList');
+    if (sessions.length === 0) {
+        list.innerHTML = '<div style="padding:12px;color:var(--text-secondary);font-size:13px;text-align:center;">No sessions yet</div>';
+        return;
+    }
+    list.innerHTML = sessions.map(function(s) {
+        const shortId = s.session_id.substring(0, 8);
+        const desc = s.description || 'Web chat session';
+        const time = s.last_active ? new Date(s.last_active).toLocaleString() : '';
+        const active = s.is_active;
+        const dot = active ? '\u25cf' : '\u25cb';
+        const dotColor = active ? 'var(--accent)' : 'var(--text-secondary)';
+        const bg = active ? 'var(--bg-card)' : 'transparent';
+        return '<div onclick="resumeSessionById(\'' + s.session_id + '\')" style="padding:8px 12px;cursor:pointer;background:' + bg + ';border-left:3px solid ' + (active ? 'var(--accent)' : 'transparent') + ';" onmouseover="this.style.background=\'var(--bg-card)\'" onmouseout="this.style.background=\'' + bg + '\'">'
+            + '<div style="font-size:13px;color:var(--text-primary);"><span style="color:' + dotColor + ';">' + dot + '</span> ' + esc(desc) + '</div>'
+            + '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">' + shortId + ' &middot; ' + esc(time) + '</div>'
+            + '</div>';
+    }).join('');
+}
+
+async function resumeSessionById(sessionId) {
+    try {
+        const res = await fetch('./api/session/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId }),
+        });
+        if (res.ok) {
+            sessionConnected = true;
+            updateBadge();
+            chatArea.innerHTML = '';
+            addMessage('system', '<p>Resumed session. Continue the conversation below.</p>');
+            sessionsOpen = false;
+            document.getElementById('sessionsDropdown').style.display = 'none';
+        } else {
+            const data = await res.json();
+            addMessage('system', '<p>Failed to resume: ' + esc(data.error || 'Unknown error') + '</p>');
+        }
+    } catch (e) {
+        addMessage('system', '<p>Failed to resume session.</p>');
+    }
+}
+
+async function createNewSession() {
+    try {
+        const res = await fetch('./api/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        if (res.ok) {
+            sessionConnected = true;
+            updateBadge();
+            chatArea.innerHTML = '';
+            addMessage('system', '<p>New session started.</p>');
+            sessionsOpen = false;
+            document.getElementById('sessionsDropdown').style.display = 'none';
+        }
+    } catch (e) {
+        addMessage('system', '<p>Failed to create session.</p>');
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Initialization                                                     */
