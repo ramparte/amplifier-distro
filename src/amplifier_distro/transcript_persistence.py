@@ -102,6 +102,19 @@ class TranscriptSaveHook:
             messages = await context.get_messages()
             count = len(messages)
 
+            logger.debug(
+                "HOOK DEBUG [%s]: get_messages returned %d msgs, _last_count=%d",
+                event,
+                count,
+                self._last_count,
+            )
+            if count > 0:
+                roles = [m.get("role", "?") for m in messages[:5]]
+                logger.debug(
+                    "HOOK DEBUG: first roles=%s",
+                    roles,
+                )
+
             # Debounce: skip if message count unchanged
             if count <= self._last_count:
                 return HookResult(action="continue")
