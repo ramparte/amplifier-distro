@@ -26,6 +26,8 @@ AMPLIFIER_URL="https://github.com/microsoft/amplifier"
 TUI_URL="https://github.com/ramparte/amplifier-tui"
 
 # ── Ensure uv is available ───────────────────────────────────────
+UV_INSTALLED_BY_US=false
+
 ensure_uv() {
     if command -v uv &>/dev/null; then
         echo "[install] uv: $(uv --version)"
@@ -34,6 +36,7 @@ ensure_uv() {
     echo "[install] Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"
+    UV_INSTALLED_BY_US=true
 }
 
 # ── Editable install (source checkout) ───────────────────────────
@@ -98,15 +101,51 @@ echo ""
 ensure_uv
 echo ""
 
+INSTALL_MODE=""
 if [ -f "pyproject.toml" ]; then
+    INSTALL_MODE="editable"
     install_editable
 else
+    INSTALL_MODE="standalone"
     install_standalone
 fi
 
 echo ""
 echo "=== Install complete ==="
 echo ""
+
+# ── Post-install guidance (shown BEFORE commands list) ───────
+if [ "$INSTALL_MODE" = "editable" ]; then
+    # Always show: the script's own export of VIRTUAL_ENV doesn't
+    # survive into the parent shell, so the user must activate.
+    echo "IMPORTANT: Activate the virtualenv before using the commands:"
+    echo ""
+    echo "  source .venv/bin/activate"
+    echo ""
+elif [ "$INSTALL_MODE" = "standalone" ]; then
+    if [ "$UV_INSTALLED_BY_US" = true ]; then
+        # uv was freshly installed — its installer already modified the
+        # user's shell profile. They just need to restart or source it.
+        echo "NOTE: uv was installed for the first time during this setup."
+        echo "Restart your shell (or open a new terminal) for PATH changes to take effect."
+        echo ""
+    else
+        # uv was already present. PATH is almost certainly fine, but check
+        # in case uv was installed via a system package manager and
+        # ~/.local/bin (where uv tool install puts binaries) isn't on PATH.
+        tool_bin=$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")
+        if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$tool_bin"; then
+            echo "IMPORTANT: Add $tool_bin to your PATH:"
+            echo ""
+            echo "  export PATH=\"$tool_bin:\$PATH\""
+            echo ""
+            echo "To make it permanent, add that line to your shell config"
+            echo "(~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish)."
+            echo ""
+        fi
+    fi
+fi
+
 echo "Commands available:"
 echo "  amp-distro          Distro management CLI"
 echo "  amp-distro-server   Web server (localhost:8400)"
