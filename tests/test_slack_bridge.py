@@ -512,8 +512,8 @@ class TestSlackSessionManager:
             session_manager.create_session("C_HUB", "thread.1", "U1", "test session")
         )
         assert mapping.session_id.startswith("mock-session-")
-        assert mapping.channel_id == "C_HUB"
-        assert mapping.thread_ts == "thread.1"
+        assert mapping.extra["channel_id"] == "C_HUB"
+        assert mapping.extra["thread_ts"] == "thread.1"
         assert mapping.description == "test session"
 
     def test_get_mapping(self, session_manager):
@@ -563,13 +563,21 @@ class TestSlackSessionManager:
         response = asyncio.run(session_manager.route_message(msg))
         assert response is None
 
-    def test_session_limit(self, session_manager, slack_config):
-        slack_config.max_sessions_per_user = 2
-        asyncio.run(session_manager.create_session("C1", "t1", "U1"))
-        asyncio.run(session_manager.create_session("C1", "t2", "U1"))
+    def test_session_limit(self, slack_client, mock_backend):
+        from amplifier_distro.server.apps.slack.config import SlackConfig
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        config = SlackConfig(
+            hub_channel_id="C_HUB",
+            simulator_mode=True,
+            max_sessions_per_user=2,
+        )
+        mgr = SlackSessionManager(slack_client, mock_backend, config)
+        asyncio.run(mgr.create_session("C1", "t1", "U1"))
+        asyncio.run(mgr.create_session("C1", "t2", "U1"))
 
         with pytest.raises(ValueError, match="Session limit"):
-            asyncio.run(session_manager.create_session("C1", "t3", "U1"))
+            asyncio.run(mgr.create_session("C1", "t3", "U1"))
 
     def test_breakout_to_channel(self, session_manager):
         asyncio.run(
@@ -1491,8 +1499,8 @@ class TestSessionPersistence:
         assert persist_path.exists()
         data = json.loads(persist_path.read_text())
         assert len(data) == 1
-        assert data[0]["channel_id"] == "C1"
-        assert data[0]["thread_ts"] == "t1"
+        assert data[0]["extra"]["channel_id"] == "C1"
+        assert data[0]["extra"]["thread_ts"] == "t1"
         assert data[0]["description"] == "persisted session"
 
         # Create a NEW manager pointing at same file - should load the session
@@ -1502,7 +1510,7 @@ class TestSessionPersistence:
         loaded = mgr2.get_mapping("C1", "t1")
         assert loaded is not None
         assert loaded.description == "persisted session"
-        assert loaded.channel_id == "C1"
+        assert loaded.extra["channel_id"] == "C1"
         assert loaded.is_active is True
 
     def test_persistence_survives_end_session(
@@ -1566,11 +1574,12 @@ class TestSessionPersistence:
         data = json.loads(persist_path.read_text())
         record = data[0]
         required_fields = {
+            "routing_key",
             "session_id",
-            "channel_id",
-            "thread_ts",
+            "surface",
             "created_at",
             "last_active",
+            "extra",
         }
         for field in required_fields:
             assert field in record, f"Missing field: {field}"
@@ -1606,3 +1615,21 @@ class TestSessionPersistence:
             path
             == Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / SLACK_SESSIONS_FILENAME
         )
+
+
+class TestSlackRegistryIntegration:
+    """Verify SlackSessionManager delegates to SurfaceSessionRegistry."""
+
+    def test_manager_has_registry(self, session_manager):
+        assert hasattr(session_manager, "_registry")
+
+    def test_registry_surface_is_slack(self, session_manager):
+        assert session_manager._registry._surface == "slack"
+
+    def test_create_session_registers_in_registry(self, session_manager):
+        asyncio.run(session_manager.create_session("C1", "t1", "U1", "test"))
+        key = "C1:t1"
+        found = session_manager._registry.lookup(key)
+        assert found is not None
+        assert found.extra["channel_id"] == "C1"
+        assert found.extra["thread_ts"] == "t1"

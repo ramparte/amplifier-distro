@@ -304,8 +304,8 @@ async def list_bridge_sessions() -> list[dict[str, Any]]:
     return [
         {
             "session_id": m.session_id,
-            "channel_id": m.channel_id,
-            "thread_ts": m.thread_ts,
+            "channel_id": m.extra.get("channel_id", ""),
+            "thread_ts": m.extra.get("thread_ts", ""),
             "project_id": m.project_id,
             "description": m.description,
             "created_by": m.created_by,

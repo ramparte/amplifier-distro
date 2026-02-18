@@ -9,20 +9,18 @@ Conversation model:
 - Thread: Each new session starts as a thread in the hub channel
 - Breakout channel: A thread can be promoted to its own channel
 
-The conversation_key is "channel_id:thread_ts" for threads, or just
+The routing_key is "channel_id:thread_ts" for threads, or just
 "channel_id" for top-level channel conversations.
 
 Persistence:
-- Session mappings are persisted to a JSON file so they survive restarts.
+- Session mappings are persisted via SurfaceSessionRegistry.
 - The file path comes from conventions.py (SLACK_SESSIONS_FILENAME).
 - Mappings are loaded on startup and saved on every change.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from amplifier_distro.conventions import (
@@ -30,13 +28,23 @@ from amplifier_distro.conventions import (
     SERVER_DIR,
     SLACK_SESSIONS_FILENAME,
 )
+from amplifier_distro.server.surface_registry import (
+    SessionMapping as RegistryMapping,
+)
+from amplifier_distro.server.surface_registry import (
+    SurfaceSessionRegistry,
+)
 
 from .backend import SessionBackend
 from .client import SlackClient
 from .config import SlackConfig
-from .models import SessionMapping, SlackChannel, SlackMessage
+from .models import SlackChannel, SlackMessage
 
 logger = logging.getLogger(__name__)
+
+# The registry's SessionMapping is now the canonical type.
+# Alias for backward compatibility with code that imports from here.
+SessionMapping = RegistryMapping
 
 
 def _default_persistence_path() -> Path:
@@ -51,7 +59,7 @@ class SlackSessionManager:
     the manager looks up which Amplifier session it belongs to and
     routes the message through the backend.
 
-    Session mappings are optionally persisted to disk as JSON so they
+    Session mappings are persisted via SurfaceSessionRegistry so they
     survive server restarts. Pass persistence_path=None to disable
     persistence (useful in tests).
     """
@@ -66,100 +74,46 @@ class SlackSessionManager:
         self._client = client
         self._backend = backend
         self._config = config
-        self._persistence_path = persistence_path
-        self._mappings: dict[str, SessionMapping] = {}
+        self._registry = SurfaceSessionRegistry(
+            "slack",
+            persistence_path,
+            self._config.max_sessions_per_user,
+        )
         # Track which channels are breakout channels
         self._breakout_channels: dict[str, str] = {}  # channel_id -> session_id
-        # Load persisted sessions on startup
-        self._load_sessions()
-
-    def _load_sessions(self) -> None:
-        """Load session mappings from the persistence file."""
-        if self._persistence_path is None or not self._persistence_path.exists():
-            return
-        try:
-            data = json.loads(self._persistence_path.read_text())
-            for entry in data:
-                mapping = SessionMapping(
-                    session_id=entry["session_id"],
-                    channel_id=entry["channel_id"],
-                    thread_ts=entry.get("thread_ts"),
-                    project_id=entry.get("project_id", ""),
-                    description=entry.get("description", ""),
-                    created_by=entry.get("created_by", ""),
-                    created_at=entry.get("created_at", ""),
-                    last_active=entry.get("last_active", ""),
-                    is_active=entry.get("is_active", True),
-                )
-                key = mapping.conversation_key
-                self._mappings[key] = mapping
-            logger.info(
-                f"Loaded {len(data)} session mappings from {self._persistence_path}"
-            )
-        except (json.JSONDecodeError, KeyError, OSError):
-            logger.warning("Failed to load session mappings", exc_info=True)
-
-    def _save_sessions(self) -> None:
-        """Save session mappings to the persistence file."""
-        if self._persistence_path is None:
-            return
-        try:
-            self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
-            data = [
-                {
-                    "session_id": m.session_id,
-                    "channel_id": m.channel_id,
-                    "thread_ts": m.thread_ts,
-                    "project_id": m.project_id,
-                    "description": m.description,
-                    "created_by": m.created_by,
-                    "created_at": m.created_at,
-                    "last_active": m.last_active,
-                    "is_active": m.is_active,
-                }
-                for m in self._mappings.values()
-            ]
-            from amplifier_distro.fileutil import atomic_write
-
-            atomic_write(self._persistence_path, json.dumps(data, indent=2))
-        except OSError:
-            logger.warning("Failed to save session mappings", exc_info=True)
 
     @property
-    def mappings(self) -> dict[str, SessionMapping]:
+    def mappings(self) -> dict[str, RegistryMapping]:
         """Current mappings (read-only view)."""
-        return dict(self._mappings)
+        return self._registry.mappings
 
     def get_mapping(
         self, channel_id: str, thread_ts: str | None = None
-    ) -> SessionMapping | None:
-        """Find the session mapping for a Slack conversation context."""
-        # First check for thread-specific mapping
+    ) -> RegistryMapping | None:
+        """Find the session mapping for a Slack conversation context.
+
+        Uses the registry for lookup but implements Slack's 3-tier
+        routing: thread -> channel -> breakout registry.
+        """
         if thread_ts:
             key = f"{channel_id}:{thread_ts}"
-            if key in self._mappings:
-                return self._mappings[key]
+            found = self._registry.lookup(key)
+            if found is not None:
+                return found
 
-        # Then check for channel-level mapping (breakout channels)
-        if channel_id in self._mappings:
-            return self._mappings[channel_id]
+        found = self._registry.lookup(channel_id)
+        if found is not None:
+            return found
 
-        # Check breakout channel registry
         if channel_id in self._breakout_channels:
             session_id = self._breakout_channels[channel_id]
-            # Find the mapping by session_id
-            for mapping in self._mappings.values():
-                if mapping.session_id == session_id:
-                    return mapping
+            return self._registry.lookup_by_session_id(session_id)
 
         return None
 
-    def get_mapping_by_session(self, session_id: str) -> SessionMapping | None:
+    def get_mapping_by_session(self, session_id: str) -> RegistryMapping | None:
         """Find mapping by Amplifier session ID."""
-        for mapping in self._mappings.values():
-            if mapping.session_id == session_id:
-                return mapping
-        return None
+        return self._registry.lookup_by_session_id(session_id)
 
     async def create_session(
         self,
@@ -167,47 +121,27 @@ class SlackSessionManager:
         thread_ts: str | None,
         user_id: str,
         description: str = "",
-    ) -> SessionMapping:
-        """Create a new Amplifier session and map it to a Slack context.
+    ) -> RegistryMapping:
+        """Create a new Amplifier session and map it to a Slack context."""
+        self._registry.check_limit(user_id)
 
-        If thread_per_session is enabled and thread_ts is None, the bridge
-        will create a new thread in the hub channel for this session.
-        """
-        # Check session limit
-        user_sessions = [
-            m
-            for m in self._mappings.values()
-            if m.created_by == user_id and m.is_active
-        ]
-        if len(user_sessions) >= self._config.max_sessions_per_user:
-            raise ValueError(
-                f"Session limit reached ({self._config.max_sessions_per_user}). "
-                "End an existing session first."
-            )
-
-        # Create the backend session
         info = await self._backend.create_session(
             working_dir=self._config.default_working_dir,
             bundle_name=self._config.default_bundle,
             description=description,
         )
 
-        # Determine the conversation key
         key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
 
-        now = datetime.now(UTC).isoformat()
-        mapping = SessionMapping(
+        mapping = self._registry.register(
+            routing_key=key,
             session_id=info.session_id,
-            channel_id=channel_id,
-            thread_ts=thread_ts,
+            user_id=user_id,
             project_id=info.project_id,
             description=description,
-            created_by=user_id,
-            created_at=now,
-            last_active=now,
+            channel_id=channel_id,
+            thread_ts=thread_ts or "",
         )
-        self._mappings[key] = mapping
-        self._save_sessions()
         logger.info(f"Created session {info.session_id} mapped to {key}")
         return mapping
 
@@ -218,26 +152,10 @@ class SlackSessionManager:
         user_id: str,
         working_dir: str,
         description: str = "",
-    ) -> SessionMapping:
-        """Connect a Slack context to a new backend session in *working_dir*.
+    ) -> RegistryMapping:
+        """Connect a Slack context to a new backend session in *working_dir*."""
+        self._registry.check_limit(user_id)
 
-        Unlike ``create_session`` (which uses the default working directory),
-        this creates a backend session in the same directory as a previously
-        discovered session so the user lands in the right project context.
-        """
-        # Check session limit (same as create_session)
-        user_sessions = [
-            m
-            for m in self._mappings.values()
-            if m.created_by == user_id and m.is_active
-        ]
-        if len(user_sessions) >= self._config.max_sessions_per_user:
-            raise ValueError(
-                f"Session limit reached ({self._config.max_sessions_per_user}). "
-                "End an existing session first."
-            )
-
-        # Create a real backend session in the discovered session's directory
         info = await self._backend.create_session(
             working_dir=working_dir,
             bundle_name=self._config.default_bundle,
@@ -245,41 +163,29 @@ class SlackSessionManager:
         )
 
         key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
-        now = datetime.now(UTC).isoformat()
 
-        mapping = SessionMapping(
+        mapping = self._registry.register(
+            routing_key=key,
             session_id=info.session_id,
-            channel_id=channel_id,
-            thread_ts=thread_ts,
+            user_id=user_id,
             project_id=info.project_id,
             description=description,
-            created_by=user_id,
-            created_at=now,
-            last_active=now,
+            channel_id=channel_id,
+            thread_ts=thread_ts or "",
         )
-
-        self._mappings[key] = mapping
-        self._save_sessions()
         logger.info(
             f"Connected session {info.session_id} (in {working_dir}) mapped to {key}"
         )
         return mapping
 
     async def route_message(self, message: SlackMessage) -> str | None:
-        """Route a Slack message to the appropriate Amplifier session.
-
-        Returns the response text, or None if no session is mapped.
-        Updates the last_active timestamp on the mapping.
-        """
+        """Route a Slack message to the appropriate Amplifier session."""
         mapping = self.get_mapping(message.channel_id, message.thread_ts)
         if mapping is None or not mapping.is_active:
             return None
 
-        # Update activity timestamp
-        mapping.last_active = datetime.now(UTC).isoformat()
-        self._save_sessions()
+        self._registry.update_activity(mapping.routing_key)
 
-        # Send to backend
         try:
             response = await self._backend.send_message(
                 mapping.session_id, message.text
@@ -290,16 +196,12 @@ class SlackSessionManager:
             return "Error: Failed to get response from Amplifier session."
 
     async def end_session(self, channel_id: str, thread_ts: str | None = None) -> bool:
-        """End the session mapped to a Slack context.
-
-        Returns True if a session was ended, False if none was found.
-        """
+        """End the session mapped to a Slack context."""
         mapping = self.get_mapping(channel_id, thread_ts)
         if mapping is None:
             return False
 
-        mapping.is_active = False
-        self._save_sessions()
+        self._registry.deactivate(mapping.routing_key)
         try:
             await self._backend.end_session(mapping.session_id)
         except (RuntimeError, ValueError, ConnectionError, OSError):
@@ -313,11 +215,7 @@ class SlackSessionManager:
         thread_ts: str,
         channel_name: str | None = None,
     ) -> SlackChannel | None:
-        """Promote a thread-based session to its own channel.
-
-        Creates a new Slack channel and remaps the session to it.
-        Returns the new channel, or None if no session was found.
-        """
+        """Promote a thread-based session to its own channel."""
         mapping = self.get_mapping(channel_id, thread_ts)
         if mapping is None:
             return None
@@ -325,29 +223,30 @@ class SlackSessionManager:
         if not self._config.allow_breakout:
             raise ValueError("Channel breakout is not enabled.")
 
-        # Generate channel name
         if channel_name is None:
             short_id = mapping.session_id[:8]
             channel_name = f"{self._config.channel_prefix}{short_id}"
 
-        # Create the channel
         topic = f"Amplifier session {mapping.session_id[:8]}"
         if mapping.description:
             topic += f" - {mapping.description}"
 
         new_channel = await self._client.create_channel(channel_name, topic=topic)
 
-        # Update mapping: remove old key, add channel-level key
-        old_key = mapping.conversation_key
-        self._mappings.pop(old_key, None)
+        # Remove old mapping, register new one under channel key
+        self._registry.remove(mapping.routing_key)
 
-        mapping.channel_id = new_channel.id
-        mapping.thread_ts = None  # Now it's channel-level
-        self._mappings[new_channel.id] = mapping
+        self._registry.register(
+            routing_key=new_channel.id,
+            session_id=mapping.session_id,
+            user_id=mapping.created_by,
+            project_id=mapping.project_id,
+            description=mapping.description,
+            channel_id=new_channel.id,
+            thread_ts="",
+        )
         self._breakout_channels[new_channel.id] = mapping.session_id
-        self._save_sessions()
 
-        # Notify in the new channel
         await self._client.post_message(
             new_channel.id,
             f"Session `{mapping.session_id[:8]}` moved to this channel."
@@ -356,14 +255,10 @@ class SlackSessionManager:
 
         return new_channel
 
-    def list_active(self) -> list[SessionMapping]:
+    def list_active(self) -> list[RegistryMapping]:
         """List all active session mappings."""
-        return [m for m in self._mappings.values() if m.is_active]
+        return self._registry.list_active()
 
-    def list_user_sessions(self, user_id: str) -> list[SessionMapping]:
+    def list_user_sessions(self, user_id: str) -> list[RegistryMapping]:
         """List active sessions for a specific user."""
-        return [
-            m
-            for m in self._mappings.values()
-            if m.created_by == user_id and m.is_active
-        ]
+        return self._registry.list_for_user(user_id)

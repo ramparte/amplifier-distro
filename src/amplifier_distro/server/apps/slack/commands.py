@@ -287,7 +287,7 @@ class CommandHandler:
             for m in user_sessions:
                 short_id = m.session_id[:8]
                 lines.append(
-                    f"• `{short_id}` in <#{m.channel_id}>"
+                    f"• `{short_id}` in <#{m.extra['channel_id']}>"
                     f" - {m.description or 'no description'}"
                 )
             return CommandResult(text="\n".join(lines))
@@ -362,7 +362,7 @@ class CommandHandler:
         lines = [f"*Active Bridge Sessions* ({len(active)}):\n"]
         for m in active:
             short_id = m.session_id[:8]
-            channel_ref = f"<#{m.channel_id}>"
+            channel_ref = f"<#{m.extra['channel_id']}>"
             line = f"• `{short_id}` in {channel_ref}"
             if m.description:
                 line += f" - {m.description}"
