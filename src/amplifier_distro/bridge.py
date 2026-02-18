@@ -519,7 +519,7 @@ class LocalBridge:
                             # Skip malformed lines (e.g. truncated by crash)
                             logger.debug("Skipping malformed transcript line")
                             continue
-                        if entry.get("role"):
+                        if isinstance(entry, dict) and entry.get("role"):
                             messages.append(entry)
 
                 # Strip orphaned tool results from the front (from a

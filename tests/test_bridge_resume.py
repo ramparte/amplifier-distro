@@ -323,10 +323,11 @@ class TestOrphanToolStripping:
         assert len(result) == 1
         assert result[0] == {"role": "user", "content": "middle"}
 
-    # -- P0: Trailing orphan tool messages (crash mid-tool-execution) ------
+    # -- Trailing tool messages are KEPT (may be valid complete round trips) -
 
-    def test_trailing_tool_messages_stripped(self, tmp_path):
-        """Session crashed after partial tool results — no final assistant."""
+    def test_trailing_tool_messages_kept(self, tmp_path):
+        """Trailing tool results are passed through — the provider and context
+        module decide validity, not the bridge (mechanism, not policy)."""
         lines = [
             {"role": "user", "content": "run two commands"},
             {
@@ -338,15 +339,16 @@ class TestOrphanToolStripping:
                 ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-            # c2 never came back, no final assistant — CRASH
+            # c2 never came back — but bridge doesn't cascade-strip
         ]
         result = _run_resume(tmp_path, lines)
-        # The entire incomplete round trip must be stripped
-        assert len(result) == 1
+        assert len(result) == 3
         assert result[0]["role"] == "user"
+        assert result[2]["role"] == "tool"
 
-    def test_trailing_tool_then_assistant_tool_calls_cascade(self, tmp_path):
-        """Back-strip removes assistant+tool_calls, exposing trailing tools."""
+    def test_trailing_assistant_tool_calls_stripped_tool_results_kept(self, tmp_path):
+        """Only the dangling assistant+tool_calls is stripped; the preceding
+        complete tool round trip is preserved."""
         lines = [
             {"role": "user", "content": "go"},
             {
@@ -356,7 +358,7 @@ class TestOrphanToolStripping:
                     {"id": "c1", "function": {"name": "f", "arguments": "{}"}}
                 ],
             },
-            {"role": "tool", "tool_call_id": "c1", "content": "partial"},
+            {"role": "tool", "tool_call_id": "c1", "content": "done"},
             {
                 "role": "assistant",
                 "content": None,
@@ -364,11 +366,13 @@ class TestOrphanToolStripping:
                     {"id": "c2", "function": {"name": "g", "arguments": "{}"}}
                 ],
             },
-            # c2 crash — back-strip removes last assistant, exposing orphan tool
+            # c2 crash — only the dangling assistant is stripped
         ]
         result = _run_resume(tmp_path, lines)
-        assert len(result) == 1
+        assert len(result) == 3
         assert result[0]["role"] == "user"
+        assert result[1]["role"] == "assistant"
+        assert result[2]["role"] == "tool"
 
     # -- P0: Valid JSON non-dict lines ------------------------------------
 
