@@ -17,6 +17,7 @@ from amplifier_distro.fileutil import atomic_write
 
 logger = logging.getLogger(__name__)
 
+_PRIORITY = 900
 _EXCLUDED_ROLES = frozenset({"system", "developer"})
 
 
@@ -71,3 +72,41 @@ def write_transcript(session_dir: Path, messages: list[dict[str, Any]]) -> None:
     content = "\n".join(lines) + "\n" if lines else ""
     session_dir.mkdir(parents=True, exist_ok=True)
     atomic_write(session_dir / TRANSCRIPT_FILENAME, content)
+
+
+class TranscriptSaveHook:
+    """Persists transcript.jsonl incrementally during execution.
+
+    Registered on tool:post (mid-turn durability) and
+    orchestrator:complete (end-of-turn, catches no-tool turns).
+    Debounces by message count -- skips write if unchanged.
+    Best-effort: never fails the agent loop.
+    """
+
+    def __init__(self, session: Any, session_dir: Path) -> None:
+        self._session = session
+        self._session_dir = session_dir
+        self._last_count = 0
+
+    async def __call__(self, event: str, data: dict[str, Any]) -> Any:
+        from amplifier_core.models import HookResult
+
+        try:
+            context = self._session.coordinator.get("context")
+            if not context or not hasattr(context, "get_messages"):
+                return HookResult(action="continue")
+
+            messages = await context.get_messages()
+            count = len(messages)
+
+            # Debounce: skip if message count unchanged
+            if count <= self._last_count:
+                return HookResult(action="continue")
+
+            self._last_count = count
+            write_transcript(self._session_dir, messages)
+
+        except Exception:  # noqa: BLE001
+            logger.warning("Transcript save failed", exc_info=True)
+
+        return HookResult(action="continue")

@@ -10,9 +10,10 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestWriteTranscript:
@@ -191,3 +192,142 @@ class TestWriteTranscript:
         assert loaded[1]["tool_calls"][0]["id"] == "c1"
         assert loaded[2]["role"] == "tool"
         assert loaded[3]["content"] == "done"
+
+
+# --- Helper for hook tests ---------------------------------------------------
+
+
+def _make_mock_session(messages: list[dict] | None = None) -> MagicMock:
+    """Create a mock session with coordinator.get('context').get_messages().
+
+    Mirrors the CLI pattern: hooks access context via coordinator.get('context'),
+    not coordinator.context directly.
+    """
+    session = MagicMock()
+    context = MagicMock()
+    context.get_messages = AsyncMock(return_value=messages or [])
+    session.coordinator.get = MagicMock(return_value=context)
+    return session
+
+
+class TestTranscriptSaveHook:
+    """Verify hook debounce, best-effort, and event handling."""
+
+    def test_writes_on_new_messages(self, tmp_path: Path) -> None:
+        """Hook writes transcript when message count increases."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        session = _make_mock_session(messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        result = asyncio.run(hook("tool:post", {}))
+
+        transcript = tmp_path / "transcript.jsonl"
+        assert transcript.exists()
+        assert result.action == "continue"
+
+    def test_debounce_skips_when_count_unchanged(self, tmp_path: Path) -> None:
+        """Hook skips write when message count hasn't changed."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        messages = [{"role": "user", "content": "hello"}]
+        session = _make_mock_session(messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        # First call: writes
+        asyncio.run(hook("tool:post", {}))
+        assert (tmp_path / "transcript.jsonl").exists()
+
+        # Second call with same count: should not re-write
+        with patch(
+            "amplifier_distro.transcript_persistence.write_transcript"
+        ) as mock_wt:
+            asyncio.run(hook("tool:post", {}))
+        mock_wt.assert_not_called()
+
+    def test_debounce_writes_when_count_increases(self, tmp_path: Path) -> None:
+        """Hook writes again when message count increases between calls."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        session = _make_mock_session([{"role": "user", "content": "hello"}])
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        # First call
+        asyncio.run(hook("tool:post", {}))
+        assert hook._last_count == 1
+
+        # Update messages (simulating new messages after tool call)
+        new_messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        context = session.coordinator.get("context")
+        context.get_messages = AsyncMock(return_value=new_messages)
+
+        # Second call with increased count
+        asyncio.run(hook("orchestrator:complete", {}))
+        assert hook._last_count == 2
+
+    def test_best_effort_exception_does_not_propagate(self, tmp_path: Path) -> None:
+        """Hook catches exceptions and returns continue -- never fails the loop."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        session = _make_mock_session()
+        # Make get_messages raise
+        context = session.coordinator.get("context")
+        context.get_messages = AsyncMock(side_effect=RuntimeError("boom"))
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        result = asyncio.run(hook("tool:post", {}))
+
+        assert result.action == "continue"
+
+    def test_handles_missing_context_module(self, tmp_path: Path) -> None:
+        """Hook gracefully handles coordinator.get('context') returning None."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        session = MagicMock()
+        session.coordinator.get = MagicMock(return_value=None)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        result = asyncio.run(hook("tool:post", {}))
+
+        assert result.action == "continue"
+        assert not (tmp_path / "transcript.jsonl").exists()
+
+    def test_filters_system_roles(self, tmp_path: Path) -> None:
+        """Hook filters system/developer from written transcript."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        messages = [
+            {"role": "system", "content": "instructions"},
+            {"role": "user", "content": "hello"},
+        ]
+        session = _make_mock_session(messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        asyncio.run(hook("tool:post", {}))
+
+        transcript = tmp_path / "transcript.jsonl"
+        lines = [
+            json.loads(line) for line in transcript.read_text().strip().split("\n")
+        ]
+        assert len(lines) == 1
+        assert lines[0]["role"] == "user"
+
+    def test_works_with_orchestrator_complete_event(self, tmp_path: Path) -> None:
+        """Hook fires correctly on orchestrator:complete (not just tool:post)."""
+        from amplifier_distro.transcript_persistence import TranscriptSaveHook
+
+        messages = [{"role": "user", "content": "hello"}]
+        session = _make_mock_session(messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        result = asyncio.run(hook("orchestrator:complete", {}))
+
+        assert (tmp_path / "transcript.jsonl").exists()
+        assert result.action == "continue"
