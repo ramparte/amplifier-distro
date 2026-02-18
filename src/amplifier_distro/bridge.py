@@ -550,42 +550,11 @@ class LocalBridge:
 
                 if messages:
                     try:
-                        context = session.coordinator.get("context")
-                        logger.debug(
-                            "RESUME DEBUG: context module=%s, has set_messages=%s",
-                            type(context).__name__ if context else "None",
-                            hasattr(context, "set_messages") if context else False,
-                        )
-
-                        # Check messages BEFORE set_messages
-                        if context and hasattr(context, "get_messages"):
-                            pre_msgs = await context.get_messages()
-                            logger.debug(
-                                "RESUME DEBUG: messages BEFORE set_messages: %d",
-                                len(pre_msgs),
-                            )
-
-                        await context.set_messages(messages)
+                        await session.coordinator.context.set_messages(messages)
                         logger.info(
                             "Injected %d messages from previous transcript",
                             len(messages),
                         )
-
-                        # Verify messages AFTER set_messages
-                        if context and hasattr(context, "get_messages"):
-                            post_msgs = await context.get_messages()
-                            logger.debug(
-                                "RESUME DEBUG: messages AFTER "
-                                "set_messages: %d (expected %d)",
-                                len(post_msgs),
-                                len(messages),
-                            )
-                            if len(post_msgs) != len(messages):
-                                logger.warning(
-                                    "RESUME DEBUG: mismatch! set %d but got %d",
-                                    len(messages),
-                                    len(post_msgs),
-                                )
                     except (AttributeError, TypeError):
                         logger.debug(
                             "Could not inject transcript messages"
