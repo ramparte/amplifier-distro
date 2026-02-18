@@ -582,22 +582,10 @@ def version() -> None:
     click.echo(f"  Install method:    {info.install_method}")
 
 
-@main.command(help="Self-update amplifier-distro to the latest release.")
+@main.command(help="Re-install amplifier-distro from the latest source.")
 def update() -> None:
-    """Self-update amplifier-distro."""
-    click.echo("Checking for updates...")
-
-    update_info = check_for_updates()
-    if update_info is None:
-        info = get_version_info()
-        click.echo(f"Already at latest version ({info.distro_version}).")
-        return
-
-    click.echo(
-        f"Update available: v{update_info.current_version} -> "
-        f"v{update_info.latest_version}"
-    )
-    click.echo("Updating...")
+    """Re-install amplifier-distro from git HEAD."""
+    click.echo("Updating amplifier-distro from git...")
 
     success, message = run_self_update()
     if success:

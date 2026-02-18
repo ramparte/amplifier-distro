@@ -175,105 +175,58 @@ def _parse_version(v: str) -> tuple[int, ...]:
 def check_for_updates() -> UpdateInfo | None:
     """Check if a newer version of amplifier-distro is available.
 
-    Checks PyPI for the latest release.  Results are cached for
-    UPDATE_CHECK_TTL_HOURS (from conventions.py) to avoid repeated
-    network calls.
-
-    Returns None if:
-    - Already up to date
-    - Cache says we checked recently and were up to date
-    - Network is unavailable or request times out (3s)
-    - Any error occurs (non-blocking by design)
+    Currently always returns None (no version comparison).
+    The `amp-distro update` command re-installs from git HEAD
+    unconditionally, so this is only used for passive update notices.
     """
-    # Check cache first
-    cached = _read_cache()
-    if cached is not None:
-        if cached.get("update_available"):
-            return UpdateInfo(**cached["update_info"])
-        return None  # Cached as up-to-date
+    return None
 
-    current = _get_distro_version()
 
+def _is_editable_install() -> bool:
+    """Check if amplifier-distro is installed in editable mode."""
     try:
-        import httpx
+        from importlib.metadata import distribution
 
-        resp = httpx.get(
-            f"https://pypi.org/pypi/{conventions.PYPI_PACKAGE_NAME}/json",
-            timeout=3.0,
-            follow_redirects=True,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        latest = data["info"]["version"]
+        dist = distribution(conventions.PYPI_PACKAGE_NAME)
+        text = dist.read_text("direct_url.json")
+        if text:
+            data = json.loads(text)
+            return bool(data.get("dir_info", {}).get("editable"))
     except Exception:  # noqa: BLE001
-        logger.debug("Could not check PyPI for updates", exc_info=True)
-        return None
-
-    update_available = _parse_version(latest) > _parse_version(current)
-
-    if update_available:
-        info = UpdateInfo(
-            current_version=current,
-            latest_version=latest,
-            release_url=f"https://pypi.org/project/{conventions.PYPI_PACKAGE_NAME}/{latest}/",
-            release_notes_url=f"https://github.com/{conventions.GITHUB_REPO}/releases/tag/v{latest}",
-        )
-        _write_cache(
-            {
-                "checked_at": time.time(),
-                "update_available": True,
-                "update_info": info.model_dump(),
-            }
-        )
-        return info
-    else:
-        _write_cache(
-            {
-                "checked_at": time.time(),
-                "update_available": False,
-            }
-        )
-        return None
+        pass
+    return False
 
 
 def run_self_update() -> tuple[bool, str]:
-    """Self-update amplifier-distro using the detected install method.
+    """Self-update amplifier-distro.
+
+    Editable installs get a message to use git.
+    Tool installs are updated via uv tool install --force.
 
     Returns (success, message) tuple.
     """
-    method = _detect_install_method()
-    package = conventions.PYPI_PACKAGE_NAME
+    if _is_editable_install():
+        return True, (
+            "Editable install detected — update with: "
+            "git pull && uv pip install -e '.[all,dev]'"
+        )
 
-    if method == "uv":
-        cmd = ["uv", "pip", "install", "--upgrade", package]
-    elif method == "pipx":
-        cmd = ["pipx", "upgrade", package]
-    else:
-        import sys
-
-        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", package]
-
+    git_url = f"git+{conventions.GITHUB_REPO_URL}"
     old_version = _get_distro_version()
 
     try:
         result = subprocess.run(
-            cmd,
+            ["uv", "tool", "install", "--force", git_url],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode != 0:
-            return False, f"Update command failed: {result.stderr.strip()}"
-    except subprocess.TimeoutExpired:
-        return False, "Update timed out after 120 seconds."
-    except FileNotFoundError:
-        return False, f"Install tool '{method}' not found. Install it or use pip."
-    except OSError as e:
+            return False, f"Update failed: {result.stderr.strip()}"
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         return False, f"Update failed: {e}"
 
-    # Verify the update by re-reading metadata
-    # Note: in the same process, importlib.metadata may be cached,
-    # so we check via subprocess
+    # Verify via subprocess (importlib.metadata may be cached)
     try:
         verify = subprocess.run(
             ["amp-distro", "--version"],
@@ -288,14 +241,9 @@ def run_self_update() -> tuple[bool, str]:
         new_version = "unknown"
 
     if new_version != old_version and new_version != "unknown":
-        # Clear the update cache since we just updated
         with contextlib.suppress(OSError):
             _cache_path().unlink(missing_ok=True)
-        return True, f"Updated {old_version} -> {new_version} (via {method})."
+        return True, f"Updated {old_version} -> {new_version}."
     elif new_version == old_version:
         return True, f"Already at latest version ({old_version})."
-    else:
-        return (
-            True,
-            f"Update command succeeded (via {method}). Restart to use new version.",
-        )
+    return True, "Update succeeded. Restart to use new version."
