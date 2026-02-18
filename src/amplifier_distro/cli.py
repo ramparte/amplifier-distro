@@ -20,7 +20,13 @@ from .doctor import CheckStatus, DoctorReport, run_diagnostics, run_fixes
 from .migrate import migrate_memory
 from .preflight import PreflightReport, run_preflight
 from .schema import DistroConfig, IdentityConfig, looks_like_path, normalize_path
-from .update_check import check_for_updates, get_version_info, run_self_update
+from .update_check import (
+    _get_distro_version,
+    _get_package_status,
+    _is_editable_install,
+    get_version_info,
+    run_self_update,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +182,8 @@ def init() -> None:
 @main.command(help="Show environment health and check for updates.")
 def status() -> None:
     """Show environment health."""
-    click.echo("Amplifier Distro - Status\n")
+    install_mode = "editable" if _is_editable_install() else "installed"
+    click.echo(f"Amplifier Distro - Status ({install_mode})\n")
 
     try:
         report = run_preflight()
@@ -673,16 +680,22 @@ def service_cmd_status() -> None:
 
 
 def _show_update_notice() -> None:
-    """Show an update notice if a newer version is available.
+    """Show an update notice if distro has a newer commit on GitHub.
 
+    Skipped for editable installs (developer manages their own source).
     Non-blocking: any failure is silently ignored.
     """
     try:
-        info = check_for_updates()
-        if info is not None:
+        if _is_editable_install():
+            return
+        status = _get_package_status(
+            conventions.PYPI_PACKAGE_NAME,
+            _get_distro_version(),
+            conventions.PACKAGE_REPOS["amplifier-distro"],
+        )
+        if status and status.update_available:
             click.echo(
-                f"\nUpdate available: v{info.current_version} -> "
-                f"v{info.latest_version}. "
+                f"\nUpdate available: {status.local_sha} -> {status.remote_sha}. "
                 "Run `amp-distro update` to upgrade."
             )
     except Exception:  # noqa: BLE001

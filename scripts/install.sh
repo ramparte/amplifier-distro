@@ -25,6 +25,16 @@ REPO_URL="https://github.com/ramparte/amplifier-distro"
 AMPLIFIER_URL="https://github.com/microsoft/amplifier"
 TUI_URL="https://github.com/ramparte/amplifier-tui"
 
+# ── Ensure git is available ─────────────────────────────────────
+ensure_git() {
+    if command -v git &>/dev/null; then
+        return
+    fi
+    echo "[install] ERROR: git is required but not installed."
+    echo "  Install git and try again: https://git-scm.com/downloads"
+    exit 1
+}
+
 # ── Ensure uv is available ───────────────────────────────────────
 ensure_uv() {
     if command -v uv &>/dev/null; then
@@ -95,6 +105,7 @@ install_standalone() {
 echo "=== Amplifier Distro - Install ==="
 echo ""
 
+ensure_git
 ensure_uv
 echo ""
 

@@ -1,19 +1,16 @@
 """Update check for amplifier-distro.
 
-Checks GitHub for newer versions, caches results to avoid repeated network
-calls, and provides helpers for displaying update notices in the CLI.
-All paths come from conventions.py.
+SHA-based version comparison for installed packages against GitHub HEAD,
+plus self-update helpers for the CLI.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import platform
 import shutil
 import subprocess
-import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -23,15 +20,6 @@ from pydantic import BaseModel
 from . import conventions
 
 logger = logging.getLogger(__name__)
-
-
-class UpdateInfo(BaseModel):
-    """Information about an available update."""
-
-    current_version: str
-    latest_version: str
-    release_url: str
-    release_notes_url: str
 
 
 class PackageStatus(BaseModel):
@@ -59,19 +47,6 @@ class VersionInfo(BaseModel):
     distro: PackageStatus | None = None
     amplifier: PackageStatus | None = None
     tui: PackageStatus | None = None
-
-
-def _cache_path() -> Path:
-    """Return the path to the update-check cache file.
-
-    Uses conventions.AMPLIFIER_HOME / conventions.CACHE_DIR /
-    conventions.UPDATE_CHECK_CACHE_FILENAME.
-    """
-    return (
-        Path(conventions.AMPLIFIER_HOME).expanduser()
-        / conventions.CACHE_DIR
-        / conventions.UPDATE_CHECK_CACHE_FILENAME
-    )
 
 
 def _get_distro_version() -> str:
@@ -136,8 +111,6 @@ def _detect_install_method() -> str:
     if "pipx" in exe or shutil.which("pipx"):
         return "pipx"
     return "pip"
-
-
 
 
 def _get_local_sha(package_name: str) -> str | None:
@@ -213,16 +186,7 @@ def _sha_from_uv_tool(package_name: str) -> str | None:
 
 
 def _get_remote_sha(repo: str) -> str | None:
-    """Fetch the latest commit SHA for a GitHub repo's default branch.
-
-    Uses the cached result if fresh, otherwise hits the GitHub API.
-    """
-    cached = _read_cache()
-    if cached:
-        remote_shas = cached.get("remote_shas", {})
-        if repo in remote_shas:
-            return remote_shas[repo]
-
+    """Fetch the latest commit SHA for a GitHub repo's default branch."""
     try:
         import urllib.request
 
@@ -233,13 +197,6 @@ def _get_remote_sha(repo: str) -> str | None:
         with urllib.request.urlopen(req, timeout=5) as resp:
             sha = resp.read().decode().strip()
             if sha:
-                # Update cache with this SHA
-                data = cached or {"checked_at": time.time()}
-                remote_shas = data.get("remote_shas", {})
-                remote_shas[repo] = sha[:7]
-                data["remote_shas"] = remote_shas
-                data["checked_at"] = time.time()
-                _write_cache(data)
                 return sha[:7]
     except Exception:  # noqa: BLE001
         logger.debug("Failed to fetch remote SHA for %s", repo)
@@ -290,15 +247,23 @@ def get_version_info() -> VersionInfo:
     distro_ver = _get_distro_version()
     amp_ver = _get_amplifier_version()
     tui_ver = _get_tui_version()
+    editable = _is_editable_install()
+
+    # Skip remote SHA for distro when editable — developer manages their own source.
+    if editable:
+        local_sha = _get_local_sha(conventions.PYPI_PACKAGE_NAME)
+        distro = PackageStatus(version=distro_ver, local_sha=local_sha)
+    else:
+        distro = _get_package_status(
+            conventions.PYPI_PACKAGE_NAME, distro_ver, conventions.PACKAGE_REPOS["amplifier-distro"]
+        )
 
     return VersionInfo(
         python_version=platform.python_version(),
         platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
         install_method=_detect_install_method()
-        + (" (editable)" if _is_editable_install() else ""),
-        distro=_get_package_status(
-            conventions.PYPI_PACKAGE_NAME, distro_ver, conventions.PACKAGE_REPOS["amplifier-distro"]
-        ),
+        + (" (editable)" if editable else ""),
+        distro=distro,
         amplifier=_get_package_status(
             "amplifier-app-cli", amp_ver, conventions.PACKAGE_REPOS["amplifier-app-cli"]
         ),
@@ -306,56 +271,6 @@ def get_version_info() -> VersionInfo:
             "amplifier-tui", tui_ver, conventions.PACKAGE_REPOS["amplifier-tui"]
         ),
     )
-
-
-def _read_cache() -> dict | None:
-    """Read the cached update-check result, if fresh.
-
-    Returns the cached data dict if the cache exists and is less than
-    UPDATE_CHECK_TTL_HOURS old.  Returns None otherwise.
-    """
-    path = _cache_path()
-    if not path.exists():
-        return None
-
-    try:
-        data = json.loads(path.read_text())
-        checked_at = data.get("checked_at", 0)
-        age_hours = (time.time() - checked_at) / 3600
-        if age_hours < conventions.UPDATE_CHECK_TTL_HOURS:
-            return data
-    except (json.JSONDecodeError, OSError, KeyError):
-        pass
-
-    return None
-
-
-def _write_cache(data: dict) -> None:
-    """Write update-check result to the cache file."""
-    path = _cache_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data))
-    except OSError:
-        pass  # Non-critical: cache write failure is silent
-
-
-def _parse_version(v: str) -> tuple[int, ...]:
-    """Parse a version string like '0.1.0' into a comparable tuple."""
-    try:
-        return tuple(int(x) for x in v.strip().lstrip("v").split("."))
-    except (ValueError, AttributeError):
-        return (0, 0, 0)
-
-
-def check_for_updates() -> UpdateInfo | None:
-    """Check if a newer version of amplifier-distro is available.
-
-    Currently always returns None (no version comparison).
-    The `amp-distro update` command re-installs from git HEAD
-    unconditionally, so this is only used for passive update notices.
-    """
-    return None
 
 
 def _is_editable_install() -> bool:
@@ -383,8 +298,8 @@ def run_self_update() -> tuple[bool, str]:
     """
     if _is_editable_install():
         return True, (
-            "Editable install detected — update with: "
-            "git pull && uv pip install -e '.[all,dev]'"
+            "Editable install detected — update with: git pull\n"
+            "(Re-run `uv pip install -e '.[all]'` if dependencies changed.)"
         )
 
     git_url = f"git+{conventions.GITHUB_REPO_URL}"
@@ -417,8 +332,6 @@ def run_self_update() -> tuple[bool, str]:
         new_version = "unknown"
 
     if new_version != old_version and new_version != "unknown":
-        with contextlib.suppress(OSError):
-            _cache_path().unlink(missing_ok=True)
         return True, f"Updated {old_version} -> {new_version}."
     elif new_version == old_version:
         return True, f"Already at latest version ({old_version})."

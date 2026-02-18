@@ -2,31 +2,21 @@
 
 Covers:
 - Version command output (T9.1)
-- Update check logic with mocked HTTP (T9.2)
-- Update check caching / TTL (T9.2)
-- UpdateInfo and VersionInfo models (T9.2)
+- PackageStatus and VersionInfo models (T9.2)
 - Update command with mocked subprocess (T9.4)
 - Status command update notice (T9.3)
 - Improved help text (T9.5)
 """
 
 import platform
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from amplifier_distro import conventions
 from amplifier_distro.cli import main
 from amplifier_distro.update_check import (
-    UpdateInfo,
+    PackageStatus,
     VersionInfo,
-    _cache_path,
-    _parse_version,
-    _read_cache,
-    _write_cache,
-    check_for_updates,
     get_version_info,
     run_self_update,
 )
@@ -71,34 +61,6 @@ class TestVersionCommand:
         assert "amplifier-distro:" in result.output
 
 
-class TestUpdateInfoModel:
-    """T9.2: Test the UpdateInfo Pydantic model."""
-
-    def test_update_info_fields(self):
-        info = UpdateInfo(
-            current_version="0.1.0",
-            latest_version="0.2.0",
-            release_url="https://pypi.org/project/amplifier-distro/0.2.0/",
-            release_notes_url="https://github.com/microsoft/amplifier-distro/releases/tag/v0.2.0",
-        )
-        assert info.current_version == "0.1.0"
-        assert info.latest_version == "0.2.0"
-        assert "pypi.org" in info.release_url
-        assert "github.com" in info.release_notes_url
-
-    def test_update_info_serializes(self):
-        info = UpdateInfo(
-            current_version="1.0.0",
-            latest_version="1.1.0",
-            release_url="https://example.com",
-            release_notes_url="https://example.com/notes",
-        )
-        data = info.model_dump()
-        assert data["current_version"] == "1.0.0"
-        restored = UpdateInfo(**data)
-        assert restored == info
-
-
 class TestVersionInfo:
     """T9.2: Test the VersionInfo model and get_version_info()."""
 
@@ -120,135 +82,6 @@ class TestVersionInfo:
         assert info.python_version == platform.python_version()
         assert platform.system() in info.platform
         assert info.install_method.split()[0] in ("uv", "pip", "pipx")
-
-
-class TestParseVersion:
-    """T9.2: Test version string parsing."""
-
-    def test_simple_version(self):
-        assert _parse_version("1.2.3") == (1, 2, 3)
-
-    def test_version_with_v_prefix(self):
-        assert _parse_version("v1.2.3") == (1, 2, 3)
-
-    def test_version_comparison(self):
-        assert _parse_version("0.2.0") > _parse_version("0.1.0")
-        assert _parse_version("1.0.0") > _parse_version("0.9.9")
-        assert _parse_version("0.1.0") == _parse_version("0.1.0")
-
-    def test_invalid_version(self):
-        assert _parse_version("invalid") == (0, 0, 0)
-        assert _parse_version("") == (0, 0, 0)
-
-
-class TestUpdateCheckCaching:
-    """T9.2: Test that update checks are cached and respect TTL."""
-
-    def test_cache_path_uses_conventions(self):
-        """Cache path must use conventions.py constants."""
-        path = _cache_path()
-        assert conventions.CACHE_DIR in str(path)
-        assert conventions.UPDATE_CHECK_CACHE_FILENAME in str(path)
-
-    def test_write_and_read_cache(self, tmp_path):
-        """Cache round-trips correctly."""
-        cache_file = tmp_path / "update-check.json"
-        with patch(
-            "amplifier_distro.update_check._cache_path", return_value=cache_file
-        ):
-            data = {"checked_at": time.time(), "update_available": False}
-            _write_cache(data)
-            assert cache_file.exists()
-
-            result = _read_cache()
-            assert result is not None
-            assert result["update_available"] is False
-
-    def test_expired_cache_returns_none(self, tmp_path):
-        """Cache older than TTL is treated as missing."""
-        cache_file = tmp_path / "update-check.json"
-        with patch(
-            "amplifier_distro.update_check._cache_path", return_value=cache_file
-        ):
-            old_time = time.time() - (conventions.UPDATE_CHECK_TTL_HOURS + 1) * 3600
-            data = {"checked_at": old_time, "update_available": False}
-            _write_cache(data)
-
-            result = _read_cache()
-            assert result is None  # Expired, should not be returned
-
-    def test_check_for_updates_uses_cache(self, tmp_path):
-        """check_for_updates returns None when cache says up-to-date."""
-        cache_file = tmp_path / "update-check.json"
-        with patch(
-            "amplifier_distro.update_check._cache_path", return_value=cache_file
-        ):
-            # Write a fresh "up to date" cache entry
-            data = {"checked_at": time.time(), "update_available": False}
-            _write_cache(data)
-
-            # Should return None without making any HTTP calls
-            result = check_for_updates()
-            assert result is None
-
-    def test_check_for_updates_always_returns_none(self, tmp_path):
-        """check_for_updates always returns None (PyPI check disabled)."""
-        cache_file = tmp_path / "update-check.json"
-        with patch(
-            "amplifier_distro.update_check._cache_path", return_value=cache_file
-        ):
-            data = {
-                "checked_at": time.time(),
-                "update_available": True,
-            }
-            _write_cache(data)
-
-            result = check_for_updates()
-            assert result is None
-
-
-class TestCheckForUpdates:
-    """T9.2: Test the update check with mocked HTTP calls."""
-
-    def test_always_returns_none(self, tmp_path):
-        """check_for_updates always returns None (version comparison via SHA now)."""
-        cache_file = tmp_path / "update-check.json"
-
-        with patch(
-            "amplifier_distro.update_check._cache_path", return_value=cache_file
-        ):
-            result = check_for_updates()
-            assert result is None
-
-    def test_returns_none_when_up_to_date(self, tmp_path):
-        """Returns None when installed version matches PyPI."""
-        cache_file = tmp_path / "update-check.json"
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"info": {"version": "0.1.0"}}
-        mock_response.raise_for_status = MagicMock()
-
-        with (
-            patch("amplifier_distro.update_check._cache_path", return_value=cache_file),
-            patch(
-                "amplifier_distro.update_check._get_distro_version",
-                return_value="0.1.0",
-            ),
-            patch("httpx.get", return_value=mock_response),
-        ):
-            result = check_for_updates()
-            assert result is None
-
-    def test_returns_none_on_network_error(self, tmp_path):
-        """Returns None silently when network is unavailable."""
-        cache_file = tmp_path / "update-check.json"
-
-        with (
-            patch("amplifier_distro.update_check._cache_path", return_value=cache_file),
-            patch("httpx.get", side_effect=Exception("Network error")),
-        ):
-            result = check_for_updates()
-            assert result is None
 
 
 class TestUpdateCommand:
@@ -292,10 +125,6 @@ class TestUpdateCommand:
                 "amplifier_distro.update_check.subprocess.run",
                 side_effect=[mock_upgrade, mock_verify],
             ),
-            patch(
-                "amplifier_distro.update_check._cache_path",
-                return_value=Path("/tmp/nonexistent-cache.json"),
-            ),
         ):
             success, message = run_self_update()
             assert success is True
@@ -335,45 +164,65 @@ class TestUpdateCommand:
 
 
 class TestStatusUpdateNotice:
-    """T9.3: Test that status command shows update notices."""
+    """T9.3: Test that status command shows update notices via SHA comparison."""
 
     def test_status_shows_update_notice(self):
-        """When an update is available, status shows the notice."""
+        """When local SHA != remote SHA, status shows the notice."""
         from amplifier_distro.preflight import CheckResult, PreflightReport
 
         runner = CliRunner()
         ok_report = PreflightReport()
         ok_report.checks.append(CheckResult("test", True, "OK"))
 
-        update_info = UpdateInfo(
-            current_version="0.1.0",
-            latest_version="0.2.0",
-            release_url="https://example.com",
-            release_notes_url="https://example.com/notes",
+        status_with_update = PackageStatus(
+            version="0.1.0",
+            local_sha="abc1234",
+            remote_sha="def5678",
         )
 
         with (
             patch("amplifier_distro.cli.run_preflight", return_value=ok_report),
-            patch("amplifier_distro.cli.check_for_updates", return_value=update_info),
+            patch("amplifier_distro.cli._is_editable_install", return_value=False),
+            patch(
+                "amplifier_distro.cli._get_package_status",
+                return_value=status_with_update,
+            ),
+            patch(
+                "amplifier_distro.cli._get_distro_version",
+                return_value="0.1.0",
+            ),
         ):
             result = runner.invoke(main, ["status"])
             assert result.exit_code == 0
             assert "Update available" in result.output
-            assert "0.1.0" in result.output
-            assert "0.2.0" in result.output
+            assert "abc1234" in result.output
+            assert "def5678" in result.output
             assert "amp-distro update" in result.output
 
     def test_status_no_notice_when_up_to_date(self):
-        """When up to date, status does NOT show an update notice."""
+        """When local SHA == remote SHA, status does NOT show an update notice."""
         from amplifier_distro.preflight import CheckResult, PreflightReport
 
         runner = CliRunner()
         ok_report = PreflightReport()
         ok_report.checks.append(CheckResult("test", True, "OK"))
 
+        status_up_to_date = PackageStatus(
+            version="0.1.0",
+            local_sha="abc1234",
+            remote_sha="abc1234",
+        )
+
         with (
             patch("amplifier_distro.cli.run_preflight", return_value=ok_report),
-            patch("amplifier_distro.cli.check_for_updates", return_value=None),
+            patch(
+                "amplifier_distro.cli._get_package_status",
+                return_value=status_up_to_date,
+            ),
+            patch(
+                "amplifier_distro.cli._get_distro_version",
+                return_value="0.1.0",
+            ),
         ):
             result = runner.invoke(main, ["status"])
             assert result.exit_code == 0
