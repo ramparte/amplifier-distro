@@ -49,9 +49,20 @@ Opens a browser-based environment with everything installed.
 
 ### Docker (for isolated testing)
 
+Some examples for how to use the Docker container for local testing:
+
 ```bash
+# Build a container from local source
 docker build -t amplifier-distro .
-docker run -p 8400:8400 amplifier-distro # runs the web server, for example
+
+# Start the container and web server
+docker run -e GH_TOKEN=$(gh auth token) -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY -e OPENAI_API_KEY=$OPEN_API_KEY -p 8400:8400 --name amp amplifier-distro
+
+# In another terminal, jump into the running container's shell
+docker exec -it amp bash
+
+# Or, just start a new instance with a shell
+docker run --rm -it -e GH_TOKEN=$(gh auth token) amplifier-distro bash
 ```
 
 ## Usage

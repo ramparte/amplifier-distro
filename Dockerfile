@@ -7,11 +7,19 @@
 # Run:    docker run -p 8400:8400 amplifier-distro
 # Shell:  docker run -it amplifier-distro bash
 # TUI:    docker run -it amplifier-distro amplifier-tui
+#
+# GitHub auth (pass your local gh token into the container):
+#   docker run -e GH_TOKEN=$(gh auth token) -p 8400:8400 amplifier-distro
 
 FROM python:3.12-slim
 
-# curl for healthcheck, git for backup/clone/install operations
+# curl for healthcheck, git for backup/clone/install, gh for GitHub API
 RUN apt-get update && apt-get install -y --no-install-recommends curl git \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
 # uv for fast installs (same script as devcontainer and curl|bash)
