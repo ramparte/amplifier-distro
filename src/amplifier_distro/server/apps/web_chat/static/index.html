@@ -497,7 +497,34 @@ async function sendMessage() {
   messageInput.value = '';
   autoResize();
 
-  // Try sending to backend
+  // Auto-create session if needed
+  if (!sessionConnected) {
+    try {
+      const sessionRes = await fetch('./api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (sessionRes.ok) {
+        sessionConnected = true;
+        updateBadge();
+      } else {
+        addMessage('system',
+          '<p>Could not create a session (HTTP ' + sessionRes.status + '). ' +
+          'Check server logs for details.</p>'
+        );
+        return;
+      }
+    } catch {
+      addMessage('system',
+        '<p>Could not reach the server to create a session. ' +
+        'Make sure the Amplifier server is running.</p>'
+      );
+      return;
+    }
+  }
+
+  // Send message to backend
   showTyping();
   try {
     const res = await fetch('./api/chat', {
@@ -562,8 +589,7 @@ sendBtn.addEventListener('click', sendMessage);
     '</ul>' +
     (sessionConnected
       ? '<p><em>Session connected &mdash; start chatting below.</em></p>'
-      : '<p><em>No active session. Messages are echoed locally for now. ' +
-        'Full session support is coming soon.</em></p>')
+      : '<p><em>Send a message to start a session.</em></p>')
   );
 
   messageInput.focus();
