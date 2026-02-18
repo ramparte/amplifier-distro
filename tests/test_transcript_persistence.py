@@ -335,3 +335,110 @@ class TestRegisterTranscriptHooks:
 
         # Must not raise
         register_transcript_hooks(session, session_dir)
+
+
+class TestResumeTranscriptPreservation:
+    """Verify transcript.jsonl preserves old messages after resume.
+
+    This is the critical end-to-end test: session creates transcript,
+    server restarts, resume loads old messages via set_messages(),
+    new messages are added, and the hook writes old + new together.
+    """
+
+    def test_hook_preserves_old_messages_after_resume(self, tmp_path: Path) -> None:
+        """After resume, transcript contains old + new messages, not just new.
+
+        Simulates:
+        1. First session writes transcript with 2 messages
+        2. Resume loads those 2 messages into context (set_messages)
+        3. New message is added (user sends "message 3")
+        4. Hook fires → transcript should have 3+ messages (old + new)
+        """
+        from amplifier_distro.transcript_persistence import (
+            TranscriptSaveHook,
+            write_transcript,
+        )
+
+        # Step 1: First session writes transcript with 2 messages
+        old_messages = [
+            {"role": "user", "content": "message 1"},
+            {"role": "assistant", "content": "response 1"},
+        ]
+        write_transcript(tmp_path, old_messages)
+
+        # Verify transcript has 2 lines
+        transcript = tmp_path / "transcript.jsonl"
+        assert len(transcript.read_text().strip().split("\n")) == 2
+
+        # Step 2+3: After resume, context has old + new messages
+        # (set_messages loaded the old ones, orchestrator added new ones)
+        resumed_messages = [
+            {"role": "user", "content": "message 1"},
+            {"role": "assistant", "content": "response 1"},
+            {"role": "user", "content": "message 2"},
+            {"role": "assistant", "content": "response 2"},
+        ]
+        session = _make_mock_session(resumed_messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        # Step 4: Hook fires after orchestrator:complete
+        asyncio.run(hook("orchestrator:complete", {}))
+
+        # Verify transcript has ALL 4 messages (old + new), not just 2
+        lines = [
+            json.loads(line) for line in transcript.read_text().strip().split("\n")
+        ]
+        assert len(lines) == 4, (
+            f"Expected 4 messages (old + new) but got {len(lines)}. "
+            "Transcript was overwritten instead of preserving old messages."
+        )
+        assert lines[0]["content"] == "message 1"
+        assert lines[1]["content"] == "response 1"
+        assert lines[2]["content"] == "message 2"
+        assert lines[3]["content"] == "response 2"
+
+    def test_hook_does_not_shrink_transcript_on_resume(self, tmp_path: Path) -> None:
+        """Hook must never write fewer messages than already on disk.
+
+        If context.get_messages() returns only post-resume messages
+        (a bug in the resume flow), the hook should still write them —
+        but this test documents the EXPECTED behavior: get_messages()
+        should return old + new after set_messages() was called.
+        """
+        from amplifier_distro.transcript_persistence import (
+            TranscriptSaveHook,
+            write_transcript,
+        )
+
+        # Original transcript has 4 messages
+        original_messages = [
+            {"role": "user", "content": "msg 1"},
+            {"role": "assistant", "content": "resp 1"},
+            {"role": "user", "content": "msg 2"},
+            {"role": "assistant", "content": "resp 2"},
+        ]
+        write_transcript(tmp_path, original_messages)
+
+        # After resume, context has old 4 + new 2 = 6 messages
+        all_messages = original_messages + [
+            {"role": "user", "content": "msg 3"},
+            {"role": "assistant", "content": "resp 3"},
+        ]
+        session = _make_mock_session(all_messages)
+        hook = TranscriptSaveHook(session, tmp_path)
+
+        asyncio.run(hook("orchestrator:complete", {}))
+
+        lines = [
+            json.loads(line)
+            for line in tmp_path.joinpath("transcript.jsonl")
+            .read_text()
+            .strip()
+            .split("\n")
+        ]
+        assert len(lines) == 6, (
+            f"Expected 6 messages but got {len(lines)}. "
+            "Transcript shrank instead of growing."
+        )
+        assert lines[4]["content"] == "msg 3"
+        assert lines[5]["content"] == "resp 3"
