@@ -331,3 +331,123 @@ class TestTranscriptSaveHook:
 
         assert (tmp_path / "transcript.jsonl").exists()
         assert result.action == "continue"
+
+
+class TestRegisterTranscriptHooks:
+    """Verify hook registration on both events."""
+
+    def test_registers_on_tool_post_and_orchestrator_complete(self) -> None:
+        """Both tool:post and orchestrator:complete hooks are registered."""
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        session = MagicMock()
+        session.coordinator.hooks.register = MagicMock()
+        session_dir = Path("/tmp/fake-session")
+
+        register_transcript_hooks(session, session_dir)
+
+        calls = session.coordinator.hooks.register.call_args_list
+        assert len(calls) == 2
+
+        events_registered = set()
+        for call in calls:
+            events_registered.add(
+                call.kwargs.get(
+                    "event", call[1].get("event") if len(call) > 1 else None
+                )
+            )
+        assert "tool:post" in events_registered
+        assert "orchestrator:complete" in events_registered
+
+    def test_registers_at_priority_900(self) -> None:
+        """Hooks use priority 900 (after streaming at 100, before trace at 1000)."""
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        session = MagicMock()
+        session.coordinator.hooks.register = MagicMock()
+        session_dir = Path("/tmp/fake-session")
+
+        register_transcript_hooks(session, session_dir)
+
+        for call in session.coordinator.hooks.register.call_args_list:
+            priority = call.kwargs.get("priority")
+            assert priority == 900
+
+    def test_same_handler_for_both_events(self) -> None:
+        """Both events share the same hook instance (for debounce to work)."""
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        session = MagicMock()
+        session.coordinator.hooks.register = MagicMock()
+        session_dir = Path("/tmp/fake-session")
+
+        register_transcript_hooks(session, session_dir)
+
+        calls = session.coordinator.hooks.register.call_args_list
+        handler_0 = calls[0].kwargs.get("handler")
+        handler_1 = calls[1].kwargs.get("handler")
+        assert handler_0 is handler_1
+
+    def test_silently_noops_if_hooks_unavailable(self) -> None:
+        """No exception if session has no hooks API."""
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
+
+        session = MagicMock(spec=[])  # no attributes at all
+        session_dir = Path("/tmp/fake-session")
+
+        # Must not raise
+        register_transcript_hooks(session, session_dir)
+
+
+class TestFlushTranscript:
+    """Verify end-of-turn flush."""
+
+    def test_writes_transcript(self, tmp_path: Path) -> None:
+        """flush_transcript writes transcript.jsonl."""
+        from amplifier_distro.transcript_persistence import flush_transcript
+
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        session = _make_mock_session(messages)
+
+        asyncio.run(flush_transcript(session, tmp_path))
+
+        transcript = tmp_path / "transcript.jsonl"
+        assert transcript.exists()
+        lines = transcript.read_text().strip().split("\n")
+        assert len(lines) == 2
+
+    def test_noops_if_no_messages(self, tmp_path: Path) -> None:
+        """flush_transcript is a no-op when there are no messages."""
+        from amplifier_distro.transcript_persistence import flush_transcript
+
+        session = _make_mock_session([])
+
+        asyncio.run(flush_transcript(session, tmp_path))
+
+        transcript = tmp_path / "transcript.jsonl"
+        assert not transcript.exists()
+
+    def test_noops_if_context_unavailable(self, tmp_path: Path) -> None:
+        """flush_transcript handles missing context gracefully."""
+        from amplifier_distro.transcript_persistence import flush_transcript
+
+        session = MagicMock()
+        session.coordinator.get = MagicMock(return_value=None)
+
+        asyncio.run(flush_transcript(session, tmp_path))
+
+        assert not (tmp_path / "transcript.jsonl").exists()
+
+    def test_best_effort_exception_does_not_propagate(self, tmp_path: Path) -> None:
+        """flush_transcript catches all exceptions."""
+        from amplifier_distro.transcript_persistence import flush_transcript
+
+        session = _make_mock_session()
+        context = session.coordinator.get("context")
+        context.get_messages = AsyncMock(side_effect=RuntimeError("boom"))
+
+        # Must not raise
+        asyncio.run(flush_transcript(session, tmp_path))

@@ -110,3 +110,47 @@ class TranscriptSaveHook:
             logger.warning("Transcript save failed", exc_info=True)
 
         return HookResult(action="continue")
+
+
+def register_transcript_hooks(session: Any, session_dir: Path) -> None:
+    """Register transcript persistence hooks on a session.
+
+    Safe to call on both fresh and resumed sessions.
+    Silently no-ops if hooks API is unavailable.
+    """
+    try:
+        hook = TranscriptSaveHook(session, session_dir)
+        hooks = session.coordinator.hooks
+        hooks.register(
+            event="tool:post",
+            handler=hook,
+            priority=_PRIORITY,
+            name="bridge-transcript:tool:post",
+        )
+        hooks.register(
+            event="orchestrator:complete",
+            handler=hook,
+            priority=_PRIORITY,
+            name="bridge-transcript:orchestrator:complete",
+        )
+        logger.debug(
+            "Transcript hooks registered -> %s", session_dir / TRANSCRIPT_FILENAME
+        )
+    except (AttributeError, TypeError, Exception):  # noqa: BLE001
+        logger.debug("Could not register transcript hooks", exc_info=True)
+
+
+async def flush_transcript(session: Any, session_dir: Path) -> None:
+    """One-shot transcript save. Called after handle.run() as belt-and-suspenders.
+
+    Async because context.get_messages() is async.
+    """
+    try:
+        context = session.coordinator.get("context")
+        if not context or not hasattr(context, "get_messages"):
+            return
+        messages = await context.get_messages()
+        if messages:
+            write_transcript(session_dir, messages)
+    except Exception:  # noqa: BLE001
+        logger.warning("End-of-turn transcript flush failed", exc_info=True)
