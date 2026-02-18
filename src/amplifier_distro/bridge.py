@@ -495,23 +495,52 @@ class LocalBridge:
             )
 
         # 8. Load previous transcript and inject as context
+        #
+        # Fixes applied (issues #23, #25):
+        #  - Stream file line-by-line instead of read_text() to avoid
+        #    loading multi-MB transcripts into memory at once.
+        #  - Pass through all message fields (the transcript is self-
+        #    authored data; the context module handles token budgeting
+        #    via compaction at request time).
+        #  - Strip orphaned tool messages that would cause provider 400s
+        #    if the session was interrupted mid-tool-call.
         transcript_file = session_dir / TRANSCRIPT_FILENAME
         if transcript_file.exists():
             try:
-                messages = []
-                for line in transcript_file.read_text().splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = json.loads(line)
-                    role = entry.get("role", "user")
-                    content = entry.get("content", "")
-                    if content:
-                        messages.append({"role": role, "content": content})
+                messages: list[dict[str, Any]] = []
+                with transcript_file.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            # Skip malformed lines (e.g. truncated by crash)
+                            logger.debug("Skipping malformed transcript line")
+                            continue
+                        if entry.get("role"):
+                            messages.append(entry)
+
+                # Strip orphaned tool results from the front (from a
+                # session that was interrupted mid-tool-call sequence).
+                # Orphaned tool messages without a preceding
+                # assistant+tool_calls cause provider 400 errors.
+                while messages and messages[0].get("role") == "tool":
+                    messages.pop(0)
+
+                # Strip trailing assistant+tool_calls whose tool results
+                # were never written (session crashed mid-execution).
+                while (
+                    messages
+                    and messages[-1].get("role") == "assistant"
+                    and messages[-1].get("tool_calls")
+                ):
+                    messages.pop()
 
                 if messages:
                     try:
-                        session.coordinator.context.add_messages(messages)
+                        await session.coordinator.context.set_messages(messages)
                         logger.info(
                             "Injected %d messages from previous transcript",
                             len(messages),
