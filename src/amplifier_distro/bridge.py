@@ -477,12 +477,17 @@ class LocalBridge:
         streaming = BridgeStreamingHook(on_event=config.on_stream)
 
         # 6. Create session (preserving original session ID)
+        # Pass session_dir as session_cwd so amplifier-core writes events
+        # to the SAME directory the original session used, not the server's
+        # CWD. Without this, core creates a second session directory under
+        # a different project path, causing duplicate-directory errors on
+        # subsequent resumes.
         session = await prepared.create_session(
             session_id=session_id,
             is_resumed=True,
             approval_system=approval,
             display_system=display,
-            session_cwd=config.working_dir,
+            session_cwd=session_dir,
         )
 
         # 7. Register streaming hooks
@@ -506,7 +511,9 @@ class LocalBridge:
 
         # 7b. Register transcript persistence hooks
         try:
-            from amplifier_distro.transcript_persistence import register_transcript_hooks
+            from amplifier_distro.transcript_persistence import (
+                register_transcript_hooks,
+            )
 
             register_transcript_hooks(session, session_dir)
         except Exception:  # noqa: BLE001
