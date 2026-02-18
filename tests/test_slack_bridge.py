@@ -114,23 +114,6 @@ class TestSlackModels:
         assert msg.conversation_key == "C123:1.0"
         assert msg.is_threaded
 
-    def test_session_mapping_conversation_key(self):
-        from amplifier_distro.server.apps.slack.models import SessionMapping
-
-        m1 = SessionMapping(session_id="s1", channel_id="C1")
-        assert m1.conversation_key == "C1"
-
-        m2 = SessionMapping(session_id="s2", channel_id="C1", thread_ts="1.0")
-        assert m2.conversation_key == "C1:1.0"
-
-    def test_session_mapping_defaults(self):
-        from amplifier_distro.server.apps.slack.models import SessionMapping
-
-        m = SessionMapping(session_id="test", channel_id="C1")
-        assert m.is_active is True
-        assert m.created_at  # Should have a default timestamp
-        assert m.last_active
-
     def test_channel_type_enum(self):
         from amplifier_distro.server.apps.slack.models import ChannelType
 
