@@ -572,12 +572,29 @@ def version() -> None:
     info = get_version_info()
 
     click.echo("Amplifier Distro - Version\n")
-    click.echo(f"  amplifier-distro:  {info.distro_version}")
-    if info.amplifier_version:
-        click.echo(f"  amplifier:         {info.amplifier_version}")
-    else:
-        click.echo("  amplifier:         not installed")
-    click.echo(f"  Python:            {info.python_version}")
+
+    for label, pkg in [
+        ("amplifier-distro", info.distro),
+        ("amplifier", info.amplifier),
+        ("amplifier-tui", info.tui),
+    ]:
+        if pkg is None:
+            click.echo(f"  {label + ':':<19} not installed")
+            continue
+        if not pkg.installed:
+            click.echo(f"  {label + ':':<19} not installed")
+            continue
+        parts = [pkg.version]
+        if pkg.local_sha:
+            parts.append(pkg.local_sha)
+        line = f"  {label + ':':<19} {' '.join(parts)}"
+        if pkg.update_available is True:
+            line += f"  (latest: {pkg.remote_sha})"
+        elif pkg.update_available is False:
+            line += "  (up to date)"
+        click.echo(line)
+
+    click.echo(f"\n  Python:            {info.python_version}")
     click.echo(f"  Platform:          {info.platform}")
     click.echo(f"  Install method:    {info.install_method}")
 

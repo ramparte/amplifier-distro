@@ -112,6 +112,13 @@ PYPI_PACKAGE_NAME = "amplifier-distro"
 GITHUB_REPO = "ramparte/amplifier-distro"
 GITHUB_REPO_URL = "https://github.com/ramparte/amplifier-distro"
 
+# Package-to-repo mapping for version/update checks
+PACKAGE_REPOS: dict[str, str] = {
+    "amplifier-distro": GITHUB_REPO,
+    "amplifier-app-cli": "microsoft/amplifier",
+    "amplifier-tui": "ramparte/amplifier-tui",
+}
+
 # --- Project-Level Conventions ---
 # These files may appear in a project's working directory
 PROJECT_AGENTS_FILENAME = "AGENTS.md"

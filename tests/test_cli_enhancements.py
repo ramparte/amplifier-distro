@@ -104,22 +104,22 @@ class TestVersionInfo:
 
     def test_version_info_fields(self):
         info = VersionInfo(
-            distro_version="0.1.0",
-            amplifier_version=None,
             python_version="3.11.0",
             platform="Linux 6.1 (x86_64)",
             install_method="uv",
         )
-        assert info.distro_version == "0.1.0"
-        assert info.amplifier_version is None
+        assert info.python_version == "3.11.0"
         assert info.install_method == "uv"
+        assert info.distro is None
+        assert info.amplifier is None
+        assert info.tui is None
 
     def test_get_version_info_returns_real_data(self):
         info = get_version_info()
         assert isinstance(info, VersionInfo)
         assert info.python_version == platform.python_version()
         assert platform.system() in info.platform
-        assert info.install_method in ("uv", "pip", "pipx")
+        assert info.install_method.split()[0] in ("uv", "pip", "pipx")
 
 
 class TestParseVersion:
@@ -191,53 +191,34 @@ class TestUpdateCheckCaching:
             result = check_for_updates()
             assert result is None
 
-    def test_check_for_updates_returns_cached_update(self, tmp_path):
-        """check_for_updates returns UpdateInfo from cache if update available."""
+    def test_check_for_updates_always_returns_none(self, tmp_path):
+        """check_for_updates always returns None (PyPI check disabled)."""
         cache_file = tmp_path / "update-check.json"
-        info = UpdateInfo(
-            current_version="0.1.0",
-            latest_version="0.2.0",
-            release_url="https://example.com",
-            release_notes_url="https://example.com/notes",
-        )
         with patch(
             "amplifier_distro.update_check._cache_path", return_value=cache_file
         ):
             data = {
                 "checked_at": time.time(),
                 "update_available": True,
-                "update_info": info.model_dump(),
             }
             _write_cache(data)
 
             result = check_for_updates()
-            assert result is not None
-            assert result.latest_version == "0.2.0"
+            assert result is None
 
 
 class TestCheckForUpdates:
     """T9.2: Test the update check with mocked HTTP calls."""
 
-    def test_returns_update_info_when_newer_available(self, tmp_path):
-        """Returns UpdateInfo when PyPI has a newer version."""
+    def test_always_returns_none(self, tmp_path):
+        """check_for_updates always returns None (version comparison via SHA now)."""
         cache_file = tmp_path / "update-check.json"
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"info": {"version": "99.0.0"}}
-        mock_response.raise_for_status = MagicMock()
-
-        with (
-            patch("amplifier_distro.update_check._cache_path", return_value=cache_file),
-            patch(
-                "amplifier_distro.update_check._get_distro_version",
-                return_value="0.1.0",
-            ),
-            patch("httpx.get", return_value=mock_response),
+        with patch(
+            "amplifier_distro.update_check._cache_path", return_value=cache_file
         ):
             result = check_for_updates()
-            assert result is not None
-            assert result.current_version == "0.1.0"
-            assert result.latest_version == "99.0.0"
+            assert result is None
 
     def test_returns_none_when_up_to_date(self, tmp_path):
         """Returns None when installed version matches PyPI."""
@@ -283,13 +264,16 @@ class TestUpdateCommand:
     def test_update_when_already_latest(self):
         """Shows 'already at latest' when no update available."""
         runner = CliRunner()
-        with patch("amplifier_distro.cli.check_for_updates", return_value=None):
+        with patch(
+            "amplifier_distro.cli.run_self_update",
+            return_value=(True, "Already at latest version (0.1.0)."),
+        ):
             result = runner.invoke(main, ["update"])
             assert result.exit_code == 0
             assert "latest version" in result.output.lower()
 
     def test_run_self_update_success(self):
-        """run_self_update succeeds with mocked subprocess."""
+        """run_self_update succeeds with mocked subprocess (non-editable)."""
         mock_upgrade = MagicMock(returncode=0, stdout="", stderr="")
         mock_verify = MagicMock(
             returncode=0, stdout="amp-distro, version 0.2.0", stderr=""
@@ -297,8 +281,8 @@ class TestUpdateCommand:
 
         with (
             patch(
-                "amplifier_distro.update_check._detect_install_method",
-                return_value="pip",
+                "amplifier_distro.update_check._is_editable_install",
+                return_value=False,
             ),
             patch(
                 "amplifier_distro.update_check._get_distro_version",
@@ -315,6 +299,18 @@ class TestUpdateCommand:
         ):
             success, message = run_self_update()
             assert success is True
+            assert "0.2.0" in message
+
+    def test_run_self_update_editable(self):
+        """run_self_update returns message for editable installs."""
+        with patch(
+            "amplifier_distro.update_check._is_editable_install",
+            return_value=True,
+        ):
+            success, message = run_self_update()
+            assert success is True
+            assert "editable" in message.lower()
+            assert "git pull" in message
 
     def test_run_self_update_failure(self):
         """run_self_update reports failure on non-zero exit."""
@@ -322,8 +318,8 @@ class TestUpdateCommand:
 
         with (
             patch(
-                "amplifier_distro.update_check._detect_install_method",
-                return_value="pip",
+                "amplifier_distro.update_check._is_editable_install",
+                return_value=False,
             ),
             patch(
                 "amplifier_distro.update_check._get_distro_version",

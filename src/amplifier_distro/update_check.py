@@ -1,6 +1,6 @@
 """Update check for amplifier-distro.
 
-Checks PyPI for newer versions, caches results to avoid repeated network
+Checks GitHub for newer versions, caches results to avoid repeated network
 calls, and provides helpers for displaying update notices in the CLI.
 All paths come from conventions.py.
 """
@@ -34,14 +34,31 @@ class UpdateInfo(BaseModel):
     release_notes_url: str
 
 
+class PackageStatus(BaseModel):
+    """Version and commit status for a single package."""
+
+    version: str
+    local_sha: str | None = None
+    remote_sha: str | None = None
+    installed: bool = True
+
+    @property
+    def update_available(self) -> bool | None:
+        """True if remote is ahead, None if we can't tell."""
+        if self.local_sha and self.remote_sha:
+            return self.local_sha != self.remote_sha
+        return None
+
+
 class VersionInfo(BaseModel):
     """Comprehensive version and environment information."""
 
-    distro_version: str
-    amplifier_version: str | None = None
     python_version: str
     platform: str
     install_method: str
+    distro: PackageStatus | None = None
+    amplifier: PackageStatus | None = None
+    tui: PackageStatus | None = None
 
 
 def _cache_path() -> Path:
@@ -121,14 +138,173 @@ def _detect_install_method() -> str:
     return "pip"
 
 
+
+
+def _get_local_sha(package_name: str) -> str | None:
+    """Get the git commit SHA for an installed package.
+
+    For editable installs: runs git rev-parse HEAD in the source dir.
+    For tool/venv installs: reads commit_id from direct_url.json.
+    For uv tool installs: reads from the tool's isolated site-packages.
+    """
+    # Try importlib.metadata first (works for packages in our venv)
+    sha = _sha_from_metadata(package_name)
+    if sha:
+        return sha
+
+    # Try uv tool environment (isolated site-packages)
+    return _sha_from_uv_tool(package_name)
+
+
+def _sha_from_metadata(package_name: str) -> str | None:
+    """Read SHA from importlib.metadata (current environment)."""
+    try:
+        from importlib.metadata import distribution
+
+        dist = distribution(package_name)
+        text = dist.read_text("direct_url.json")
+        if not text:
+            return None
+        data = json.loads(text)
+        # Editable install — use git in the source dir
+        if data.get("dir_info", {}).get("editable"):
+            url = data.get("url", "")
+            if url.startswith("file://"):
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=url[7:],
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+        # Git install — read from vcs_info
+        commit = data.get("vcs_info", {}).get("commit_id", "")
+        if commit:
+            return commit[:7]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _sha_from_uv_tool(package_name: str) -> str | None:
+    """Read SHA from a uv tool's isolated site-packages."""
+    import glob
+
+    # uv tools live at ~/.local/share/uv/tools/<tool>/lib/python*/site-packages/
+    tools_dir = Path.home() / ".local" / "share" / "uv" / "tools"
+    # The tool dir name may differ from the package name
+    # (e.g. tool "amplifier" has package "amplifier-app-cli")
+    dist_name = package_name.replace("-", "_")
+    pattern = str(
+        tools_dir / "*" / "lib" / "python*" / "site-packages"
+        / f"{dist_name}-*.dist-info" / "direct_url.json"
+    )
+    for path in glob.glob(pattern):
+        try:
+            data = json.loads(Path(path).read_text())
+            commit = data.get("vcs_info", {}).get("commit_id", "")
+            if commit:
+                return commit[:7]
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+
+def _get_remote_sha(repo: str) -> str | None:
+    """Fetch the latest commit SHA for a GitHub repo's default branch.
+
+    Uses the cached result if fresh, otherwise hits the GitHub API.
+    """
+    cached = _read_cache()
+    if cached:
+        remote_shas = cached.get("remote_shas", {})
+        if repo in remote_shas:
+            return remote_shas[repo]
+
+    try:
+        import urllib.request
+
+        url = f"https://api.github.com/repos/{repo}/commits/main"
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github.sha"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            sha = resp.read().decode().strip()
+            if sha:
+                # Update cache with this SHA
+                data = cached or {"checked_at": time.time()}
+                remote_shas = data.get("remote_shas", {})
+                remote_shas[repo] = sha[:7]
+                data["remote_shas"] = remote_shas
+                data["checked_at"] = time.time()
+                _write_cache(data)
+                return sha[:7]
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to fetch remote SHA for %s", repo)
+    return None
+
+
+def _get_tui_version() -> str | None:
+    """Get the installed amplifier-tui version, if available."""
+    try:
+        return pkg_version("amplifier-tui")
+    except PackageNotFoundError:
+        pass
+    # Try CLI fallback (uv tool install)
+    if shutil.which("amplifier-tui"):
+        try:
+            result = subprocess.run(
+                ["amplifier-tui", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                parts = output.split()
+                return parts[-1] if parts else output
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+    return None
+
+
+def _get_package_status(
+    package_name: str, version: str | None, repo: str
+) -> PackageStatus | None:
+    """Build a PackageStatus for a package, or None if not installed."""
+    if version is None:
+        return PackageStatus(version="—", installed=False)
+    local_sha = _get_local_sha(package_name)
+    remote_sha = _get_remote_sha(repo)
+    return PackageStatus(
+        version=version,
+        local_sha=local_sha,
+        remote_sha=remote_sha,
+    )
+
+
 def get_version_info() -> VersionInfo:
     """Gather comprehensive version and environment information."""
+    distro_ver = _get_distro_version()
+    amp_ver = _get_amplifier_version()
+    tui_ver = _get_tui_version()
+
     return VersionInfo(
-        distro_version=_get_distro_version(),
-        amplifier_version=_get_amplifier_version(),
         python_version=platform.python_version(),
         platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
-        install_method=_detect_install_method(),
+        install_method=_detect_install_method()
+        + (" (editable)" if _is_editable_install() else ""),
+        distro=_get_package_status(
+            conventions.PYPI_PACKAGE_NAME, distro_ver, conventions.PACKAGE_REPOS["amplifier-distro"]
+        ),
+        amplifier=_get_package_status(
+            "amplifier-app-cli", amp_ver, conventions.PACKAGE_REPOS["amplifier-app-cli"]
+        ),
+        tui=_get_package_status(
+            "amplifier-tui", tui_ver, conventions.PACKAGE_REPOS["amplifier-tui"]
+        ),
     )
 
 
