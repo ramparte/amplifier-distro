@@ -1,8 +1,8 @@
 """Transcript persistence for distro server sessions.
 
 Registers hooks on tool:post and orchestrator:complete that write
-transcript.jsonl incrementally during execution. Mirrors the CLI's
-IncrementalSaveHook pattern using distro's own atomic_write.
+transcript.jsonl incrementally during execution.  Uses distro's own
+atomic_write for crash safety.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from amplifier_core.models import HookResult
+
 from amplifier_distro.conventions import TRANSCRIPT_FILENAME
 from amplifier_distro.fileutil import atomic_write
 
@@ -20,26 +22,24 @@ logger = logging.getLogger(__name__)
 _PRIORITY = 900
 _EXCLUDED_ROLES = frozenset({"system", "developer"})
 
+# Resolve sanitize_message once at import time.
+try:
+    from amplifier_foundation import sanitize_message as _foundation_sanitize
+except ImportError:
+    _foundation_sanitize = None  # type: ignore[assignment]
+
 
 def _sanitize(msg: dict[str, Any]) -> dict[str, Any]:
     """Sanitize a message for JSON persistence.
 
-    Wraps amplifier_foundation.sanitize_message() with a fallback for
-    environments where foundation is not installed, and patches back
-    content:null which sanitize_message drops (providers need it on
+    Uses amplifier_foundation.sanitize_message() when available, with a
+    workaround for content:null stripping (providers need content:null on
     tool-call messages).
+    # TODO: upstream fix for sanitize_message dropping content:null
     """
-    try:
-        from amplifier_foundation import sanitize_message
-    except ImportError:
-        sanitize_message = None  # type: ignore[assignment]
-
     had_content_null = "content" in msg and msg["content"] is None
 
-    if sanitize_message is not None:
-        sanitized = sanitize_message(msg)
-    else:
-        sanitized = msg if isinstance(msg, dict) else {}
+    sanitized = _foundation_sanitize(msg) if _foundation_sanitize is not None else msg
 
     # Restore content:null -- sanitize_message strips None values but
     # providers reject tool-call messages missing the content field.
@@ -61,15 +61,18 @@ def write_transcript(session_dir: Path, messages: list[dict[str, Any]]) -> None:
     """
     lines: list[str] = []
     for msg in messages:
-        msg_dict = (
-            msg
-            if isinstance(msg, dict)
-            else getattr(msg, "model_dump", lambda _m=msg: _m)()
-        )
-        if msg_dict.get("role") in _EXCLUDED_ROLES:
-            continue
-        sanitized = _sanitize(msg_dict)
-        lines.append(json.dumps(sanitized, ensure_ascii=False))
+        try:
+            msg_dict = (
+                msg
+                if isinstance(msg, dict)
+                else getattr(msg, "model_dump", lambda _m=msg: _m)()
+            )
+            if msg_dict.get("role") in _EXCLUDED_ROLES:
+                continue
+            sanitized = _sanitize(msg_dict)
+            lines.append(json.dumps(sanitized, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            logger.debug("Skipping unserializable message", exc_info=True)
 
     content = "\n".join(lines) + "\n" if lines else ""
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -91,8 +94,6 @@ class TranscriptSaveHook:
         self._last_count = 0
 
     async def __call__(self, event: str, data: dict[str, Any]) -> Any:
-        from amplifier_core.models import HookResult
-
         try:
             context = self._session.coordinator.get("context")
             if not context or not hasattr(context, "get_messages"):
@@ -105,8 +106,8 @@ class TranscriptSaveHook:
             if count <= self._last_count:
                 return HookResult(action="continue")
 
-            self._last_count = count
             write_transcript(self._session_dir, messages)
+            self._last_count = count  # update only after successful write
 
         except Exception:  # noqa: BLE001
             logger.warning("Transcript save failed", exc_info=True)
@@ -138,21 +139,5 @@ def register_transcript_hooks(session: Any, session_dir: Path) -> None:
         logger.debug(
             "Transcript hooks registered -> %s", session_dir / TRANSCRIPT_FILENAME
         )
-    except (AttributeError, TypeError, Exception):  # noqa: BLE001
-        logger.debug("Could not register transcript hooks", exc_info=True)
-
-
-async def flush_transcript(session: Any, session_dir: Path) -> None:
-    """One-shot transcript save. Called after handle.run() as belt-and-suspenders.
-
-    Async because context.get_messages() is async.
-    """
-    try:
-        context = session.coordinator.get("context")
-        if not context or not hasattr(context, "get_messages"):
-            return
-        messages = await context.get_messages()
-        if messages:
-            write_transcript(session_dir, messages)
     except Exception:  # noqa: BLE001
-        logger.warning("End-of-turn transcript flush failed", exc_info=True)
+        logger.debug("Could not register transcript hooks", exc_info=True)

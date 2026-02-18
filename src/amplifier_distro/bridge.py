@@ -368,14 +368,9 @@ class LocalBridge:
         )
 
         # 9b. Register transcript persistence hooks
-        try:
-            from amplifier_distro.transcript_persistence import (
-                register_transcript_hooks,
-            )
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
 
-            register_transcript_hooks(session, session_dir)
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not register transcript persistence hooks")
+        register_transcript_hooks(session, session_dir)
 
         logger.info(
             "Session created: id=%s project=%s bundle=%s",
@@ -505,14 +500,9 @@ class LocalBridge:
             )
 
         # 7b. Register transcript persistence hooks
-        try:
-            from amplifier_distro.transcript_persistence import (
-                register_transcript_hooks,
-            )
+        from amplifier_distro.transcript_persistence import register_transcript_hooks
 
-            register_transcript_hooks(session, session_dir)
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not register transcript persistence hooks")
+        register_transcript_hooks(session, session_dir)
 
         # 8. Load previous transcript and inject as context
         #

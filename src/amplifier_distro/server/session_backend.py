@@ -216,18 +216,7 @@ class BridgeBackend:
             finally:
                 # Clean up lock entry on both success and failure paths
                 self._reconnect_locks.pop(session_id, None)
-        result = await handle.run(message)
-
-        # End-of-turn transcript save (belt-and-suspenders)
-        if handle._session is not None and handle._session_dir is not None:
-            try:
-                from amplifier_distro.transcript_persistence import flush_transcript
-
-                await flush_transcript(handle._session, handle._session_dir)
-            except Exception:  # noqa: BLE001
-                logger.warning("End-of-turn transcript flush failed", exc_info=True)
-
-        return result
+        return await handle.run(message)
 
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
