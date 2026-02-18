@@ -124,6 +124,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
 }
 
+# Providers excluded from onboarding wizard and model picker fallback
+NON_ONBOARDING_PROVIDERS: frozenset[str] = frozenset({"ollama", "azure", "vllm"})
+
 
 FEATURES: dict[str, Feature] = {
     "dev-memory": Feature(
