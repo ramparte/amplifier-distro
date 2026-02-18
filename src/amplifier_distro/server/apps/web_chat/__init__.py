@@ -28,6 +28,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from amplifier_distro.server.app import AppManifest
+from amplifier_distro.server.session_backend import SessionBackend, SessionInfo
+from amplifier_distro.server.surface_registry import SurfaceSessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +37,16 @@ router = APIRouter()
 
 _static_dir = Path(__file__).parent / "static"
 
-# Per-connection session tracking (simple: one active session for web-chat)
-# In the future this becomes per-user via auth tokens.
-_active_session_id: str | None = None
-_session_lock = asyncio.Lock()
+_manager: WebChatSessionManager | None = None
+
+
+def _get_manager() -> WebChatSessionManager:
+    """Get or create the WebChatSessionManager."""
+    global _manager
+    if _manager is None:
+        _manager = WebChatSessionManager(_get_backend())
+    return _manager
+
 
 # --- Memory pattern matching ---
 
@@ -127,6 +135,90 @@ def _get_backend():
     return get_services().backend
 
 
+class WebChatSessionManager:
+    """Manages the active web-chat session using the shared registry.
+
+    Simple model: one active session at a time (max_per_user=1).
+    Gains persistence and structured lifecycle from the registry.
+    """
+
+    def __init__(
+        self,
+        backend: SessionBackend,
+        persistence_path: Path | None = None,
+    ) -> None:
+        self._backend = backend
+        self._registry = SurfaceSessionRegistry(
+            "web-chat",
+            persistence_path,
+            max_per_user=1,
+        )
+        self._lock = asyncio.Lock()
+
+    @property
+    def active_session_id(self) -> str | None:
+        """Return the active session ID, or None."""
+        active = self._registry.list_active()
+        if active:
+            return active[0].session_id
+        return None
+
+    async def create_session(
+        self,
+        working_dir: str = "~",
+        description: str = "Web chat session",
+    ) -> SessionInfo:
+        """Create a new session, ending any existing one first."""
+        async with self._lock:
+            # End existing session if any
+            active_id = self.active_session_id
+            if active_id:
+                await self._end_active(active_id)
+
+            info = await self._backend.create_session(
+                working_dir=working_dir,
+                description=description,
+            )
+            self._registry.register(
+                routing_key=info.session_id,
+                session_id=info.session_id,
+                user_id="web-chat",
+                project_id=info.project_id,
+                description=description,
+            )
+            return info
+
+    async def send_message(self, message: str) -> str | None:
+        """Send a message to the active session. Returns None if no session."""
+        async with self._lock:
+            active_id = self.active_session_id
+            if active_id is None:
+                return None
+            mapping = self._registry.lookup_by_session_id(active_id)
+            if mapping:
+                self._registry.update_activity(mapping.routing_key)
+            return await self._backend.send_message(active_id, message)
+
+    async def end_session(self) -> bool:
+        """End the active session. Returns True if one was ended."""
+        async with self._lock:
+            active_id = self.active_session_id
+            if active_id is None:
+                return False
+            await self._end_active(active_id)
+            return True
+
+    async def _end_active(self, session_id: str) -> None:
+        """Deactivate and end a session."""
+        mapping = self._registry.lookup_by_session_id(session_id)
+        if mapping:
+            self._registry.deactivate(mapping.routing_key)
+        try:
+            await self._backend.end_session(session_id)
+        except (RuntimeError, ValueError, OSError):
+            logger.warning("Error ending session %s", session_id, exc_info=True)
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Serve the web chat interface."""
@@ -144,109 +236,77 @@ async def index() -> HTMLResponse:
 
 @router.get("/api/session")
 async def session_status() -> dict:
-    """Return session connection status.
+    """Return session connection status."""
+    mgr = _get_manager()
 
-    Reports whether a session is active and its ID.
-    """
-    global _active_session_id
+    if mgr.active_session_id is None:
+        return {
+            "connected": False,
+            "session_id": None,
+            "message": "No active session. Click 'New Session' to start.",
+        }
 
-    async with _session_lock:
-        if _active_session_id is None:
+    # Verify session is still alive
+    try:
+        backend = _get_backend()
+        info = await backend.get_session_info(mgr.active_session_id)
+        if info and info.is_active:
+            return {
+                "connected": True,
+                "session_id": mgr.active_session_id,
+                "project_id": info.project_id,
+                "working_dir": info.working_dir,
+            }
+        else:
+            # Session died externally - clean up registry
+            await mgr.end_session()
             return {
                 "connected": False,
                 "session_id": None,
-                "message": "No active session. Click 'New Session' to start.",
+                "message": "Previous session ended. Start a new one.",
             }
-
-        # Verify session is still alive
-        try:
-            backend = _get_backend()
-            info = await backend.get_session_info(_active_session_id)
-            if info and info.is_active:
-                return {
-                    "connected": True,
-                    "session_id": _active_session_id,
-                    "project_id": info.project_id,
-                    "working_dir": info.working_dir,
-                }
-            else:
-                _active_session_id = None
-                return {
-                    "connected": False,
-                    "session_id": None,
-                    "message": "Previous session ended. Start a new one.",
-                }
-        except RuntimeError:
-            # Services not initialized
-            return {
-                "connected": False,
-                "session_id": None,
-                "message": "Server services not ready. Is the server fully started?",
-            }
+    except RuntimeError:
+        return {
+            "connected": False,
+            "session_id": None,
+            "message": "Server services not ready. Is the server fully started?",
+        }
 
 
 @router.post("/api/session")
 async def create_session(request: Request) -> JSONResponse:
-    """Create a new Amplifier session for web chat.
-
-    Body (all optional):
-        working_dir: str - Working directory for the session
-        description: str - Human-readable description
-    """
-    global _active_session_id
-
+    """Create a new Amplifier session for web chat."""
     body = await request.json() if await request.body() else {}
 
-    async with _session_lock:
-        try:
-            backend = _get_backend()
-
-            # End existing session if any
-            if _active_session_id:
-                try:
-                    await backend.end_session(_active_session_id)
-                except (RuntimeError, ValueError, OSError):
-                    logger.warning("Error ending previous session", exc_info=True)
-
-            info = await backend.create_session(
-                working_dir=body.get("working_dir", "~"),
-                description=body.get("description", "Web chat session"),
-            )
-            _active_session_id = info.session_id
-
-            return JSONResponse(
-                content={
-                    "session_id": info.session_id,
-                    "project_id": info.project_id,
-                    "working_dir": info.working_dir,
-                }
-            )
-        except RuntimeError as e:
-            return JSONResponse(
-                status_code=503,
-                content={"error": str(e)},
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Session creation failed: %s", e, exc_info=True)
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e), "type": type(e).__name__},
-            )
+    try:
+        mgr = _get_manager()
+        info = await mgr.create_session(
+            working_dir=body.get("working_dir", "~"),
+            description=body.get("description", "Web chat session"),
+        )
+        return JSONResponse(
+            content={
+                "session_id": info.session_id,
+                "project_id": info.project_id,
+                "working_dir": info.working_dir,
+            }
+        )
+    except RuntimeError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": str(e)},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Session creation failed: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "type": type(e).__name__},
+        )
 
 
 @router.post("/api/chat")
 async def chat(request: Request) -> JSONResponse:
-    """Chat endpoint - send a message to the active session.
-
-    Memory-aware: intercepts "remember this: ..." and "what do you
-    remember about ..." patterns and routes them through the memory
-    service. Memory commands work even without an active session.
-
-    Body:
-        message: str - The user's message
-    """
-    global _active_session_id
-
+    """Chat endpoint - send a message to the active session."""
     body = await request.json()
     user_message = body.get("message", "")
 
@@ -262,8 +322,8 @@ async def chat(request: Request) -> JSONResponse:
         action, text = memory_intent
         try:
             result = _handle_memory_command(action, text)
-            async with _session_lock:
-                result["session_connected"] = _active_session_id is not None
+            mgr = _get_manager()
+            result["session_connected"] = mgr.active_session_id is not None
             return JSONResponse(content=result)
         except Exception as e:  # noqa: BLE001
             logger.warning("Memory command failed: %s", e, exc_info=True)
@@ -272,74 +332,59 @@ async def chat(request: Request) -> JSONResponse:
                 content={"error": str(e), "type": type(e).__name__},
             )
 
-    async with _session_lock:
-        if _active_session_id is None:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": (
-                        "No active session. Create one first via POST /api/session."
-                    ),
-                    "session_connected": False,
-                },
-            )
+    mgr = _get_manager()
+    if mgr.active_session_id is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": ("No active session. Create one first via POST /api/session."),
+                "session_connected": False,
+            },
+        )
 
-        try:
-            backend = _get_backend()
-            response = await backend.send_message(_active_session_id, user_message)
-            return JSONResponse(
-                content={
-                    "response": response,
-                    "session_id": _active_session_id,
-                    "session_connected": True,
-                }
-            )
-        except ValueError:
-            # Session disappeared
-            _active_session_id = None
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": "Session no longer exists. Create a new one.",
-                    "session_connected": False,
-                },
-            )
-        except RuntimeError as e:
-            return JSONResponse(
-                status_code=503,
-                content={"error": str(e)},
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Chat message failed: %s", e, exc_info=True)
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e), "type": type(e).__name__},
-            )
+    try:
+        response = await mgr.send_message(user_message)
+        return JSONResponse(
+            content={
+                "response": response,
+                "session_id": mgr.active_session_id,
+                "session_connected": True,
+            }
+        )
+    except ValueError:
+        # Session disappeared
+        await mgr.end_session()
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "Session no longer exists. Create a new one.",
+                "session_connected": False,
+            },
+        )
+    except RuntimeError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": str(e)},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Chat message failed: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "type": type(e).__name__},
+        )
 
 
 @router.post("/api/end")
 async def end_session() -> JSONResponse:
     """End the active web chat session."""
-    global _active_session_id
+    mgr = _get_manager()
+    session_id = mgr.active_session_id
 
-    async with _session_lock:
-        if _active_session_id is None:
-            return JSONResponse(
-                content={"ended": False, "message": "No active session."}
-            )
+    if session_id is None:
+        return JSONResponse(content={"ended": False, "message": "No active session."})
 
-        session_id = _active_session_id
-        _active_session_id = None
-
-    try:
-        backend = _get_backend()
-        await backend.end_session(session_id)
-        return JSONResponse(content={"ended": True, "session_id": session_id})
-    except (RuntimeError, ValueError, OSError) as e:
-        logger.warning("Error ending session %s: %s", session_id, e)
-        return JSONResponse(
-            content={"ended": True, "session_id": session_id, "warning": str(e)}
-        )
+    ended = await mgr.end_session()
+    return JSONResponse(content={"ended": ended, "session_id": session_id})
 
 
 manifest = AppManifest(

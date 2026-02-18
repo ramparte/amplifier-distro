@@ -15,6 +15,7 @@ Exit criteria verified:
 8. Server discovers web-chat app
 """
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -39,10 +40,10 @@ def _clean_services():
 @pytest.fixture
 def webchat_client() -> TestClient:
     """Create a TestClient with web-chat app and services initialized."""
-    # Reset module-level state in web_chat
     import amplifier_distro.server.apps.web_chat as wc
 
-    wc._active_session_id = None
+    # Reset module-level manager state
+    wc._manager = None
 
     init_services(dev_mode=True)
 
@@ -303,3 +304,69 @@ class TestAppDiscovery:
 
         voice = client.get("/apps/voice/")
         assert voice.status_code == 200
+
+
+class TestWebChatSessionManager:
+    """Verify the WebChatSessionManager uses the registry."""
+
+    def test_manager_exists(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+
+        assert WebChatSessionManager is not None
+
+    def test_create_and_get_active(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        info = asyncio.run(mgr.create_session())
+        assert info.session_id.startswith("mock-session-")
+        assert mgr.active_session_id == info.session_id
+
+    def test_end_session(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        asyncio.run(mgr.create_session())
+        ended = asyncio.run(mgr.end_session())
+        assert ended is True
+        assert mgr.active_session_id is None
+
+    def test_send_message(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        asyncio.run(mgr.create_session())
+        response = asyncio.run(mgr.send_message("hello"))
+        assert response is not None
+        assert "hello" in response
+
+    def test_send_message_no_session(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        response = asyncio.run(mgr.send_message("hello"))
+        assert response is None
+
+    def test_create_ends_previous_session(self):
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        mgr = WebChatSessionManager(backend)
+
+        info1 = asyncio.run(mgr.create_session())
+        info2 = asyncio.run(mgr.create_session())
+        assert mgr.active_session_id == info2.session_id
+        assert mgr.active_session_id != info1.session_id
