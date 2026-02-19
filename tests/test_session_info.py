@@ -651,3 +651,89 @@ class TestResumeSessionReadsSessionInfo:
 
         # config.working_dir must NOT have been mutated
         assert config.working_dir == server_cwd
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: create then resume with different CWD
+# ---------------------------------------------------------------------------
+
+
+class TestCreateThenResumeRoundTrip:
+    """Full round-trip: create with one CWD, resume from another, verify consistency."""
+
+    def test_create_then_resume_preserves_cwd(self, tmp_path: Path) -> None:
+        """A session created with working_dir=X resumes with the same X,
+        even when the server's CWD is Y.
+
+        This is the core regression test for Issue #53.
+        """
+        original_cwd = Path("/Users/testuser")
+
+        # --- Phase 1: Create session ---
+        bridge = LocalBridge()
+        bridge._config = {
+            "workspace_root": "~/dev",
+            "preflight": {"enabled": False},
+            "bundle": {"active": "test-bundle"},
+        }
+        create_config = BridgeConfig(
+            working_dir=original_cwd,
+            bundle_name="test-bundle",
+            run_preflight=False,
+        )
+
+        mock_load, mock_reg, _ = _mock_foundation_chain()
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+        ):
+            create_handle = asyncio.run(bridge.create_session(create_config))
+
+        session_id = create_handle.session_id
+        session_dir = create_handle._session_dir
+        assert session_dir is not None, "create_session must set _session_dir"
+
+        # Verify session-info.json was written
+        info_file = session_dir / "session-info.json"
+        assert info_file.exists()
+        data = json.loads(info_file.read_text())
+        assert data["working_dir"] == str(original_cwd.resolve())
+
+        # --- Phase 2: Resume from a DIFFERENT CWD ---
+        # This simulates a server restart where CWD is the server's directory
+        server_cwd = Path("/opt/amplifier-server")
+
+        mock_load2, mock_reg2, _, mock_prepared2 = _mock_foundation_for_resume()
+
+        # We need the session dir to be discoverable under the AMPLIFIER_HOME
+        # The create already wrote to tmp_path, so the dir exists there
+        resume_config = BridgeConfig(working_dir=server_cwd)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load2, mock_reg2),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", "projects"),
+        ):
+            resume_handle = asyncio.run(
+                bridge.resume_session(session_id, resume_config)
+            )
+
+        # Verify: the session was created with the ORIGINAL cwd, not server cwd
+        call_kwargs = mock_prepared2.create_session.call_args
+        actual_cwd = call_kwargs.kwargs.get("session_cwd") or call_kwargs[1].get(
+            "session_cwd"
+        )
+        assert actual_cwd == original_cwd, (
+            f"Expected session_cwd={original_cwd}, got {actual_cwd}. "
+            "Issue #53 regression: resume used server CWD instead of original."
+        )
+
+        # Verify: the handle also reports the correct working_dir
+        assert resume_handle.working_dir == original_cwd
