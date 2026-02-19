@@ -206,10 +206,17 @@ class CommandHandler:
             return CommandResult(text=str(e))
 
         short_id = mapping.session_id[:8]
-        text = f"Started new session `{short_id}`"
+        text = f"Started new session `{short_id}` in `{mapping.working_dir}`"
         if description:
-            text += f": {description}"
+            text += f"\n_{description}_"
         text += "\nReply in this thread to interact with the session."
+
+        # Show a hint if the session landed in the home directory (unconfigured)
+        if mapping.working_dir in ("~", "", "~/"):
+            text += (
+                "\n_Tip: set `slack.default_working_dir` in distro.yaml"
+                " to default to your project directory._"
+            )
 
         return CommandResult(
             text=text,

@@ -765,6 +765,34 @@ class TestCommandHandler:
         result = asyncio.run(command_handler.handle("new", ["my", "session"], ctx))
         assert "Started new session" in result.text
 
+    def test_cmd_new_shows_working_dir_in_response(self, command_handler, slack_config):
+        """cmd_new response includes the working directory."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~/repo/my-project"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "~/repo/my-project" in result.text
+
+    def test_cmd_new_shows_hint_when_in_home_dir(self, command_handler, slack_config):
+        """cmd_new shows a configuration hint when working dir is ~ (unconfigured)."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "~" in result.text
+        assert "default_working_dir" in result.text
+
+    def test_cmd_new_no_hint_when_working_dir_set(self, command_handler, slack_config):
+        """cmd_new does NOT show config hint when a real working dir is set."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~/repo/configured"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "default_working_dir" not in result.text
+
     def test_cmd_status_no_session(self, command_handler):
         from amplifier_distro.server.apps.slack.commands import CommandContext
 
