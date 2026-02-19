@@ -192,6 +192,59 @@ to produce structured JSON descriptions of what's on screen.
 
 ---
 
+## Local Dev: Install & Run
+
+```bash
+# Editable install with ALL extras (Slack, email, aiohttp — never omit [all]):
+uv tool install -e ".[all]" ~/repo/distro-3
+
+# Start server (auto-loads .env from project root):
+amp-distro-server --port 8400
+```
+
+**Never use** `uv tool install .` (non-editable) or `uv tool install -e .` (misses extras — Slack won't connect).
+
+### Environment
+
+Tokens live in `~/repo/distro-3/.env`. The server auto-loads this on startup — no `source`, no `keys.yaml` needed.
+
+For Socket Mode to activate, `~/.amplifier/distro.yaml` must have:
+```yaml
+slack:
+  socket_mode: true
+```
+Without this, the server always falls back to simulator mode regardless of tokens being present.
+
+If server shows **"simulator mode"**: check `socket_mode: true` in `distro.yaml` first, then confirm `.env` is present and populated.
+
+---
+
+## Sam's Working Style
+
+Sam works in structured mode cycles — always follow this sequence:
+
+1. **`/brainstorm`** — root cause analysis, issue scoping, PR/issue overlap check before any code
+2. **`/write-plan`** — task breakdown, TDD plan saved to `docs/plans/YYYY-MM-DD-<slug>.md`
+3. **`/execute-plan`** — subagent TDD: implement → spec-review → code-quality-review (parallel) → next task
+4. **`/verify`** — full test suite (`pytest -q`, no `-x`), static analysis, compare against pre-existing failure baseline
+5. **`/finish`** — summary, squash merge via `foundation:git-ops`, delete branch
+
+**Mode transitions:** Sam switches modes manually. Never call the `mode` tool from within a mode — it will be blocked. Say "switch to X with `/mode X`" instead.
+
+**PRs:** Always squash merge. Delegate all git/PR work to `foundation:git-ops`.
+
+---
+
+## Slack Bridge Architecture (key facts)
+
+- Session routing key: `channel_id:thread_ts` (NOT bare `channel_id` — see issue #54)
+- `SlackSessionManager` → `server/apps/slack/sessions.py`
+- Thread routing wired in `server/apps/slack/events.py` via `_handle_command_message()`
+- `rekey_mapping()` called after `post_message()` returns thread `ts`
+- Open issues: #31 (zombie mappings), #49 (SurfaceSessionRegistry refactor — will need `rekey_mapping()` translation), #53 (resume CWD)
+
+---
+
 ## Build Order (from ROADMAP.md)
 
 Phase 0: ✅ distro.yaml schema -> base bundle -> amp-distro init/status -> pre-flight
@@ -205,11 +258,19 @@ Phase 4: ⏳ Setup website, containers, workflows
 ## Development Patterns
 
 ### Testing
-- **836 tests**, all passing in ~13s
-- Test runner: `uv run python -m pytest tests/ -x -q`
+- **1000+ tests** (~10s)
+- Test runner: `uv run python -m pytest tests/ -q` (no `-x` — always run full suite to see complete failure set)
+- Use `-x` only during active development to fail fast, never for final verify pass
 - Each new module gets a corresponding `tests/test_<name>.py`
 - FastAPI apps tested via `TestClient` (no real server needed)
 - Mocking pattern: `unittest.mock.patch` for external dependencies (git, gh, subprocess)
+
+**Known pre-existing failures (not regressions — as of 2026-02-19):**
+- `test_dockerfile_has_nonroot_user` — Dockerfile intentionally runs as root
+- `TestSocketModeDedup` (2 tests) — require `aiohttp`; only present if installed with `[all]`
+- `TestGetIntegrations` (7 tests) — `AttributeError` in `app.py:334`, pre-existing bug
+
+Baseline: **8 failures expected** on clean `main`. Compare against this before investigating.
 
 ### Server App Plugin Pattern
 New server apps follow this pattern:
