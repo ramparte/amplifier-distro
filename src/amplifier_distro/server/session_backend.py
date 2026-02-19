@@ -174,6 +174,12 @@ class BridgeBackend:
         self._bridge = LocalBridge()
         self._sessions: dict[str, Any] = {}  # session_id -> SessionHandle
         self._reconnect_locks: dict[str, asyncio.Lock] = {}
+        # Per-session FIFO queues for serializing handle.run() calls
+        self._session_queues: dict[str, asyncio.Queue] = {}
+        # Worker tasks draining each session queue
+        self._worker_tasks: dict[str, asyncio.Task] = {}
+        # Tombstone: sessions that were intentionally ended (blocks reconnect)
+        self._ended_sessions: set[str] = set()
 
     async def create_session(
         self,
