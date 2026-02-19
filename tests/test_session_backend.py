@@ -306,3 +306,48 @@ class TestBridgeBackendStop:
         from amplifier_distro.server.session_backend import BridgeBackend
 
         await BridgeBackend.stop(bridge_backend)  # should not raise
+
+
+class TestStopServicesShutdown:
+    """stop_services() calls backend.stop() if available."""
+
+    async def test_stop_services_calls_backend_stop(self):
+        """stop_services() must call backend.stop() when the backend has it."""
+        from amplifier_distro.server.services import (
+            init_services,
+            reset_services,
+            stop_services,
+        )
+
+        mock_backend = AsyncMock()
+        mock_backend.stop = AsyncMock()
+
+        reset_services()
+        init_services(backend=mock_backend)
+
+        await stop_services()
+
+        mock_backend.stop.assert_awaited_once()
+        reset_services()
+
+    async def test_stop_services_safe_without_stop_method(self):
+        """stop_services() must not raise if backend lacks stop()."""
+        from amplifier_distro.server.services import (
+            init_services,
+            reset_services,
+            stop_services,
+        )
+        from amplifier_distro.server.session_backend import MockBackend
+
+        reset_services()
+        init_services(backend=MockBackend())
+
+        await stop_services()  # MockBackend has no stop() — should not raise
+        reset_services()
+
+    async def test_stop_services_safe_before_init(self):
+        """stop_services() must not raise if services were never initialized."""
+        from amplifier_distro.server.services import reset_services, stop_services
+
+        reset_services()
+        await stop_services()  # should silently do nothing

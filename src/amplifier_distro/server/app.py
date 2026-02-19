@@ -126,6 +126,10 @@ class DistroServer:
         self._setup_bridge_routes()
         self._setup_memory_routes()
         self._setup_root_redirect()
+        # Register graceful backend shutdown
+        from amplifier_distro.server.services import stop_services
+
+        self._app.add_event_handler("shutdown", stop_services)
         self._app.include_router(self._core_router)
 
     @property
@@ -648,6 +652,7 @@ class DistroServer:
             if phase == "unconfigured":
                 return RedirectResponse(url="/apps/install-wizard/")
             return HTMLResponse(content=_landing_page.read_text())
+
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
     """Factory function to create and configure the server.

@@ -122,3 +122,20 @@ def reset_services() -> None:
     global _instance
     with _instance_lock:
         _instance = None
+
+
+async def stop_services() -> None:
+    """Gracefully stop shared services.
+
+    Called during server shutdown.  Safe to call even if services were
+    never initialized or if the backend doesn't implement stop().
+    """
+    with _instance_lock:
+        instance = _instance
+
+    if instance is None:
+        return
+
+    backend = instance.backend
+    if hasattr(backend, "stop"):
+        await backend.stop()
