@@ -119,7 +119,8 @@ class MockBackend:
         return info
 
     async def send_message(self, session_id: str, message: str) -> str:
-        if session_id not in self._sessions:
+        info = self._sessions.get(session_id)
+        if info is None or not info.is_active:
             raise ValueError(f"Unknown session: {session_id}")
 
         self._message_history[session_id].append({"role": "user", "content": message})

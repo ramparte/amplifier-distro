@@ -303,3 +303,59 @@ class TestAppDiscovery:
 
         voice = client.get("/apps/voice/")
         assert voice.status_code == 200
+
+
+class TestWebChatSessionLifecycle:
+    """Test the full create -> end -> chat lifecycle.
+
+    Web Chat correctly clears _active_session_id on ValueError (line 297-299
+    of web_chat/__init__.py). These tests document and guard that behavior.
+    """
+
+    def test_chat_after_end_returns_409(self, webchat_client: TestClient):
+        """Chat after ending session returns 409 (no active session)."""
+        # Create session
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        # End it
+        webchat_client.post("/apps/web-chat/api/end")
+        # Chat should fail with 409
+        response = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello after end"},
+        )
+        assert response.status_code == 409
+        data = response.json()
+        assert data["session_connected"] is False
+
+    def test_chat_valueerror_clears_session(self, webchat_client: TestClient):
+        """When backend.send_message raises ValueError, session is cleared.
+
+        This is the Web Chat equivalent of the Slack zombie fix -- it already
+        works correctly. This test guards against regression.
+        """
+        from amplifier_distro.server.services import get_services
+        from amplifier_distro.server.session_backend import MockBackend
+
+        # Create session
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+
+        # Mark the session as inactive on the backend (simulates lost handle).
+        # This is sync-safe: MockBackend has no loop-bound state, so direct
+        # mutation avoids asyncio.run() conflicts with TestClient's event loop.
+        backend = get_services().backend
+        assert isinstance(backend, MockBackend)
+        backend._sessions[session_id].is_active = False
+
+        # Chat should get 409 because ValueError triggers session cleanup
+        response = webchat_client.post(
+            "/apps/web-chat/api/chat",
+            json={"message": "hello to dead session"},
+        )
+        assert response.status_code == 409
+        data = response.json()
+        assert data["session_connected"] is False
+
+        # Verify session status also shows disconnected
+        status = webchat_client.get("/apps/web-chat/api/session").json()
+        assert status["connected"] is False

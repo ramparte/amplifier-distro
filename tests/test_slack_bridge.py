@@ -625,7 +625,9 @@ class TestSlackSessionManager:
         session_manager.rekey_mapping("C_NONEXISTENT", "ts.0")
         assert session_manager.get_mapping("C_NONEXISTENT") is None
 
-    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(self, session_manager):
+    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(
+        self, session_manager
+    ):
         """Thread lookup must NOT fall back to a bare-channel key (issue #54 regression guard)."""
         # Session stored under bare key (slash command path before rekey_mapping runs)
         asyncio.run(session_manager.create_session("C_HUB", None, "U1"))
@@ -1753,3 +1755,118 @@ class TestThreadRoutingFix:
             "Session A and session B must be different objects. "
             "If they match, session A's routing entry was overwritten by session B."
         )
+
+
+# --- Zombie Session Bug Fix Tests ---
+
+
+class TestZombieSessionFix:
+    """Test that dead sessions are deactivated, not left as zombies.
+
+    Bug: route_message() catches ALL exceptions from backend.send_message()
+    with a bare 'except Exception' and returns a generic error string, but
+    never deactivates the mapping. A session whose backend handle is lost
+    (BridgeBackend raises ValueError) persists as is_active=True forever,
+    eventually blocking new session creation via max_sessions_per_user.
+
+    Fix: catch ValueError specifically (= session permanently dead),
+    deactivate the mapping, and save. Keep the broad except Exception
+    for transient errors (network, timeout) where retry may succeed.
+    """
+
+    def test_route_message_valueerror_deactivates_mapping(
+        self, session_manager, mock_backend
+    ):
+        """ValueError from backend.send_message deactivates the mapping."""
+        from amplifier_distro.server.apps.slack.models import SlackMessage
+
+        # Create a session
+        mapping = asyncio.run(
+            session_manager.create_session("C1", "t1", "U1", "zombie test")
+        )
+        assert mapping.is_active is True
+
+        # End the session on the backend (simulates lost handle).
+        # After Task 1's fix, MockBackend.send_message raises ValueError
+        # for ended sessions — matching BridgeBackend production behavior.
+        asyncio.run(mock_backend.end_session(mapping.session_id))
+
+        msg = SlackMessage(
+            channel_id="C1", user_id="U1", text="hello", ts="2.0", thread_ts="t1"
+        )
+        response = asyncio.run(session_manager.route_message(msg))
+
+        # Mapping must be deactivated
+        updated = session_manager.get_mapping("C1", "t1")
+        assert updated is not None
+        assert updated.is_active is False, (
+            "Mapping should be deactivated after ValueError from backend"
+        )
+
+        # Response should tell the user the session is dead
+        assert response is not None
+        assert "session has ended" in response.lower()
+
+    def test_route_message_transient_error_keeps_mapping_active(
+        self, session_manager, mock_backend
+    ):
+        """RuntimeError (transient) must NOT deactivate the mapping."""
+        from amplifier_distro.server.apps.slack.models import SlackMessage
+
+        asyncio.run(session_manager.create_session("C1", "t1", "U1"))
+
+        # Make the backend raise RuntimeError (= transient failure).
+        # Use set_response_fn because we need a non-ValueError exception
+        # while the session is still active on the backend.
+        def transient_failure(sid, msg):
+            raise RuntimeError("network timeout")
+
+        mock_backend.set_response_fn(transient_failure)
+
+        msg = SlackMessage(
+            channel_id="C1", user_id="U1", text="hello", ts="2.0", thread_ts="t1"
+        )
+        response = asyncio.run(session_manager.route_message(msg))
+
+        # Mapping must stay active (transient error, may recover)
+        mapping = session_manager.get_mapping("C1", "t1")
+        assert mapping is not None
+        assert mapping.is_active is True, (
+            "Transient errors must not deactivate the mapping"
+        )
+
+        # Response should be the generic error
+        assert response is not None
+        assert "Error" in response
+
+    def test_zombie_session_freed_from_limit(
+        self, session_manager, mock_backend, slack_config
+    ):
+        """After a zombie is deactivated, the user can create a new session."""
+        from amplifier_distro.server.apps.slack.models import SlackMessage
+
+        slack_config.max_sessions_per_user = 1
+
+        # Create session (uses the 1 allowed slot)
+        mapping_a = asyncio.run(
+            session_manager.create_session("C1", "t1", "U1", "session A")
+        )
+
+        # Verify limit is hit
+        with pytest.raises(ValueError, match="Session limit"):
+            asyncio.run(session_manager.create_session("C1", "t2", "U1", "session B"))
+
+        # Kill the session via backend end (simulates dead handle)
+        asyncio.run(mock_backend.end_session(mapping_a.session_id))
+
+        msg = SlackMessage(
+            channel_id="C1", user_id="U1", text="ping", ts="3.0", thread_ts="t1"
+        )
+        asyncio.run(session_manager.route_message(msg))
+
+        # Now the slot should be free — new session should succeed
+        mapping_b = asyncio.run(
+            session_manager.create_session("C1", "t2", "U1", "session B")
+        )
+        assert mapping_b.session_id is not None
+        assert mapping_b.is_active is True

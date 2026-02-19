@@ -207,6 +207,12 @@ class TestMockBackendOperations:
         assert history[0]["content"] == "first"
         assert history[1]["role"] == "assistant"
 
+    @pytest.mark.asyncio
+    async def test_send_to_unknown_session_still_raises(self, backend):
+        """Verify existing behavior: truly unknown session IDs raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown session"):
+            await backend.send_message("completely-fake-id", "hello")
+
 
 # ---------------------------------------------------------------------------
 # BridgeBackend reconnect lock tests (#20)
@@ -417,3 +423,67 @@ class TestBridgeBackendReconnectLock:
         result = await backend.send_message("sess-retry", "attempt 2")
         assert result == "recovered"
         assert call_count == 2
+
+
+class TestSessionBackendContract:
+    """Document the behavioral contract between surfaces and backends.
+
+    These tests codify the exception semantics that all SessionBackend
+    implementations must follow:
+    - ValueError from send_message = session is permanently dead
+    - Surfaces should deactivate their routing entry on ValueError
+
+    Note: test_get_session_info_after_end_shows_inactive is MockBackend-specific.
+    BridgeBackend returns None for ended sessions (handle is popped).
+    """
+
+    @pytest.fixture
+    def backend(self):
+        return MockBackend()
+
+    @pytest.mark.asyncio
+    async def test_create_end_send_raises_valueerror(self, backend):
+        """The canonical lifecycle: create -> end -> send must raise ValueError.
+
+        This is the contract that surfaces (Slack, Web Chat) rely on to detect
+        dead sessions. If this test fails, zombie session detection breaks.
+        """
+        info = await backend.create_session(description="contract test")
+        assert info.is_active is True
+
+        await backend.end_session(info.session_id)
+
+        with pytest.raises(ValueError, match="Unknown session"):
+            await backend.send_message(info.session_id, "should fail")
+
+    @pytest.mark.asyncio
+    async def test_end_session_is_idempotent(self, backend):
+        """Ending an already-ended session must not raise."""
+        info = await backend.create_session()
+        await backend.end_session(info.session_id)
+        # Second end should not raise
+        await backend.end_session(info.session_id)
+
+    @pytest.mark.asyncio
+    async def test_get_session_info_after_end_shows_inactive(self, backend):
+        """get_session_info on ended session returns info with is_active=False.
+
+        NOTE: This is MockBackend-specific behavior. BridgeBackend returns None
+        for ended sessions because the handle is popped from _sessions.
+        """
+        info = await backend.create_session()
+        await backend.end_session(info.session_id)
+
+        result = await backend.get_session_info(info.session_id)
+        assert result is not None
+        assert result.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_ended_session_not_in_active_list(self, backend):
+        """Ended sessions must not appear in list_active_sessions."""
+        info = await backend.create_session()
+        await backend.end_session(info.session_id)
+
+        active = backend.list_active_sessions()
+        active_ids = [s.session_id for s in active]
+        assert info.session_id not in active_ids

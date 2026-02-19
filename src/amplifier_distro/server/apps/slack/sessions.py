@@ -287,6 +287,18 @@ class SlackSessionManager:
                 mapping.session_id, message.text
             )
             return response
+        except ValueError:
+            # Session is permanently dead (backend can't find or reconnect it).
+            # Deactivate the mapping so the user isn't stuck in a zombie loop
+            # and their max_sessions_per_user slot is freed.
+            mapping.is_active = False
+            self._save_sessions()
+            logger.warning(
+                "Session %s is dead, deactivated mapping for %s",
+                mapping.session_id,
+                mapping.conversation_key,
+            )
+            return "Session has ended. Start a new one with `/amp new`."
         except Exception:
             logger.exception(f"Error routing message to session {mapping.session_id}")
             return "Error: Failed to get response from Amplifier session."
@@ -380,10 +392,6 @@ class SlackSessionManager:
 
         Only targets the bare channel_id key. If no such key exists (e.g., the
         session was already thread-scoped), logs a warning and returns safely.
-
-        Migration note (PR #49 — SurfaceSessionRegistry): When SurfaceSessionRegistry
-        lands, replace the bare _mappings pop-and-reinsert here with a call to
-        registry.rekey(old_key, new_key).
         """
         mapping = self._mappings.pop(channel_id, None)
         if mapping is None:
