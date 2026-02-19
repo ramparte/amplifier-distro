@@ -70,6 +70,9 @@ class SocketModeAdapter:
         # both app_mention and message events for the same @mention.
         # Maps "channel:ts" -> monotonic time when first seen.
         self._seen_events: dict[str, float] = {}
+        # Pending background event tasks — tracked so we can drain on stop()
+        # and log exceptions via done callbacks.
+        self._pending_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         """Start the Socket Mode connection in the background."""
@@ -214,7 +217,37 @@ class SocketModeAdapter:
                 await self._ws.close()
 
         elif frame_type == "events_api":
-            await self._handle_event(frame)
+            # ACK immediately so Slack doesn't retry (3 s deadline)
+            await self._ack(frame)
+            # Extract context for error logging before the task is created
+            _payload = frame.get("payload", {})
+            _event = _payload.get("event", {})
+            _ctx = {
+                "channel": _event.get("channel", "?"),
+                "user": _event.get("user", "?"),
+                "thread_ts": _event.get("thread_ts", ""),
+                "text": _event.get("text", "")[:80],
+            }
+            task = asyncio.create_task(self._handle_event(frame))
+            self._pending_tasks.add(task)
+
+            def _done_cb(t: asyncio.Task, ctx: dict = _ctx) -> None:
+                self._pending_tasks.discard(t)
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc:
+                        logger.error(
+                            "[socket] Event task failed "
+                            "channel=%s user=%s thread_ts=%s text=%r: %s",
+                            ctx["channel"],
+                            ctx["user"],
+                            ctx["thread_ts"],
+                            ctx["text"],
+                            exc,
+                            exc_info=exc,
+                        )
+
+            task.add_done_callback(_done_cb)
 
         elif frame_type == "interactive":
             await self._ack(frame)
@@ -227,6 +260,7 @@ class SocketModeAdapter:
 
     async def _handle_event(self, frame: dict[str, Any]) -> None:
         """Process an events_api frame."""
+        # NOTE: ACK is sent by _handle_frame before this task starts.
         payload = frame.get("payload", {})
         event = payload.get("event", {})
 
@@ -241,9 +275,6 @@ class SocketModeAdapter:
             f"[socket] Event: type={event_type} user={user} "
             f"channel={channel} thread_ts={thread_ts or 'none'} text={text!r}"
         )
-
-        # Acknowledge immediately (Slack retries if no ack within 3s)
-        await self._ack(frame)
 
         # Skip our own messages
         if user == self._bot_user_id:
@@ -276,6 +307,7 @@ class SocketModeAdapter:
             logger.info(f"[socket] Handler result: {result}")
         except Exception:
             logger.exception("[socket] Error in event handler")
+            raise  # re-raise so the done callback can log it with context
 
     async def _handle_interactive(self, frame: dict[str, Any]) -> None:
         """Process an interactive frame (button clicks, modals, etc.)."""
