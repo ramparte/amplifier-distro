@@ -6,6 +6,8 @@ All store tests use persistence_path=None (in-memory mode).
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from amplifier_distro.server.apps.web_chat.session_store import (
@@ -205,6 +207,23 @@ class TestWebChatSessionStore:
         assert store.active_session() is None
 
     # ------------------------------------------------------------------
+    # touch()
+    # ------------------------------------------------------------------
+
+    def test_touch_updates_last_active(self):
+        store = WebChatSessionStore()
+        s = store.add("sess-001", "test")
+        old_ts = s.last_active
+        store.touch("sess-001")
+        updated = store.get("sess-001")
+        assert updated is not None
+        assert updated.last_active >= old_ts
+
+    def test_touch_missing_does_not_raise(self):
+        store = WebChatSessionStore()
+        store.touch("nonexistent")  # should not raise
+
+    # ------------------------------------------------------------------
     # Persistence — roundtrip
     # ------------------------------------------------------------------
 
@@ -272,28 +291,20 @@ class TestWebChatSessionManager:
     # ------------------------------------------------------------------
 
     def test_create_session_returns_session_info(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        info = asyncio.get_event_loop().run_until_complete(
+        info = asyncio.run(
             manager.create_session(working_dir="~", description="test session")
         )
         assert info.session_id.startswith("mock-session-")
 
     def test_create_session_sets_active(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        info = asyncio.get_event_loop().run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
         assert manager.active_session_id == info.session_id
 
     def test_create_session_registers_in_store(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        info = asyncio.get_event_loop().run_until_complete(
+        info = asyncio.run(
             manager.create_session(working_dir="~", description="my description")
         )
         stored = manager._store.get(info.session_id)
@@ -301,25 +312,18 @@ class TestWebChatSessionManager:
         assert stored.description == "my description"
 
     def test_create_session_stores_project_id_in_extra(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        info = asyncio.get_event_loop().run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
         stored = manager._store.get(info.session_id)
         assert stored is not None
         assert stored.extra.get("project_id") == info.project_id
 
     def test_create_session_ends_previous_session(self):
-        import asyncio
-
         manager, _backend = self._make_manager()
-        loop = asyncio.get_event_loop()
-        info1 = loop.run_until_complete(
+        info1 = asyncio.run(
             manager.create_session(working_dir="~", description="first")
         )
-        info2 = loop.run_until_complete(
+        info2 = asyncio.run(
             manager.create_session(working_dir="~", description="second")
         )
         # First session should be deactivated in store
@@ -334,43 +338,29 @@ class TestWebChatSessionManager:
     # ------------------------------------------------------------------
 
     def test_send_message_returns_none_without_session(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        result = asyncio.get_event_loop().run_until_complete(
-            manager.send_message("hello")
-        )
+        result = asyncio.run(manager.send_message("hello"))
         assert result is None
 
     def test_send_message_returns_response(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
-        response = loop.run_until_complete(manager.send_message("hello"))
+        asyncio.run(manager.create_session(working_dir="~", description="test"))
+        response = asyncio.run(manager.send_message("hello"))
         assert response is not None
         assert "hello" in response  # MockBackend echoes the message
 
     def test_send_message_deactivates_on_backend_valueerror(self):
-        import asyncio
-
         from amplifier_distro.server.apps.web_chat import WebChatSessionManager
         from amplifier_distro.server.session_backend import MockBackend
 
         backend = MockBackend()
         manager = WebChatSessionManager(backend, persistence_path=None)
-        loop = asyncio.get_event_loop()
-        info = loop.run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
         # Kill backend session
         backend._sessions[info.session_id].is_active = False
 
         with pytest.raises(ValueError):
-            loop.run_until_complete(manager.send_message("hello after death"))
+            asyncio.run(manager.send_message("hello after death"))
 
         # Store should have deactivated the session
         assert manager.active_session_id is None
@@ -380,32 +370,20 @@ class TestWebChatSessionManager:
     # ------------------------------------------------------------------
 
     def test_end_session_returns_false_without_session(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        result = asyncio.get_event_loop().run_until_complete(manager.end_session())
+        result = asyncio.run(manager.end_session())
         assert result is False
 
     def test_end_session_returns_true_with_session(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
-        result = loop.run_until_complete(manager.end_session())
+        asyncio.run(manager.create_session(working_dir="~", description="test"))
+        result = asyncio.run(manager.end_session())
         assert result is True
 
     def test_end_session_clears_active(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="test")
-        )
-        loop.run_until_complete(manager.end_session())
+        asyncio.run(manager.create_session(working_dir="~", description="test"))
+        asyncio.run(manager.end_session())
         assert manager.active_session_id is None
 
     # ------------------------------------------------------------------
@@ -417,16 +395,9 @@ class TestWebChatSessionManager:
         assert manager.list_sessions() == []
 
     def test_list_sessions_returns_all(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="first")
-        )
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="second")
-        )
+        asyncio.run(manager.create_session(working_dir="~", description="first"))
+        asyncio.run(manager.create_session(working_dir="~", description="second"))
         sessions = manager.list_sessions()
         assert len(sessions) == 2
 
@@ -440,31 +411,23 @@ class TestWebChatSessionManager:
             manager.resume_session("no-such-id")
 
     def test_resume_session_reactivates_inactive_session(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        info1 = loop.run_until_complete(
+        info1 = asyncio.run(
             manager.create_session(working_dir="~", description="first")
         )
         # Create second session (deactivates first)
-        loop.run_until_complete(
-            manager.create_session(working_dir="~", description="second")
-        )
+        asyncio.run(manager.create_session(working_dir="~", description="second"))
         # Resume first
         resumed = manager.resume_session(info1.session_id)
         assert resumed.is_active is True
         assert manager.active_session_id == info1.session_id
 
     def test_resume_session_deactivates_current(self):
-        import asyncio
-
         manager, _ = self._make_manager()
-        loop = asyncio.get_event_loop()
-        info1 = loop.run_until_complete(
+        info1 = asyncio.run(
             manager.create_session(working_dir="~", description="first")
         )
-        info2 = loop.run_until_complete(
+        info2 = asyncio.run(
             manager.create_session(working_dir="~", description="second")
         )
         manager.resume_session(info1.session_id)

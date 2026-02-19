@@ -194,14 +194,11 @@ class WebChatSessionManager:
         Updates last_active on success.
         On backend ValueError (session died), deactivates store entry and re-raises.
         """
-        from datetime import UTC, datetime
-
         session = self._store.active_session()
         if session is None:
             return None
 
-        session.last_active = datetime.now(UTC).isoformat()
-        self._store._save()
+        self._store.touch(session.session_id)
 
         try:
             return await self._backend.send_message(session.session_id, message)

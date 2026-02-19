@@ -111,6 +111,13 @@ class WebChatSessionStore:
                 return session
         return None
 
+    def touch(self, session_id: str) -> None:
+        """Update last_active timestamp for an active session. No-op if not found."""
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.last_active = datetime.now(UTC).isoformat()
+            self._save()
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
