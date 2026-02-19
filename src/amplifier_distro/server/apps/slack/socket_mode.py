@@ -400,10 +400,23 @@ class SocketModeAdapter:
         self._session = None
 
     async def stop(self) -> None:
-        """Stop the Socket Mode connection."""
+        """Stop the Socket Mode connection.
+
+        Drains pending event tasks (up to 30 s) before cancelling the
+        main connection loop, so in-flight LLM calls complete cleanly.
+        """
         self._running = False
 
         await self._close_ws()
+
+        # Drain pending event tasks
+        if self._pending_tasks:
+            _tasks_snapshot = set(self._pending_tasks)
+            _, still_pending = await asyncio.wait(_tasks_snapshot, timeout=30.0)
+            for task in still_pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
         if self._task and not self._task.done():
             self._task.cancel()
