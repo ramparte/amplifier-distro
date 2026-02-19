@@ -148,13 +148,21 @@ async def on_startup() -> None:
 
     # Start Socket Mode connection if configured
     if config.socket_mode and config.is_configured:
-        from .socket_mode import SocketModeAdapter
+        try:
+            from .socket_mode import SocketModeAdapter
 
-        with _state_lock:
-            adapter = SocketModeAdapter(config, _state["event_handler"])
-            _state["socket_adapter"] = adapter
-        await adapter.start()
-        logger.info("Socket Mode connection started")
+            with _state_lock:
+                adapter = SocketModeAdapter(config, _state["event_handler"])
+                _state["socket_adapter"] = adapter
+            await adapter.start()
+            logger.info("Socket Mode connection started")
+        except ImportError:
+            logger.error(
+                "Socket Mode requires optional dependencies: "
+                "pip install amplifier-distro[slack]  (aiohttp missing)"
+            )
+        except Exception:
+            logger.exception("Socket Mode startup failed; Slack bridge degraded")
 
 
 async def on_shutdown() -> None:
