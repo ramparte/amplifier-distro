@@ -39,6 +39,7 @@ _static_dir = Path(__file__).parent / "static"
 # In the future this becomes per-user via auth tokens.
 _active_session_id: str | None = None
 _session_lock = asyncio.Lock()
+_message_in_flight: bool = False  # True while a send_message() call is in progress
 
 # --- Memory pattern matching ---
 
@@ -245,7 +246,7 @@ async def chat(request: Request) -> JSONResponse:
     Body:
         message: str - The user's message
     """
-    global _active_session_id
+    global _active_session_id, _message_in_flight
 
     body = await request.json()
     user_message = body.get("message", "")
@@ -283,38 +284,53 @@ async def chat(request: Request) -> JSONResponse:
                     "session_connected": False,
                 },
             )
-
-        try:
-            backend = _get_backend()
-            response = await backend.send_message(_active_session_id, user_message)
-            return JSONResponse(
-                content={
-                    "response": response,
-                    "session_id": _active_session_id,
-                    "session_connected": True,
-                }
-            )
-        except ValueError:
-            # Session disappeared
-            _active_session_id = None
+        if _message_in_flight:
             return JSONResponse(
                 status_code=409,
                 content={
-                    "error": "Session no longer exists. Create a new one.",
-                    "session_connected": False,
+                    "error": "A message is already in-flight. Wait for it to complete.",
+                    "session_connected": True,
+                    "in_flight": True,
                 },
             )
-        except RuntimeError as e:
-            return JSONResponse(
-                status_code=503,
-                content={"error": str(e)},
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Chat message failed: %s", e, exc_info=True)
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e), "type": type(e).__name__},
-            )
+        session_id = _active_session_id
+        _message_in_flight = True
+
+    # Lock released — backend call runs concurrently with other routes
+    try:
+        backend = _get_backend()
+        response = await backend.send_message(session_id, user_message)
+        return JSONResponse(
+            content={
+                "response": response,
+                "session_id": session_id,
+                "session_connected": True,
+            }
+        )
+    except ValueError:
+        # Session disappeared — guard the write
+        async with _session_lock:
+            _active_session_id = None
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "Session no longer exists. Create a new one.",
+                "session_connected": False,
+            },
+        )
+    except RuntimeError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": str(e)},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Chat message failed: %s", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "type": type(e).__name__},
+        )
+    finally:
+        _message_in_flight = False
 
 
 @router.post("/api/end")

@@ -39,10 +39,13 @@ def _clean_services():
 @pytest.fixture
 def webchat_client() -> TestClient:
     """Create a TestClient with web-chat app and services initialized."""
-    # Reset module-level state in web_chat
+    import asyncio
+
     import amplifier_distro.server.apps.web_chat as wc
 
     wc._active_session_id = None
+    wc._session_lock = asyncio.Lock()
+    wc._message_in_flight = False
 
     init_services(dev_mode=True)
 
@@ -359,3 +362,61 @@ class TestWebChatSessionLifecycle:
         # Verify session status also shows disconnected
         status = webchat_client.get("/apps/web-chat/api/session").json()
         assert status["connected"] is False
+
+
+class TestWebChatConcurrency:
+    """Verify concurrent request behaviour after lock narrowing.
+
+    These tests use httpx.AsyncClient (async_webchat_client fixture)
+    because starlette.testclient.TestClient runs requests in a thread
+    and cannot produce true asyncio concurrency.
+    """
+
+    async def test_in_flight_guard_rejects_concurrent_chat(self, async_webchat_client):
+        """While a chat is in-flight a second chat returns 409."""
+        from unittest.mock import AsyncMock, patch
+
+        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+
+        async def slow_send(session_id, message):
+            import asyncio
+
+            await asyncio.sleep(0.05)
+            return f"[response: {message}]"
+
+        with patch(
+            "amplifier_distro.server.apps.web_chat._get_backend"
+        ) as mock_get_backend:
+            mock_get_backend.return_value = AsyncMock(send_message=slow_send)
+
+            import asyncio
+
+            r1, r2 = await asyncio.gather(
+                async_webchat_client.post(
+                    "/apps/web-chat/api/chat", json={"message": "first"}
+                ),
+                async_webchat_client.post(
+                    "/apps/web-chat/api/chat", json={"message": "second"}
+                ),
+            )
+
+        codes = sorted([r1.status_code, r2.status_code])
+        assert codes == [200, 409], f"Expected [200, 409], got {codes}"
+        resp_409 = r1 if r1.status_code == 409 else r2
+        assert (
+            "in_flight" in resp_409.json().get("error", "").lower()
+            or resp_409.json().get("in_flight") is True
+        )
+
+    async def test_chat_succeeds_after_in_flight_clears(self, async_webchat_client):
+        """After a chat completes, the next chat is accepted normally."""
+        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+        r1 = await async_webchat_client.post(
+            "/apps/web-chat/api/chat", json={"message": "hello"}
+        )
+        assert r1.status_code == 200
+
+        r2 = await async_webchat_client.post(
+            "/apps/web-chat/api/chat", json={"message": "world"}
+        )
+        assert r2.status_code == 200
