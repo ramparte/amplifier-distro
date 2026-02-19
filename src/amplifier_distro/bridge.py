@@ -460,6 +460,15 @@ class LocalBridge:
             / sid
         )
 
+        # Persist session metadata for resume (Issue #53).
+        # Note: if the process crashes before hooks-logging writes transcript.jsonl,
+        # this directory will contain only session-info.json. resume_session() handles
+        # the empty-transcript case gracefully.
+        try:
+            _write_session_info(session_dir, config.working_dir)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to write session info (non-fatal)", exc_info=True)
+
         # 9b. Register transcript persistence hooks
         from amplifier_distro.transcript_persistence import register_transcript_hooks
 
@@ -485,8 +494,10 @@ class LocalBridge:
     ) -> SessionHandle:
         """Resume an existing session.
 
-        Finds the session directory by ID (or prefix), loads the bundle,
-        creates a new session, and injects the previous transcript as context.
+        Finds the session directory by ID (or prefix), recovers the original
+        working directory from session-info.json (falling back to
+        config.working_dir for pre-fix sessions), loads the bundle, creates
+        a new session, and injects the previous transcript as context.
         """
         if config is None:
             config = BridgeConfig()
@@ -532,6 +543,24 @@ class LocalBridge:
             session_dir,
         )
 
+        # 1b. Recover original working_dir from session-info.json (Issue #53)
+        persisted_cwd = _read_session_info_working_dir(session_dir)
+        if persisted_cwd is not None:
+            effective_cwd = persisted_cwd
+            logger.info(
+                "Restored original working_dir=%s from session info (was %s)",
+                effective_cwd,
+                config.working_dir,
+            )
+        else:
+            effective_cwd = config.working_dir
+            logger.info(
+                "No session info found, using default working_dir=%s",
+                effective_cwd,
+            )
+            # Backfill for pre-fix sessions so subsequent resumes are stable
+            _write_session_info(session_dir, effective_cwd)
+
         # 2. Load foundation
         load_bundle, BundleRegistry = _require_foundation()
 
@@ -570,7 +599,7 @@ class LocalBridge:
             is_resumed=True,
             approval_system=approval,
             display_system=display,
-            session_cwd=config.working_dir,
+            session_cwd=effective_cwd,
         )
 
         # 7. Register streaming hooks
@@ -672,7 +701,7 @@ class LocalBridge:
         return SessionHandle(
             session_id=session.coordinator.session_id,
             project_id=project_id,
-            working_dir=config.working_dir,
+            working_dir=effective_cwd,
             _session=session,
             _session_dir=session_dir,
         )

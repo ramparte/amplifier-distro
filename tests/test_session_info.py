@@ -7,11 +7,14 @@ and resume_session().
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from amplifier_distro.bridge import BridgeConfig, LocalBridge
 
 # ---------------------------------------------------------------------------
 # Tests for _write_session_info()
@@ -318,3 +321,333 @@ class TestSessionInfoRoundTrip:
         _write_session_info(session_dir, original)
         recovered = _read_session_info_working_dir(session_dir)
         assert recovered == original.expanduser().resolve()
+
+
+# ---------------------------------------------------------------------------
+# Integration: create_session writes session-info.json
+# ---------------------------------------------------------------------------
+
+
+def _mock_foundation_chain():
+    """Create mocks for the amplifier-foundation load/prepare/create chain."""
+    mock_session = MagicMock()
+    mock_session.coordinator.session_id = "test-session-id-12345678"
+    mock_session.coordinator.hooks.register = MagicMock()
+
+    mock_prepared = AsyncMock()
+    mock_prepared.create_session = AsyncMock(return_value=mock_session)
+
+    mock_bundle = AsyncMock()
+    mock_bundle.prepare = AsyncMock(return_value=mock_prepared)
+
+    mock_load_bundle = AsyncMock(return_value=mock_bundle)
+    mock_registry_cls = MagicMock()
+
+    return mock_load_bundle, mock_registry_cls, mock_session
+
+
+class TestCreateSessionWritesSessionInfo:
+    """Verify create_session() persists session-info.json."""
+
+    def test_session_info_written_on_create(self, tmp_path: Path) -> None:
+        """create_session() writes session-info.json with the correct working_dir."""
+        bridge = LocalBridge()
+        bridge._config = {
+            "workspace_root": "~/dev",
+            "preflight": {"enabled": False},
+            "bundle": {"active": "test-bundle"},
+        }
+        working_dir = Path("/Users/testuser")
+        config = BridgeConfig(
+            working_dir=working_dir,
+            bundle_name="test-bundle",
+            run_preflight=False,
+        )
+
+        mock_load, mock_reg, _ = _mock_foundation_chain()
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+        ):
+            handle = asyncio.run(bridge.create_session(config))
+
+        # Verify session-info.json was written in the session directory
+        session_dir = handle._session_dir
+        assert session_dir is not None
+        info_file = session_dir / "session-info.json"
+        assert info_file.exists(), f"session-info.json not found in {session_dir}"
+        data = json.loads(info_file.read_text())
+        assert data["working_dir"] == str(working_dir.resolve())
+        assert "created_at" in data
+
+    def test_create_succeeds_even_if_session_info_write_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Session creation completes even if _write_session_info fails."""
+        bridge = LocalBridge()
+        bridge._config = {
+            "workspace_root": "~/dev",
+            "preflight": {"enabled": False},
+            "bundle": {"active": "test-bundle"},
+        }
+        config = BridgeConfig(
+            working_dir=Path("/Users/testuser"),
+            bundle_name="test-bundle",
+            run_preflight=False,
+        )
+
+        mock_load, mock_reg, _ = _mock_foundation_chain()
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch(
+                "amplifier_distro.bridge._write_session_info",
+                side_effect=Exception("catastrophic failure"),
+            ),
+        ):
+            # Must not raise — session creation must complete
+            handle = asyncio.run(bridge.create_session(config))
+
+        assert handle is not None
+        assert handle.session_id == "test-session-id-12345678"
+
+
+# ---------------------------------------------------------------------------
+# Integration: resume_session reads session-info.json
+# ---------------------------------------------------------------------------
+
+SESSION_ID = "test-session-00000000"
+PROJECT_NAME = "test-project"
+
+
+def _make_session_dir_for_resume(tmp_path: Path) -> Path:
+    """Create the directory tree that resume_session() expects."""
+    session_dir = tmp_path / PROJECT_NAME / "sessions" / SESSION_ID
+    session_dir.mkdir(parents=True)
+    return session_dir
+
+
+def _mock_foundation_for_resume():
+    """Return (mock_load_bundle, mock_registry_cls, mock_session, mock_prepared)."""
+    mock_session = MagicMock()
+    mock_session.coordinator.session_id = SESSION_ID
+    mock_session.coordinator.context.set_messages = AsyncMock()
+    mock_session.coordinator.hooks.register = MagicMock()
+
+    mock_prepared = AsyncMock()
+    mock_prepared.create_session = AsyncMock(return_value=mock_session)
+
+    mock_bundle = AsyncMock()
+    mock_bundle.prepare = AsyncMock(return_value=mock_prepared)
+
+    mock_load_bundle = AsyncMock(return_value=mock_bundle)
+    mock_registry_cls = MagicMock()
+
+    return mock_load_bundle, mock_registry_cls, mock_session, mock_prepared
+
+
+class TestResumeSessionReadsSessionInfo:
+    """Verify resume_session() recovers original working_dir from session-info.json."""
+
+    def test_resume_uses_persisted_working_dir(self, tmp_path: Path) -> None:
+        """session-info.json working_dir is passed to create_session."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+
+        # Write session-info.json with the ORIGINAL working_dir
+        original_cwd = "/Users/testuser"
+        info = {"working_dir": original_cwd, "created_at": "2026-02-18T15:00:00+00:00"}
+        (session_dir / "session-info.json").write_text(json.dumps(info))
+
+        mock_load, mock_reg, _, mock_prepared = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        # Config with a DIFFERENT working_dir (simulates server restart)
+        server_cwd = tmp_path  # this is the "wrong" CWD
+        config = BridgeConfig(working_dir=server_cwd)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        # Verify create_session was called with the ORIGINAL cwd, not server cwd
+        call_kwargs = mock_prepared.create_session.call_args
+        actual_cwd = call_kwargs.kwargs.get("session_cwd") or call_kwargs[1].get(
+            "session_cwd"
+        )
+        assert actual_cwd == Path(original_cwd), (
+            f"Expected session_cwd={original_cwd}, got {actual_cwd}"
+        )
+
+    def test_resume_falls_back_when_no_session_info(self, tmp_path: Path) -> None:
+        """Without session-info.json, resume uses config.working_dir."""
+        _make_session_dir_for_resume(tmp_path)
+        # No session-info.json written — simulates pre-fix session
+
+        mock_load, mock_reg, _, mock_prepared = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        fallback_cwd = tmp_path
+        config = BridgeConfig(working_dir=fallback_cwd)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        call_kwargs = mock_prepared.create_session.call_args
+        actual_cwd = call_kwargs.kwargs.get("session_cwd") or call_kwargs[1].get(
+            "session_cwd"
+        )
+        assert actual_cwd == fallback_cwd
+
+    def test_resume_falls_back_when_session_info_corrupt(self, tmp_path: Path) -> None:
+        """Corrupt session-info.json causes fallback to config.working_dir."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+        (session_dir / "session-info.json").write_text("not valid json {{{")
+
+        mock_load, mock_reg, _, mock_prepared = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        fallback_cwd = tmp_path
+        config = BridgeConfig(working_dir=fallback_cwd)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        call_kwargs = mock_prepared.create_session.call_args
+        actual_cwd = call_kwargs.kwargs.get("session_cwd") or call_kwargs[1].get(
+            "session_cwd"
+        )
+        assert actual_cwd == fallback_cwd
+
+    def test_resume_handle_has_correct_working_dir(self, tmp_path: Path) -> None:
+        """The returned SessionHandle.working_dir reflects the restored CWD."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+
+        original_cwd = "/Users/testuser"
+        info = {"working_dir": original_cwd, "created_at": "2026-02-18T15:00:00+00:00"}
+        (session_dir / "session-info.json").write_text(json.dumps(info))
+
+        mock_load, mock_reg, _, _ = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        config = BridgeConfig(working_dir=tmp_path)  # "wrong" CWD
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            handle = asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        assert handle.working_dir == Path(original_cwd)
+
+    def test_resume_with_no_config_uses_persisted_cwd(self, tmp_path: Path) -> None:
+        """With config=None (_reconnect), persisted CWD overrides Path.cwd()."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+        original_cwd = "/Users/testuser/my-project"
+        info = {"working_dir": original_cwd, "created_at": "2026-02-18T15:00:00+00:00"}
+        (session_dir / "session-info.json").write_text(json.dumps(info))
+
+        mock_load, mock_reg, _, mock_prepared = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        # NOTE: No config passed — mirrors what _reconnect() does
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID))  # No config!
+
+        call_kwargs = mock_prepared.create_session.call_args
+        actual_cwd = call_kwargs.kwargs.get("session_cwd") or call_kwargs[1].get(
+            "session_cwd"
+        )
+        assert actual_cwd == Path(original_cwd)
+
+    def test_resume_backfills_session_info_when_missing(self, tmp_path: Path) -> None:
+        """Pre-fix sessions get session-info.json backfilled on first resume."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+        # No session-info.json — simulates pre-fix session
+
+        mock_load, mock_reg, _, _ = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        config = BridgeConfig(working_dir=tmp_path)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        # Verify backfill happened
+        info_file = session_dir / "session-info.json"
+        assert info_file.exists(), (
+            "session-info.json should be backfilled on first resume"
+        )
+        data = json.loads(info_file.read_text())
+        assert data["working_dir"] == str(tmp_path.resolve())
+
+    def test_resume_does_not_mutate_config(self, tmp_path: Path) -> None:
+        """resume_session() must not mutate the caller's BridgeConfig."""
+        session_dir = _make_session_dir_for_resume(tmp_path)
+        original_cwd = "/Users/testuser"
+        info = {"working_dir": original_cwd, "created_at": "2026-02-18T15:00:00+00:00"}
+        (session_dir / "session-info.json").write_text(json.dumps(info))
+
+        mock_load, mock_reg, _, _ = _mock_foundation_for_resume()
+
+        bridge = LocalBridge()
+        server_cwd = tmp_path
+        config = BridgeConfig(working_dir=server_cwd)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        # config.working_dir must NOT have been mutated
+        assert config.working_dir == server_cwd
