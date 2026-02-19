@@ -520,3 +520,20 @@ class TestWebChatSessionResumeAPI:
         by_id = {s["session_id"]: s for s in sessions}
         assert by_id[session_id_1]["is_active"] is True
         assert by_id[session_id_2]["is_active"] is False
+
+    def test_resume_currently_active_session_is_idempotent(
+        self, webchat_client: TestClient
+    ):
+        """Resuming the already-active session should succeed and keep it active."""
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+        assert response.json()["session_id"] == session_id
+        # Still the active session
+        status = webchat_client.get("/apps/web-chat/api/session").json()
+        assert status["session_id"] == session_id

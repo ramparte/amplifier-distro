@@ -221,6 +221,8 @@ class WebChatSessionManager:
         """Switch active session to session_id.
 
         Deactivates the current active session (store only — backend stays alive).
+        If session_id is already active, refreshes its last_active
+        timestamp (idempotent).
         Raises ValueError if session_id is not found.
         """
         if self._store.get(session_id) is None:
