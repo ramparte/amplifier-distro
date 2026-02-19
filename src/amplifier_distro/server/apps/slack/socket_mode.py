@@ -236,9 +236,10 @@ class SocketModeAdapter:
         channel = event.get("channel", "?")
         msg_ts = event.get("ts", "")
 
+        thread_ts = event.get("thread_ts", "")
         logger.info(
             f"[socket] Event: type={event_type} user={user} "
-            f"channel={channel} text={text!r}"
+            f"channel={channel} thread_ts={thread_ts or 'none'} text={text!r}"
         )
 
         # Acknowledge immediately (Slack retries if no ack within 3s)
