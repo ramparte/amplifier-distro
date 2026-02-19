@@ -178,11 +178,11 @@ async def session_status() -> dict:
                 "session_id": None,
                 "message": "Previous session ended. Start a new one.",
             }
-    except RuntimeError:
+    except Exception:  # noqa: BLE001
         return {
             "connected": False,
             "session_id": None,
-            "message": "Server services not ready. Is the server fully started?",
+            "message": "Could not reach session backend.",
         }
 
 
@@ -313,9 +313,10 @@ async def chat(request: Request) -> JSONResponse:
             }
         )
     except ValueError:
-        # Session disappeared — guard the write
+        # Session disappeared — CAS guard: don't clobber a new session
         async with _session_lock:
-            _active_session_id = None
+            if _active_session_id == session_id:
+                _active_session_id = None
         return JSONResponse(
             status_code=409,
             content={
