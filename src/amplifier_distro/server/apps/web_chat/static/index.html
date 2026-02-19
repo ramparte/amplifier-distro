@@ -343,6 +343,92 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Sessions Panel                                                     */
+/* ------------------------------------------------------------------ */
+.sessions-wrapper {
+  position: relative;
+}
+
+.sessions-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.sessions-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.new-session-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-weight: 600;
+}
+.new-session-btn:hover { background: var(--accent-hover); }
+
+.sessions-list { max-height: 360px; overflow-y: auto; }
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(75,85,99,0.4);
+  transition: background 0.1s;
+}
+.session-row:hover { background: var(--bg-card); }
+.session-row:last-child { border-bottom: none; }
+
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.session-dot.active  { background: var(--success); }
+.session-dot.inactive {
+  background: transparent;
+  border: 2px solid var(--text-secondary);
+}
+
+.session-row-info { flex: 1; overflow: hidden; min-width: 0; }
+.session-row-desc {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.session-row-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Mobile                                                             */
 /* ------------------------------------------------------------------ */
 @media (max-width: 640px) {
@@ -372,6 +458,26 @@ body {
     </div>
   </div>
   <div class="header-right">
+    <!-- Sessions dropdown -->
+    <div class="sessions-wrapper">
+      <button class="settings-btn" onclick="toggleSessions()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <span>Sessions</span>
+      </button>
+      <div class="sessions-panel" id="sessionsPanel" style="display:none">
+        <div class="sessions-panel-header">
+          <span>Sessions</span>
+          <button class="new-session-btn" onclick="createNewSession()">+ New</button>
+        </div>
+        <div class="sessions-list" id="sessionList">
+          <div style="padding:16px;color:var(--text-secondary);font-size:13px;text-align:center">Loading...</div>
+        </div>
+      </div>
+    </div>
+    <!-- Settings link -->
     <a href="/apps/settings/" class="settings-btn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -409,6 +515,7 @@ body {
 /*  State                                                              */
 /* ------------------------------------------------------------------ */
 let sessionConnected = false;
+let sessionsPanelOpen = false;
 
 const chatArea = document.getElementById('chatArea');
 const messageInput = document.getElementById('messageInput');
@@ -462,6 +569,99 @@ function esc(str) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Sessions Panel                                                     */
+/* ------------------------------------------------------------------ */
+function toggleSessions() {
+  const panel = document.getElementById('sessionsPanel');
+  sessionsPanelOpen = !sessionsPanelOpen;
+  panel.style.display = sessionsPanelOpen ? 'block' : 'none';
+  if (sessionsPanelOpen) loadSessions();
+}
+
+async function loadSessions() {
+  const list = document.getElementById('sessionList');
+  list.innerHTML = '<div style="padding:16px;color:var(--text-secondary);font-size:13px;text-align:center">Loading...</div>';
+  try {
+    const res = await fetch('./api/sessions');
+    const data = await res.json();
+    renderSessionList(data.sessions || []);
+  } catch {
+    list.innerHTML = '<div style="padding:16px;color:var(--error);font-size:13px;text-align:center">Failed to load sessions.</div>';
+  }
+}
+
+function renderSessionList(sessions) {
+  const list = document.getElementById('sessionList');
+  if (!sessions.length) {
+    list.innerHTML = '<div style="padding:16px;color:var(--text-secondary);font-size:13px;text-align:center">No sessions yet. Start chatting to create one.</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => {
+    const ts = s.last_active
+      ? new Date(s.last_active).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+      : '';
+    const shortId = s.session_id.slice(0, 8);
+    const dotClass = s.is_active ? 'active' : 'inactive';
+    const desc = esc(s.description || 'Web chat session');
+    return `<div class="session-row" onclick="resumeSessionById('${esc(s.session_id)}')">
+      <span class="session-dot ${dotClass}"></span>
+      <div class="session-row-info">
+        <div class="session-row-desc">${desc}</div>
+        <div class="session-row-meta">${shortId} &middot; ${ts}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function resumeSessionById(sessionId) {
+  document.getElementById('sessionsPanel').style.display = 'none';
+  sessionsPanelOpen = false;
+  try {
+    const res = await fetch('./api/session/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      addMessage('system', '<p>Could not resume session: ' + esc(err.error || 'Unknown error') + '</p>');
+      return;
+    }
+    const data = await res.json();
+    sessionConnected = true;
+    updateBadge();
+    document.getElementById('chatArea').innerHTML = '';
+    addMessage('system', '<p>Resumed session <code>' + esc(data.session_id.slice(0, 8)) + '</code></p>');
+  } catch {
+    addMessage('system', '<p>Failed to resume session.</p>');
+  }
+}
+
+async function createNewSession() {
+  document.getElementById('sessionsPanel').style.display = 'none';
+  sessionsPanelOpen = false;
+  try {
+    const res = await fetch('./api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      addMessage('system', '<p>Could not create session: ' + esc(err.error || 'Unknown error') + '</p>');
+      return;
+    }
+    const data = await res.json();
+    sessionConnected = true;
+    updateBadge();
+    document.getElementById('chatArea').innerHTML = '';
+    addMessage('system', '<p>New session started <code>' + esc(data.session_id.slice(0, 8)) + '</code></p>');
+  } catch {
+    addMessage('system', '<p>Failed to create session.</p>');
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Session Status                                                     */
 /* ------------------------------------------------------------------ */
 async function checkSession() {
@@ -492,12 +692,29 @@ async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text) return;
 
-  // Show user message
+  // Show user message immediately
   addMessage('user', '<p>' + esc(text) + '</p>');
   messageInput.value = '';
   autoResize();
 
-  // Try sending to backend
+  // Auto-create session on first message if not already connected
+  if (!sessionConnected) {
+    try {
+      const res = await fetch('./api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        sessionConnected = true;
+        updateBadge();
+      }
+    } catch {
+      // Will fail gracefully below when we try to send the message
+    }
+  }
+
+  // Send message to backend
   showTyping();
   try {
     const res = await fetch('./api/chat', {
@@ -507,7 +724,13 @@ async function sendMessage() {
     });
     const data = await res.json();
     removeTyping();
-    addMessage('assistant', '<p>' + esc(data.response) + '</p>');
+    if (res.ok) {
+      addMessage('assistant', '<p>' + esc(data.response) + '</p>');
+    } else {
+      addMessage('system', '<p>' + esc(data.error || 'Error sending message') + '</p>');
+      sessionConnected = data.session_connected === true;
+      updateBadge();
+    }
   } catch {
     removeTyping();
     addMessage('system',
