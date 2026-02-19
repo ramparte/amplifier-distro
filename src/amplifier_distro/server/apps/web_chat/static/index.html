@@ -583,6 +583,7 @@ async function loadSessions() {
   list.innerHTML = '<div style="padding:16px;color:var(--text-secondary);font-size:13px;text-align:center">Loading...</div>';
   try {
     const res = await fetch('./api/sessions');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderSessionList(data.sessions || []);
   } catch {
@@ -600,10 +601,10 @@ function renderSessionList(sessions) {
     const ts = s.last_active
       ? new Date(s.last_active).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
       : '';
-    const shortId = s.session_id.slice(0, 8);
+    const shortId = esc(s.session_id.slice(0, 8));
     const dotClass = s.is_active ? 'active' : 'inactive';
     const desc = esc(s.description || 'Web chat session');
-    return `<div class="session-row" onclick="resumeSessionById('${esc(s.session_id)}')">
+    return `<div class="session-row" data-session-id="${esc(s.session_id)}">
       <span class="session-dot ${dotClass}"></span>
       <div class="session-row-info">
         <div class="session-row-desc">${desc}</div>
@@ -611,6 +612,11 @@ function renderSessionList(sessions) {
       </div>
     </div>`;
   }).join('');
+
+  // Attach click handlers safely (no inline JS, avoids quote-in-id XSS context)
+  list.querySelectorAll('.session-row').forEach(row => {
+    row.addEventListener('click', () => resumeSessionById(row.dataset.sessionId));
+  });
 }
 
 async function resumeSessionById(sessionId) {
@@ -785,8 +791,7 @@ sendBtn.addEventListener('click', sendMessage);
     '</ul>' +
     (sessionConnected
       ? '<p><em>Session connected &mdash; start chatting below.</em></p>'
-      : '<p><em>No active session. Messages are echoed locally for now. ' +
-        'Full session support is coming soon.</em></p>')
+      : '<p><em>No active session &mdash; type a message to start one automatically.</em></p>')
   );
 
   messageInput.focus();
