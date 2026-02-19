@@ -38,8 +38,10 @@ from amplifier_distro.conventions import (
     DISTRO_BUNDLE_FILENAME,
     HANDOFF_FILENAME,
     PROJECTS_DIR,
+    SESSION_INFO_FILENAME,
     TRANSCRIPT_FILENAME,
 )
+from amplifier_distro.fileutil import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,38 @@ def _encode_cwd(working_dir: Path) -> str:
     /home/user/dev/project -> -home-user-dev-project
     """
     return str(working_dir.resolve()).replace("/", "-")
+
+
+def _write_session_info(session_dir: Path, working_dir: Path) -> None:
+    """Persist session metadata to session-info.json (best-effort).
+
+    Writes the original working_dir so resume_session() can recover it
+    instead of defaulting to the server's CWD. Uses atomic_write for
+    crash safety.
+
+    Never raises — all errors are logged and swallowed.
+    """
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        info = {
+            "working_dir": str(working_dir.expanduser().resolve()),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        atomic_write(
+            session_dir / SESSION_INFO_FILENAME,
+            json.dumps(info, indent=2),
+        )
+        logger.debug(
+            "Wrote session-info.json to %s (working_dir=%s)",
+            session_dir,
+            working_dir,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Failed to write session-info.json to %s",
+            session_dir,
+            exc_info=True,
+        )
 
 
 @dataclass
