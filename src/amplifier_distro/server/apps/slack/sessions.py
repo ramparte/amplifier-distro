@@ -90,6 +90,7 @@ class SlackSessionManager:
                     created_at=entry.get("created_at", ""),
                     last_active=entry.get("last_active", ""),
                     is_active=entry.get("is_active", True),
+                    working_dir=entry.get("working_dir", ""),
                 )
                 key = mapping.conversation_key
                 self._mappings[key] = mapping
@@ -116,6 +117,7 @@ class SlackSessionManager:
                     "created_at": m.created_at,
                     "last_active": m.last_active,
                     "is_active": m.is_active,
+                    "working_dir": m.working_dir,
                 }
                 for m in self._mappings.values()
             ]
@@ -207,6 +209,7 @@ class SlackSessionManager:
             created_by=user_id,
             created_at=now,
             last_active=now,
+            working_dir=info.working_dir,
         )
         self._mappings[key] = mapping
         self._save_sessions()
@@ -258,6 +261,7 @@ class SlackSessionManager:
             created_by=user_id,
             created_at=now,
             last_active=now,
+            working_dir=info.working_dir,
         )
 
         self._mappings[key] = mapping

@@ -131,6 +131,16 @@ class TestSlackModels:
         assert m.created_at  # Should have a default timestamp
         assert m.last_active
 
+    def test_session_mapping_has_working_dir(self):
+        """SessionMapping has a working_dir field that defaults to empty string."""
+        from amplifier_distro.server.apps.slack.models import SessionMapping
+
+        m = SessionMapping(session_id="s1", channel_id="C1", working_dir="~/repo/foo")
+        assert m.working_dir == "~/repo/foo"
+
+        m_default = SessionMapping(session_id="s2", channel_id="C2")
+        assert m_default.working_dir == ""
+
     def test_channel_type_enum(self):
         from amplifier_distro.server.apps.slack.models import ChannelType
 
@@ -635,6 +645,30 @@ class TestSlackSessionManager:
 
         # A threaded lookup must NOT match the bare-channel session
         assert session_manager.get_mapping("C_HUB", "some.thread.ts") is None
+
+    def test_create_session_stores_working_dir_on_mapping(self, session_manager):
+        """create_session populates working_dir from backend's SessionInfo."""
+        mapping = asyncio.run(
+            session_manager.create_session("C_HUB", "thread.1", "U1", "wd test")
+        )
+        # MockBackend.create_session returns info.working_dir = the working_dir
+        # it was called with. SlackConfig defaults to "~".
+        assert mapping.working_dir != "", "working_dir must be populated"
+
+    def test_connect_session_stores_working_dir_on_mapping(
+        self, session_manager, mock_backend
+    ):
+        """connect_session populates working_dir from backend's SessionInfo."""
+        mapping = asyncio.run(
+            session_manager.connect_session(
+                "C_HUB",
+                "thread.2",
+                "U1",
+                working_dir="~/repo/specific-project",
+                description="connect wd test",
+            )
+        )
+        assert mapping.working_dir == "~/repo/specific-project"
 
 
 # --- Command Handler Tests ---
@@ -1669,6 +1703,92 @@ class TestSessionPersistence:
             slack_client, mock_backend, slack_config, persistence_path=persist_path
         )
         assert mgr.list_active() == []
+
+    def test_save_load_round_trips_working_dir(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """working_dir survives save/load round trip."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr1 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr1.create_session("C1", "t1", "U1", "wd test"))
+
+        # Verify the JSON file contains working_dir
+        data = json.loads(persist_path.read_text())
+        assert "working_dir" in data[0], "working_dir must be in persisted JSON"
+
+        # Load into a new manager and verify
+        mgr2 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr2.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.working_dir != "", "working_dir must survive round trip"
+
+    def test_load_sessions_backward_compat_no_working_dir(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Old JSON files without working_dir load without error."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        # Write an old-format JSON without working_dir
+        old_data = [
+            {
+                "session_id": "old-session-001",
+                "channel_id": "C1",
+                "thread_ts": "t1",
+                "project_id": "proj",
+                "description": "old session",
+                "created_by": "U1",
+                "created_at": "2026-01-01T00:00:00",
+                "last_active": "2026-01-01T00:00:00",
+                "is_active": True,
+            }
+        ]
+        persist_path.write_text(json.dumps(old_data))
+
+        # Must load without error
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.working_dir == ""  # Default for missing field
+
+    def test_save_sessions_includes_all_dataclass_fields(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """_save_sessions output includes every SessionMapping dataclass field.
+
+        This prevents future fields from being silently dropped by the manual
+        serialization in _save_sessions().
+        """
+        from dataclasses import fields
+
+        from amplifier_distro.server.apps.slack.models import SessionMapping
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr.create_session("C1", "t1", "U1", "field check"))
+
+        data = json.loads(persist_path.read_text())
+        record = data[0]
+
+        # Every dataclass field (except computed properties) must be in JSON
+        dataclass_field_names = {f.name for f in fields(SessionMapping)}
+        json_keys = set(record.keys())
+        missing = dataclass_field_names - json_keys
+        assert not missing, (
+            f"_save_sessions() is missing fields: {missing}. "
+            "Add them to the dict literal in _save_sessions()."
+        )
 
     def test_default_persistence_path_uses_conventions(self):
         """The default persistence path is built from conventions constants."""
