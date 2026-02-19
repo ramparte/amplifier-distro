@@ -181,10 +181,12 @@ class SlackEventHandler:
             await self._handle_session_message(message)
             return
 
-        # No mapping and not a command - ignore in hub, but if we're in
-        # a thread that was created by a "new" command, treat as session message
-        # (This handles the case where someone replies in a session thread
-        # without mentioning the bot)
+        # No active session mapping for this context
+        logger.info(
+            "No active session for channel=%s thread_ts=%s (message ignored)",
+            channel_id,
+            thread_ts or "none",
+        )
 
     async def _handle_app_mention(self, event: dict[str, Any]) -> None:
         """Handle an @mention event.
