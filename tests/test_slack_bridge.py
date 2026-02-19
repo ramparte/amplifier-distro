@@ -670,6 +670,55 @@ class TestSlackSessionManager:
         )
         assert mapping.working_dir == "~/repo/specific-project"
 
+    def test_create_session_uses_explicit_working_dir(
+        self, session_manager, mock_backend
+    ):
+        """create_session passes explicit working_dir to backend."""
+        asyncio.run(
+            session_manager.create_session(
+                "C1",
+                "t1",
+                "U1",
+                "explicit wd",
+                working_dir="~/repo/explicit",
+            )
+        )
+        # Check what working_dir the backend was called with
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/explicit"
+
+    def test_create_session_falls_back_to_config_default(
+        self, session_manager, mock_backend, slack_config
+    ):
+        """create_session uses config default when no working_dir specified."""
+        slack_config.default_working_dir = "~/repo/configured"
+        asyncio.run(session_manager.create_session("C1", "t1", "U1", "default wd"))
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/configured"
+
+    def test_create_session_none_working_dir_uses_default(
+        self, session_manager, mock_backend, slack_config
+    ):
+        """Explicitly passing working_dir=None falls back to config default."""
+        slack_config.default_working_dir = "~/repo/fallback"
+        asyncio.run(
+            session_manager.create_session(
+                "C1",
+                "t1",
+                "U1",
+                "none wd",
+                working_dir=None,
+            )
+        )
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/fallback"
+
 
 # --- Command Handler Tests ---
 

@@ -171,6 +171,7 @@ class SlackSessionManager:
         thread_ts: str | None,
         user_id: str,
         description: str = "",
+        working_dir: str | None = None,
     ) -> SessionMapping:
         """Create a new Amplifier session and map it to a Slack context.
 
@@ -189,9 +190,17 @@ class SlackSessionManager:
                 "End an existing session first."
             )
 
+        # Resolve working directory: explicit param > config default
+        effective_dir = working_dir or self._config.default_working_dir
+        logger.info(
+            "Creating session with working_dir=%s (source: %s)",
+            effective_dir,
+            "explicit" if working_dir else "config default",
+        )
+
         # Create the backend session
         info = await self._backend.create_session(
-            working_dir=self._config.default_working_dir,
+            working_dir=effective_dir,
             bundle_name=self._config.default_bundle,
             description=description,
         )
