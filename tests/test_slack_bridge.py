@@ -625,6 +625,15 @@ class TestSlackSessionManager:
         session_manager.rekey_mapping("C_NONEXISTENT", "ts.0")
         assert session_manager.get_mapping("C_NONEXISTENT") is None
 
+    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(self, session_manager):
+        """Thread lookup must NOT fall back to a bare-channel key (issue #54 regression guard)."""
+        # Session stored under bare key (slash command path before rekey_mapping runs)
+        asyncio.run(session_manager.create_session("C_HUB", None, "U1"))
+        assert session_manager.get_mapping("C_HUB") is not None  # bare key exists
+
+        # A threaded lookup must NOT match the bare-channel session
+        assert session_manager.get_mapping("C_HUB", "some.thread.ts") is None
+
 
 # --- Command Handler Tests ---
 
