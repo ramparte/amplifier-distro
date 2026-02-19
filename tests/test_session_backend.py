@@ -101,7 +101,7 @@ class TestBridgeBackendSerialization:
         queue = asyncio.Queue()
         bridge_backend._session_queues[session_id] = queue
         bridge_backend._worker_tasks[session_id] = asyncio.create_task(
-            BridgeBackend._session_worker(bridge_backend, session_id)
+            BridgeBackend._session_worker(bridge_backend, session_id)  # type: ignore[attr-defined]
         )
 
         try:
@@ -134,7 +134,7 @@ class TestBridgeBackendSerialization:
         queue = asyncio.Queue()
         bridge_backend._session_queues[session_id] = queue
         bridge_backend._worker_tasks[session_id] = asyncio.create_task(
-            BridgeBackend._session_worker(bridge_backend, session_id)
+            BridgeBackend._session_worker(bridge_backend, session_id)  # type: ignore[attr-defined]
         )
 
         try:
