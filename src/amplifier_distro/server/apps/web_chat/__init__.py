@@ -128,6 +128,148 @@ def _get_backend():
     return get_services().backend
 
 
+from amplifier_distro.conventions import (  # noqa: E402
+    AMPLIFIER_HOME,
+    SERVER_DIR,
+    WEB_CHAT_SESSIONS_FILENAME,
+)
+from amplifier_distro.server.apps.web_chat.session_store import (  # noqa: E402
+    WebChatSession,
+    WebChatSessionStore,
+)
+
+
+class WebChatSessionManager:
+    """Manages web chat sessions: store registry + backend lifecycle.
+
+    Replaces the module-level _active_session_id global and _session_lock.
+    One active session at a time (single-user web chat).
+
+    Pass persistence_path=None to disable disk persistence (test mode).
+    In production, persistence_path is resolved at singleton creation time.
+    """
+
+    def __init__(
+        self,
+        backend: Any,
+        persistence_path: Path | None = None,
+    ) -> None:
+        self._backend = backend
+        self._store = WebChatSessionStore(persistence_path=persistence_path)
+
+    @property
+    def active_session_id(self) -> str | None:
+        """ID of the current active session, or None."""
+        session = self._store.active_session()
+        return session.session_id if session else None
+
+    async def create_session(
+        self,
+        working_dir: str = "~",
+        description: str = "Web chat session",
+    ):
+        """End any active session, create a new one, register in store.
+
+        Returns the SessionInfo from the backend.
+        """
+        # End existing session if any
+        existing = self._store.active_session()
+        if existing:
+            await self._end_active(existing.session_id)
+
+        info = await self._backend.create_session(
+            working_dir=working_dir,
+            description=description,
+        )
+        self._store.add(
+            info.session_id,
+            description,
+            extra={"project_id": info.project_id},
+        )
+        return info
+
+    async def send_message(self, message: str) -> str | None:
+        """Send message to active session. Returns None if no session.
+
+        Updates last_active on success.
+        On backend ValueError (session died), deactivates store entry and re-raises.
+        """
+        from datetime import UTC, datetime
+
+        session = self._store.active_session()
+        if session is None:
+            return None
+
+        session.last_active = datetime.now(UTC).isoformat()
+        self._store._save()
+
+        try:
+            return await self._backend.send_message(session.session_id, message)
+        except ValueError:
+            # Backend confirmed session is dead — deactivate in store
+            self._store.deactivate(session.session_id)
+            raise
+
+    async def end_session(self) -> bool:
+        """Deactivate and end the active session.
+
+        Returns True if a session existed, False otherwise.
+        """
+        session = self._store.active_session()
+        if session is None:
+            return False
+        await self._end_active(session.session_id)
+        return True
+
+    def list_sessions(self) -> list[WebChatSession]:
+        """All sessions sorted by last_active desc."""
+        return self._store.list_all()
+
+    def resume_session(self, session_id: str) -> WebChatSession:
+        """Switch active session to session_id.
+
+        Deactivates the current active session (store only — backend stays alive).
+        Raises ValueError if session_id is not found.
+        """
+        if self._store.get(session_id) is None:
+            raise ValueError(f"Session {session_id!r} not found")
+
+        # Deactivate current if it's a different session
+        current = self._store.active_session()
+        if current and current.session_id != session_id:
+            self._store.deactivate(current.session_id)
+
+        return self._store.reactivate(session_id)
+
+    async def _end_active(self, session_id: str) -> None:
+        """Deactivate in store and end on backend. Swallows backend errors."""
+        self._store.deactivate(session_id)
+        try:
+            await self._backend.end_session(session_id)
+        except (RuntimeError, ValueError, OSError):
+            logger.warning("Error ending session %s", session_id, exc_info=True)
+
+
+_manager: WebChatSessionManager | None = None
+
+
+def _get_manager() -> WebChatSessionManager:
+    """Return the module-level WebChatSessionManager singleton.
+
+    Creates it on first call, wiring up the real persistence path.
+    """
+    global _manager
+    if _manager is None:
+        persistence_path = (
+            Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / WEB_CHAT_SESSIONS_FILENAME
+        )
+        _manager = WebChatSessionManager(
+            _get_backend(),
+            persistence_path=persistence_path,
+        )
+    return _manager
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Serve the web chat interface."""
