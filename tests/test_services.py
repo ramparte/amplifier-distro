@@ -238,6 +238,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         # Mock handle that run() returns a response
         mock_handle = MagicMock()
@@ -284,6 +287,9 @@ class TestBridgeBackendReconnectLock:
 
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         mock_handle = MagicMock()
         mock_handle.run = AsyncMock(return_value="cached response")
@@ -310,6 +316,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         handles = {}
         resume_count = 0
@@ -349,6 +358,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         mock_handle = MagicMock()
         mock_handle.session_id = "sess-cleanup"
@@ -374,6 +386,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         backend._bridge = MagicMock()
         backend._bridge.resume_session = AsyncMock(
@@ -396,6 +411,9 @@ class TestBridgeBackendReconnectLock:
         backend = BridgeBackend.__new__(BridgeBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
+        backend._session_queues = {}
+        backend._worker_tasks = {}
+        backend._ended_sessions = set()
 
         call_count = 0
 

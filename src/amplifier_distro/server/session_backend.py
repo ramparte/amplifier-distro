@@ -15,6 +15,7 @@ server level so all apps share a single session pool.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -199,6 +200,15 @@ class BridgeBackend:
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
 
+        # Pre-start the session worker so the first message doesn't pay
+        # the task-creation overhead, and so the worker is available for
+        # reconnect paths that also route through the queue.
+        queue: asyncio.Queue = asyncio.Queue()
+        self._session_queues[handle.session_id] = queue
+        self._worker_tasks[handle.session_id] = asyncio.create_task(
+            self._session_worker(handle.session_id)
+        )
+
         return SessionInfo(
             session_id=handle.session_id,
             project_id=handle.project_id,
@@ -223,7 +233,22 @@ class BridgeBackend:
             finally:
                 # Clean up lock entry on both success and failure paths
                 self._reconnect_locks.pop(session_id, None)
-        return await handle.run(message)
+
+        # Route through the per-session queue so concurrent calls serialize
+        if session_id not in self._session_queues:
+            self._session_queues[session_id] = asyncio.Queue()
+        if (
+            session_id not in self._worker_tasks
+            or self._worker_tasks[session_id].done()
+        ):
+            self._worker_tasks[session_id] = asyncio.create_task(
+                self._session_worker(session_id)
+            )
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        await self._session_queues[session_id].put((message, future))
+        return await future
 
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
@@ -232,6 +257,11 @@ class BridgeBackend:
         the resume cost again.  On failure the original ValueError is raised
         so callers see the same error they would have before.
         """
+        if session_id in self._ended_sessions:
+            raise ValueError(
+                f"Session {session_id} was intentionally ended"
+                " and cannot be reconnected"
+            )
         logger.info(f"Attempting to reconnect lost session {session_id}")
         try:
             handle = await self._bridge.resume_session(session_id)
@@ -242,10 +272,125 @@ class BridgeBackend:
             logger.warning(f"Failed to reconnect session {session_id}", exc_info=True)
             raise ValueError(f"Unknown session: {session_id}") from err
 
+    async def _session_worker(self, session_id: str) -> None:
+        """Drain the session queue, running handle.run() calls sequentially.
+
+        Receives (message, future) tuples from the queue.  A ``None``
+        sentinel signals the worker to exit cleanly (used by end_session
+        and stop).  On CancelledError, drains remaining futures with
+        cancellation so callers don't wait forever.
+        """
+        queue = self._session_queues[session_id]
+        while True:
+            try:
+                item = await queue.get()
+            except asyncio.CancelledError:
+                # Drain remaining items and cancel their futures
+                while not queue.empty():
+                    try:
+                        pending_item = queue.get_nowait()
+                        if pending_item is not None:
+                            _, fut = pending_item
+                            if not fut.done():
+                                fut.cancel()
+                        queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
+                raise
+
+            if item is None:
+                # Sentinel — exit cleanly
+                queue.task_done()
+                break
+
+            message, future = item
+            try:
+                handle = self._sessions.get(session_id)
+                if handle is None:
+                    future.set_exception(
+                        ValueError(f"Session {session_id} handle not found")
+                    )
+                else:
+                    result = await handle.run(message)
+                    if not future.done():
+                        future.set_result(result)
+            except asyncio.CancelledError:
+                if not future.done():
+                    future.cancel()
+                # No task_done() here — finally handles it for all paths
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if not future.done():
+                    future.set_exception(exc)
+            finally:
+                queue.task_done()  # exactly one call per item, all exit paths
+
     async def end_session(self, session_id: str) -> None:
+        # Tombstone first — prevents _reconnect() from reviving this session
+        self._ended_sessions.add(session_id)
+
+        # Pop handle before signalling the worker so the worker sees no handle
+        # and rejects any racing messages with ValueError
         handle = self._sessions.pop(session_id, None)
+
+        # Signal worker to exit cleanly via sentinel
+        queue = self._session_queues.get(session_id)
+        if queue is not None:
+            await queue.put(None)
+
+        # Wait up to 5 s for in-flight work to drain
+        worker = self._worker_tasks.get(session_id)
+        if worker is not None and not worker.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout=5.0)
+            except TimeoutError:
+                logger.warning(
+                    "Session worker %s did not drain in 5s, cancelling", session_id
+                )
+                worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
+
+        # Drain any remaining queued futures (unlikely but safe)
+        if queue is not None:
+            while not queue.empty():
+                try:
+                    item = queue.get_nowait()
+                    if item is not None:
+                        _, fut = item
+                        if not fut.done():
+                            fut.cancel()
+                except asyncio.QueueEmpty:
+                    break
+
+        # Clean up references
+        self._session_queues.pop(session_id, None)
+        self._worker_tasks.pop(session_id, None)
+
         if handle:
             await self._bridge.end_session(handle)
+
+    async def stop(self) -> None:
+        """Gracefully stop all session workers.
+
+        Sends the None sentinel to every active queue, then waits up to
+        10 s for workers to drain.  Remaining workers are cancelled.
+        Must be called during server shutdown.
+        """
+        for queue in list(self._session_queues.values()):
+            await queue.put(None)
+
+        if self._worker_tasks:
+            workers = [t for t in self._worker_tasks.values() if not t.done()]
+            if workers:
+                _, still_pending = await asyncio.wait(workers, timeout=10.0)
+                for task in still_pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+        self._session_queues.clear()
+        self._worker_tasks.clear()
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         handle = self._sessions.get(session_id)

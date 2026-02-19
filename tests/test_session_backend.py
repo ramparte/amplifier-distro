@@ -142,3 +142,167 @@ class TestBridgeBackendSerialization:
                 await BridgeBackend.send_message(bridge_backend, session_id, "hi")
         finally:
             bridge_backend._worker_tasks[session_id].cancel()
+
+
+class TestBridgeBackendSendMessageQueue:
+    """send_message() routes through the per-session queue."""
+
+    async def test_send_message_uses_queue(self, bridge_backend):
+        """send_message() puts work on the queue; result comes back via future."""
+        session_id = "sess-queue-001"
+        handle = _make_mock_handle(session_id)
+        bridge_backend._sessions[session_id] = handle
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        # Manually pre-start queue and worker (as create_session will do)
+        queue = asyncio.Queue()
+        bridge_backend._session_queues[session_id] = queue
+        bridge_backend._worker_tasks[session_id] = asyncio.create_task(
+            BridgeBackend._session_worker(bridge_backend, session_id)
+        )
+
+        try:
+            result = await BridgeBackend.send_message(
+                bridge_backend, session_id, "test message"
+            )
+        finally:
+            bridge_backend._worker_tasks[session_id].cancel()
+
+        assert result == f"[response from {session_id}]"
+        handle.run.assert_called_once_with("test message")
+
+
+class TestBridgeBackendCancellation:
+    """Verify that cancelling the worker during handle.run() is clean."""
+
+    async def test_no_double_task_done_on_cancel_during_run(self, bridge_backend):
+        """Cancelling the worker during handle.run() must not raise ValueError."""
+        session_id = "sess-cancel-run-001"
+        handle = _make_mock_handle(session_id)
+        bridge_backend._sessions[session_id] = handle
+
+        run_started = asyncio.Event()
+
+        async def slow_run(message):
+            run_started.set()
+            await asyncio.sleep(10)  # long enough to cancel
+            return "never"
+
+        handle.run = slow_run
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        queue = asyncio.Queue()
+        bridge_backend._session_queues[session_id] = queue
+        worker = asyncio.create_task(
+            BridgeBackend._session_worker(bridge_backend, session_id)
+        )
+        bridge_backend._worker_tasks[session_id] = worker
+
+        # Enqueue a message and wait for run() to start
+        fut = asyncio.get_event_loop().create_future()
+        await queue.put(("cancel-me", fut))
+        await run_started.wait()
+
+        # Cancel worker while handle.run() is in-flight
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+
+        # fut should be cancelled, queue should be consistent (no ValueError raised)
+        assert fut.cancelled() or fut.done()
+        # If we get here without ValueError, the bug is fixed
+
+
+class TestBridgeBackendEndSession:
+    """end_session() must tombstone, drain the worker, then call bridge.end_session."""
+
+    async def test_end_session_adds_tombstone(self, bridge_backend):
+        """Session ID is added to _ended_sessions before anything else."""
+        session_id = "sess-end-001"
+        handle = _make_mock_handle(session_id)
+        bridge_backend._sessions[session_id] = handle
+        bridge_backend._bridge.end_session = AsyncMock()
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        await BridgeBackend.end_session(bridge_backend, session_id)
+
+        assert session_id in bridge_backend._ended_sessions
+
+    async def test_end_session_drains_worker(self, bridge_backend):
+        """end_session() waits for in-flight work to complete before returning."""
+        session_id = "sess-end-002"
+        handle = _make_mock_handle(session_id)
+        bridge_backend._sessions[session_id] = handle
+        bridge_backend._bridge.end_session = AsyncMock()
+
+        completed = []
+
+        async def slow_run(message):
+            await asyncio.sleep(0.03)
+            completed.append(message)
+            return f"done:{message}"
+
+        handle.run = slow_run
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        # Pre-start worker
+        queue: asyncio.Queue = asyncio.Queue()
+        bridge_backend._session_queues[session_id] = queue
+        bridge_backend._worker_tasks[session_id] = asyncio.create_task(
+            BridgeBackend._session_worker(bridge_backend, session_id)
+        )
+
+        # Start a send (don't await yet) then immediately end
+        send_task = asyncio.create_task(
+            BridgeBackend.send_message(bridge_backend, session_id, "finishing")
+        )
+        await asyncio.sleep(0)  # let the message enqueue
+
+        await BridgeBackend.end_session(bridge_backend, session_id)
+
+        if not send_task.done():
+            send_task.cancel()
+
+        assert "finishing" in completed or send_task.done()
+
+    async def test_reconnect_blocked_after_end_session(self, bridge_backend):
+        """_reconnect() must raise ValueError for tombstoned sessions."""
+        session_id = "sess-end-003"
+        bridge_backend._ended_sessions.add(session_id)
+
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        with pytest.raises(ValueError, match="intentionally ended"):
+            await BridgeBackend._reconnect(bridge_backend, session_id)
+
+
+class TestBridgeBackendStop:
+    """stop() sends sentinels to all workers and awaits them."""
+
+    async def test_stop_signals_all_workers(self, bridge_backend):
+        """stop() sends None sentinel to every active queue."""
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        for sid in ("sess-stop-001", "sess-stop-002"):
+            handle = _make_mock_handle(sid)
+            bridge_backend._sessions[sid] = handle
+            queue: asyncio.Queue = asyncio.Queue()
+            bridge_backend._session_queues[sid] = queue
+            bridge_backend._worker_tasks[sid] = asyncio.create_task(
+                BridgeBackend._session_worker(bridge_backend, sid)
+            )
+
+        await BridgeBackend.stop(bridge_backend)
+
+        for task in bridge_backend._worker_tasks.values():
+            assert task.done(), "Worker should be done after stop()"
+
+    async def test_stop_is_idempotent_with_no_sessions(self, bridge_backend):
+        """stop() on a backend with no sessions must not raise."""
+        from amplifier_distro.server.session_backend import BridgeBackend
+
+        await BridgeBackend.stop(bridge_backend)  # should not raise
