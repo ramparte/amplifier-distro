@@ -233,6 +233,37 @@ Sam works in structured mode cycles — always follow this sequence:
 
 **PRs:** Always squash merge. Delegate all git/PR work to `foundation:git-ops`.
 
+### Cross-Check Before Design (learned from #53 session)
+
+Before designing any fix, always cross-check the issue landscape:
+
+1. `gh issue list --state open` — list ALL open issues
+2. Map relationships to the target issue (conflicts, overlaps, dependencies)
+3. `gh pr list --state open` — check for merge conflicts on the same files
+4. Present the landscape BEFORE proposing approaches
+
+This prevented two conflicts in the #53 session: Issue #34 had the same fix surface, PR #49 was changing the SessionMapping model we might have targeted.
+
+### Swarm Review on Plans
+
+When Sam says "use your swarm of agents to review", dispatch 3 parallel `self` delegates with different provider preferences and distinct review angles:
+
+| Provider | Angle |
+|----------|-------|
+| Anthropic | Architecture, design correctness, layer placement |
+| OpenAI | Code correctness, edge cases, bugs, race conditions |
+| Google | Testing completeness, traceability, operational readiness |
+
+Produce a consensus table, then present required vs recommended changes for Sam to agree/reject individually.
+
+### Implementation Speed Benchmark
+
+With a detailed plan (exact file paths, code, test commands), the implementation cycle runs at:
+- **~5 min per TDD task** (implementer 4 min + git-ops 1 min)
+- **33 tests + 4 commits + PR in 22 min** (the #53 session benchmark)
+
+If implementation takes significantly longer, the plan wasn't detailed enough.
+
 ---
 
 ## Slack Bridge Architecture (key facts)
@@ -241,7 +272,9 @@ Sam works in structured mode cycles — always follow this sequence:
 - `SlackSessionManager` → `server/apps/slack/sessions.py`
 - Thread routing wired in `server/apps/slack/events.py` via `_handle_command_message()`
 - `rekey_mapping()` called after `post_message()` returns thread `ts`
-- Open issues: #31 (zombie mappings), #49 (SurfaceSessionRegistry refactor — will need `rekey_mapping()` translation), #53 (resume CWD)
+- `session-info.json` written by `bridge.py` at session creation (`working_dir`, `created_at`). Read at resume to restore original CWD. Backfilled on first resume of pre-fix sessions. Activates the `SESSION_INFO_FILENAME` convention from `conventions.py`.
+- Open issues: #31 (zombie mappings), #49 (SurfaceSessionRegistry refactor — will need `rekey_mapping()` translation), #57 (server concurrency — main thread blocking)
+- Closed: #53 (resume CWD — fixed by session-info.json in PR #56)
 
 ---
 
