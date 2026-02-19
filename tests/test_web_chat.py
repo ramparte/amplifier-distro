@@ -420,3 +420,63 @@ class TestWebChatConcurrency:
             "/apps/web-chat/api/chat", json={"message": "world"}
         )
         assert r2.status_code == 200
+
+    async def test_session_id_cleared_under_lock_on_value_error(
+        self, async_webchat_client
+    ):
+        """When send_message raises ValueError, _active_session_id is cleared safely."""
+        from unittest.mock import AsyncMock, patch
+
+        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+
+        async def failing_send(session_id, message):
+            raise ValueError("Unknown session")
+
+        with patch(
+            "amplifier_distro.server.apps.web_chat._get_backend"
+        ) as mock_get_backend:
+            mock_get_backend.return_value = AsyncMock(send_message=failing_send)
+            r = await async_webchat_client.post(
+                "/apps/web-chat/api/chat", json={"message": "hello"}
+            )
+
+        assert r.status_code == 409
+        assert r.json()["session_connected"] is False
+
+        # Session should now be cleared
+        status = await async_webchat_client.get("/apps/web-chat/api/session")
+        assert status.json()["connected"] is False
+
+    async def test_session_status_does_not_block_concurrent_chat(
+        self, async_webchat_client
+    ):
+        """session_status() must not hold _session_lock during backend I/O."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+
+        async def slow_get_info(session_id):
+            await asyncio.sleep(0.05)
+            from amplifier_distro.server.session_backend import SessionInfo
+
+            return SessionInfo(session_id=session_id, is_active=True)
+
+        with patch(
+            "amplifier_distro.server.apps.web_chat._get_backend"
+        ) as mock_get_backend:
+            mock_backend = AsyncMock()
+            mock_backend.get_session_info = slow_get_info
+            mock_backend.send_message = AsyncMock(return_value="ok")
+            mock_get_backend.return_value = mock_backend
+
+            r_status, r_chat = await asyncio.gather(
+                async_webchat_client.get("/apps/web-chat/api/session"),
+                async_webchat_client.post(
+                    "/apps/web-chat/api/chat", json={"message": "hi"}
+                ),
+            )
+
+        # Both should complete — neither should time out or deadlock
+        assert r_status.status_code == 200
+        assert r_chat.status_code in (200, 409)  # 409 if in-flight guard fires
