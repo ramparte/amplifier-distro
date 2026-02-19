@@ -132,7 +132,7 @@ class SlackConfig:
         """
         keys = _load_keys()
         cfg = _load_distro_slack()
-        return cls(
+        config = cls(
             bot_token=_str("SLACK_BOT_TOKEN", keys, cfg, "bot_token"),
             app_token=_str("SLACK_APP_TOKEN", keys, cfg, "app_token"),
             signing_secret=_str("SLACK_SIGNING_SECRET", keys, cfg, "signing_secret"),
@@ -144,9 +144,21 @@ class SlackConfig:
                 "hub_channel_name",
                 "amplifier",
             ),
+            default_working_dir=_str(
+                "SLACK_DEFAULT_WORKING_DIR",
+                {},
+                cfg,
+                "default_working_dir",
+                "~",
+            ),
             simulator_mode=_bool("SLACK_SIMULATOR_MODE", cfg, "simulator_mode"),
             socket_mode=_bool("SLACK_SOCKET_MODE", cfg, "socket_mode"),
         )
+        logger.debug(
+            "SlackConfig.from_env: default_working_dir=%s",
+            config.default_working_dir,
+        )
+        return config
 
     @property
     def is_configured(self) -> bool:

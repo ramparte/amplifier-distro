@@ -90,6 +90,7 @@ class SlackSessionManager:
                     created_at=entry.get("created_at", ""),
                     last_active=entry.get("last_active", ""),
                     is_active=entry.get("is_active", True),
+                    working_dir=entry.get("working_dir", ""),
                 )
                 key = mapping.conversation_key
                 self._mappings[key] = mapping
@@ -116,6 +117,7 @@ class SlackSessionManager:
                     "created_at": m.created_at,
                     "last_active": m.last_active,
                     "is_active": m.is_active,
+                    "working_dir": m.working_dir,
                 }
                 for m in self._mappings.values()
             ]
@@ -169,6 +171,7 @@ class SlackSessionManager:
         thread_ts: str | None,
         user_id: str,
         description: str = "",
+        working_dir: str | None = None,
     ) -> SessionMapping:
         """Create a new Amplifier session and map it to a Slack context.
 
@@ -187,9 +190,17 @@ class SlackSessionManager:
                 "End an existing session first."
             )
 
+        # Resolve working directory: explicit param > config default
+        effective_dir = working_dir or self._config.default_working_dir
+        logger.info(
+            "Creating session with working_dir=%s (source: %s)",
+            effective_dir,
+            "explicit" if working_dir else "config default",
+        )
+
         # Create the backend session
         info = await self._backend.create_session(
-            working_dir=self._config.default_working_dir,
+            working_dir=effective_dir,
             bundle_name=self._config.default_bundle,
             description=description,
         )
@@ -207,6 +218,7 @@ class SlackSessionManager:
             created_by=user_id,
             created_at=now,
             last_active=now,
+            working_dir=info.working_dir,
         )
         self._mappings[key] = mapping
         self._save_sessions()
@@ -258,6 +270,7 @@ class SlackSessionManager:
             created_by=user_id,
             created_at=now,
             last_active=now,
+            working_dir=info.working_dir,
         )
 
         self._mappings[key] = mapping

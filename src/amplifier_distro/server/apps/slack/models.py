@@ -80,6 +80,7 @@ class SessionMapping:
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     last_active: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     is_active: bool = True
+    working_dir: str = ""  # Where this session operates (e.g., "~/repo/foo")
 
     @property
     def conversation_key(self) -> str:

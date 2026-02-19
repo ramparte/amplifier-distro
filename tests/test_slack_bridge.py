@@ -131,6 +131,16 @@ class TestSlackModels:
         assert m.created_at  # Should have a default timestamp
         assert m.last_active
 
+    def test_session_mapping_has_working_dir(self):
+        """SessionMapping has a working_dir field that defaults to empty string."""
+        from amplifier_distro.server.apps.slack.models import SessionMapping
+
+        m = SessionMapping(session_id="s1", channel_id="C1", working_dir="~/repo/foo")
+        assert m.working_dir == "~/repo/foo"
+
+        m_default = SessionMapping(session_id="s2", channel_id="C2")
+        assert m_default.working_dir == ""
+
     def test_channel_type_enum(self):
         from amplifier_distro.server.apps.slack.models import ChannelType
 
@@ -636,6 +646,79 @@ class TestSlackSessionManager:
         # A threaded lookup must NOT match the bare-channel session
         assert session_manager.get_mapping("C_HUB", "some.thread.ts") is None
 
+    def test_create_session_stores_working_dir_on_mapping(self, session_manager):
+        """create_session populates working_dir from backend's SessionInfo."""
+        mapping = asyncio.run(
+            session_manager.create_session("C_HUB", "thread.1", "U1", "wd test")
+        )
+        # MockBackend.create_session returns info.working_dir = the working_dir
+        # it was called with. SlackConfig defaults to "~".
+        assert mapping.working_dir != "", "working_dir must be populated"
+
+    def test_connect_session_stores_working_dir_on_mapping(
+        self, session_manager, mock_backend
+    ):
+        """connect_session populates working_dir from backend's SessionInfo."""
+        mapping = asyncio.run(
+            session_manager.connect_session(
+                "C_HUB",
+                "thread.2",
+                "U1",
+                working_dir="~/repo/specific-project",
+                description="connect wd test",
+            )
+        )
+        assert mapping.working_dir == "~/repo/specific-project"
+
+    def test_create_session_uses_explicit_working_dir(
+        self, session_manager, mock_backend
+    ):
+        """create_session passes explicit working_dir to backend."""
+        asyncio.run(
+            session_manager.create_session(
+                "C1",
+                "t1",
+                "U1",
+                "explicit wd",
+                working_dir="~/repo/explicit",
+            )
+        )
+        # Check what working_dir the backend was called with
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/explicit"
+
+    def test_create_session_falls_back_to_config_default(
+        self, session_manager, mock_backend, slack_config
+    ):
+        """create_session uses config default when no working_dir specified."""
+        slack_config.default_working_dir = "~/repo/configured"
+        asyncio.run(session_manager.create_session("C1", "t1", "U1", "default wd"))
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/configured"
+
+    def test_create_session_none_working_dir_uses_default(
+        self, session_manager, mock_backend, slack_config
+    ):
+        """Explicitly passing working_dir=None falls back to config default."""
+        slack_config.default_working_dir = "~/repo/fallback"
+        asyncio.run(
+            session_manager.create_session(
+                "C1",
+                "t1",
+                "U1",
+                "none wd",
+                working_dir=None,
+            )
+        )
+        create_call = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ][-1]
+        assert create_call["working_dir"] == "~/repo/fallback"
+
 
 # --- Command Handler Tests ---
 
@@ -681,6 +764,34 @@ class TestCommandHandler:
         ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
         result = asyncio.run(command_handler.handle("new", ["my", "session"], ctx))
         assert "Started new session" in result.text
+
+    def test_cmd_new_shows_working_dir_in_response(self, command_handler, slack_config):
+        """cmd_new response includes the working directory."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~/repo/my-project"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "~/repo/my-project" in result.text
+
+    def test_cmd_new_shows_hint_when_in_home_dir(self, command_handler, slack_config):
+        """cmd_new shows a configuration hint when working dir is ~ (unconfigured)."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "~" in result.text
+        assert "default_working_dir" in result.text
+
+    def test_cmd_new_no_hint_when_working_dir_set(self, command_handler, slack_config):
+        """cmd_new does NOT show config hint when a real working dir is set."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~/repo/configured"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["test"], ctx))
+        assert "default_working_dir" not in result.text
 
     def test_cmd_status_no_session(self, command_handler):
         from amplifier_distro.server.apps.slack.commands import CommandContext
@@ -988,6 +1099,54 @@ class TestSlackConfigFile:
             ):
                 cfg = config_mod.SlackConfig.from_env()
                 assert cfg.bot_token == "xoxb-env"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_reads_default_working_dir(self, tmp_path):
+        """default_working_dir is read from distro.yaml slack section."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        distro_file = tmp_path / "distro.yaml"
+        distro_file.write_text("slack:\n  default_working_dir: ~/repo/my-project\n")
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": ""}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "~/repo/my-project"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_default_working_dir_env_override(self, tmp_path):
+        """SLACK_DEFAULT_WORKING_DIR env var overrides distro.yaml."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        distro_file = tmp_path / "distro.yaml"
+        distro_file.write_text("slack:\n  default_working_dir: ~/repo/from-file\n")
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": "/custom/from-env"}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "/custom/from-env"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_default_working_dir_defaults_to_tilde(self, tmp_path):
+        """default_working_dir falls back to '~' when not configured."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": ""}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "~"
         finally:
             config_mod._amplifier_home = original
 
@@ -1621,6 +1780,92 @@ class TestSessionPersistence:
             slack_client, mock_backend, slack_config, persistence_path=persist_path
         )
         assert mgr.list_active() == []
+
+    def test_save_load_round_trips_working_dir(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """working_dir survives save/load round trip."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr1 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr1.create_session("C1", "t1", "U1", "wd test"))
+
+        # Verify the JSON file contains working_dir
+        data = json.loads(persist_path.read_text())
+        assert "working_dir" in data[0], "working_dir must be in persisted JSON"
+
+        # Load into a new manager and verify
+        mgr2 = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr2.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.working_dir != "", "working_dir must survive round trip"
+
+    def test_load_sessions_backward_compat_no_working_dir(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """Old JSON files without working_dir load without error."""
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        # Write an old-format JSON without working_dir
+        old_data = [
+            {
+                "session_id": "old-session-001",
+                "channel_id": "C1",
+                "thread_ts": "t1",
+                "project_id": "proj",
+                "description": "old session",
+                "created_by": "U1",
+                "created_at": "2026-01-01T00:00:00",
+                "last_active": "2026-01-01T00:00:00",
+                "is_active": True,
+            }
+        ]
+        persist_path.write_text(json.dumps(old_data))
+
+        # Must load without error
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        loaded = mgr.get_mapping("C1", "t1")
+        assert loaded is not None
+        assert loaded.working_dir == ""  # Default for missing field
+
+    def test_save_sessions_includes_all_dataclass_fields(
+        self, slack_client, mock_backend, slack_config, tmp_path
+    ):
+        """_save_sessions output includes every SessionMapping dataclass field.
+
+        This prevents future fields from being silently dropped by the manual
+        serialization in _save_sessions().
+        """
+        from dataclasses import fields
+
+        from amplifier_distro.server.apps.slack.models import SessionMapping
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+
+        persist_path = tmp_path / "slack-sessions.json"
+        mgr = SlackSessionManager(
+            slack_client, mock_backend, slack_config, persistence_path=persist_path
+        )
+        asyncio.run(mgr.create_session("C1", "t1", "U1", "field check"))
+
+        data = json.loads(persist_path.read_text())
+        record = data[0]
+
+        # Every dataclass field (except computed properties) must be in JSON
+        dataclass_field_names = {f.name for f in fields(SessionMapping)}
+        json_keys = set(record.keys())
+        missing = dataclass_field_names - json_keys
+        assert not missing, (
+            f"_save_sessions() is missing fields: {missing}. "
+            "Add them to the dict literal in _save_sessions()."
+        )
 
     def test_default_persistence_path_uses_conventions(self):
         """The default persistence path is built from conventions constants."""
