@@ -431,6 +431,7 @@ class TestWebChatSessionsListAPI:
         inactive = [s for s in sessions if not s["is_active"]]
         assert len(active) == 1
         assert len(inactive) == 1
+        assert sessions[0]["description"] == "second"  # most recently active first
 
     def test_list_sessions_project_id_field_is_present(
         self, webchat_client: TestClient
