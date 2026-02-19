@@ -429,6 +429,29 @@ async def end_session() -> JSONResponse:
     return JSONResponse(content={"ended": True, "session_id": session_id})
 
 
+@router.get("/api/sessions")
+async def list_sessions() -> dict:
+    """List all web chat sessions.
+
+    Returns all sessions (active and inactive), sorted by last_active desc.
+    """
+    manager = _get_manager()
+    sessions = manager.list_sessions()
+    return {
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "description": s.description,
+                "created_at": s.created_at,
+                "last_active": s.last_active,
+                "is_active": s.is_active,
+                "project_id": s.extra.get("project_id", ""),
+            }
+            for s in sessions
+        ]
+    }
+
+
 manifest = AppManifest(
     name="web-chat",
     description="Amplifier web chat interface",

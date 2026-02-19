@@ -376,3 +376,66 @@ class TestWebChatSessionLifecycle:
         # Verify session status also shows disconnected
         status = webchat_client.get("/apps/web-chat/api/session").json()
         assert status["connected"] is False
+
+
+class TestWebChatSessionsListAPI:
+    """Verify GET /apps/web-chat/api/sessions endpoint."""
+
+    def test_list_sessions_returns_200(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/api/sessions")
+        assert response.status_code == 200
+
+    def test_list_sessions_empty_by_default(self, webchat_client: TestClient):
+        data = webchat_client.get("/apps/web-chat/api/sessions").json()
+        assert data["sessions"] == []
+
+    def test_list_sessions_includes_created_session(self, webchat_client: TestClient):
+        webchat_client.post(
+            "/apps/web-chat/api/session",
+            json={"description": "my test session"},
+        )
+        data = webchat_client.get("/apps/web-chat/api/sessions").json()
+        assert len(data["sessions"]) == 1
+        assert data["sessions"][0]["description"] == "my test session"
+
+    def test_list_sessions_entry_has_required_fields(self, webchat_client: TestClient):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        s = sessions[0]
+        assert "session_id" in s
+        assert "description" in s
+        assert "created_at" in s
+        assert "last_active" in s
+        assert "is_active" in s
+        assert "project_id" in s
+
+    def test_list_sessions_active_flag_is_true_for_current(
+        self, webchat_client: TestClient
+    ):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        assert sessions[0]["is_active"] is True
+
+    def test_list_sessions_shows_both_active_and_inactive(
+        self, webchat_client: TestClient
+    ):
+        # Create first session
+        webchat_client.post("/apps/web-chat/api/session", json={"description": "first"})
+        # Create second session — automatically deactivates first
+        webchat_client.post(
+            "/apps/web-chat/api/session", json={"description": "second"}
+        )
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        assert len(sessions) == 2
+        active = [s for s in sessions if s["is_active"]]
+        inactive = [s for s in sessions if not s["is_active"]]
+        assert len(active) == 1
+        assert len(inactive) == 1
+
+    def test_list_sessions_project_id_field_is_present(
+        self, webchat_client: TestClient
+    ):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        # project_id should be a string (may be empty for unknown sessions)
+        assert isinstance(sessions[0]["project_id"], str)
