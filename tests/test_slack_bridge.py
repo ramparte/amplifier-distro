@@ -604,6 +604,36 @@ class TestSlackSessionManager:
         u2_sessions = session_manager.list_user_sessions("U2")
         assert len(u2_sessions) == 1
 
+    def test_rekey_mapping_moves_bare_key_to_thread_key(self, session_manager):
+        """rekey_mapping() upgrades bare channel_id key to channel_id:thread_ts."""
+        asyncio.run(session_manager.create_session("C_HUB", None, "U1", "rekey test"))
+
+        assert session_manager.get_mapping("C_HUB") is not None
+        assert session_manager.get_mapping("C_HUB", "1234567890.000001") is None
+
+        session_manager.rekey_mapping("C_HUB", "1234567890.000001")
+
+        assert session_manager.get_mapping("C_HUB") is None
+
+        mapping = session_manager.get_mapping("C_HUB", "1234567890.000001")
+        assert mapping is not None
+        assert mapping.thread_ts == "1234567890.000001"
+        assert mapping.description == "rekey test"
+
+    def test_rekey_mapping_no_op_when_key_missing(self, session_manager):
+        """rekey_mapping() is safe when the bare key doesn't exist — no exception."""
+        session_manager.rekey_mapping("C_NONEXISTENT", "ts.0")
+        assert session_manager.get_mapping("C_NONEXISTENT") is None
+
+    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(self, session_manager):
+        """Thread lookup must NOT fall back to a bare-channel key (issue #54 regression guard)."""
+        # Session stored under bare key (slash command path before rekey_mapping runs)
+        asyncio.run(session_manager.create_session("C_HUB", None, "U1"))
+        assert session_manager.get_mapping("C_HUB") is not None  # bare key exists
+
+        # A threaded lookup must NOT match the bare-channel session
+        assert session_manager.get_mapping("C_HUB", "some.thread.ts") is None
+
 
 # --- Command Handler Tests ---
 
@@ -1605,4 +1635,121 @@ class TestSessionPersistence:
         assert (
             path
             == Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / SLACK_SESSIONS_FILENAME
+        )
+
+
+# --- Thread Routing Fix Tests (Issue #54) ---
+
+
+class TestThreadRoutingFix:
+    """Regression tests for issue #54: thread routing cross-contamination.
+
+    Bug: Two @amp new commands in the same channel both map to the bare
+    channel_id key. The second create_session() overwrites the first's entry,
+    so messages in thread A get routed to session B.
+
+    These tests drive through the full SlackEventHandler pipeline (not just
+    the session manager) to confirm the wiring between _handle_command_message()
+    and rekey_mapping() is correct end-to-end.
+    """
+
+    def _make_handler(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        from amplifier_distro.server.apps.slack.events import SlackEventHandler
+
+        return SlackEventHandler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+
+    def _app_mention_payload(self, text, channel="C_HUB", user="U1", ts="1.0"):
+        """Build an app_mention event payload (no thread_ts — top-level command)."""
+        return {
+            "type": "event_callback",
+            "event": {
+                "type": "app_mention",
+                "text": text,
+                "user": user,
+                "channel": channel,
+                "ts": ts,
+            },
+        }
+
+    def test_two_new_commands_in_same_channel_dont_overwrite(
+        self, slack_client, session_manager, command_handler, slack_config
+    ):
+        """Two @amp new commands in the same channel get independent routing keys.
+
+        Before the fix: the second create_session() writes under the same bare
+        channel_id key as the first, destroying the first's routing entry. All
+        subsequent messages in thread A would silently land in session B.
+
+        After the fix: each session is re-keyed to its own thread_ts immediately
+        after the bot posts its reply, so get_mapping(channel, thread_ts_A) and
+        get_mapping(channel, thread_ts_B) return two distinct session mappings.
+        """
+        handler = self._make_handler(
+            slack_client, session_manager, command_handler, slack_config
+        )
+
+        # --- First @amp new ---
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload(
+                    "<@U_AMP_BOT> new first session", ts="100.000001"
+                )
+            )
+        )
+        assert len(slack_client.sent_messages) >= 1, (
+            "Bot must post at least one message in response to @amp new"
+        )
+        first_reply = slack_client.sent_messages[0]
+        assert first_reply.thread_ts is None, (
+            "First @amp new reply must start a brand-new thread (thread_ts=None)."
+        )
+        thread_ts_A = first_reply.ts
+
+        # --- Second @amp new ---
+        asyncio.run(
+            handler.handle_event_payload(
+                self._app_mention_payload(
+                    "<@U_AMP_BOT> new second session", ts="200.000001"
+                )
+            )
+        )
+        assert len(slack_client.sent_messages) >= 2, (
+            "Bot must post a reply for the second @amp new as well"
+        )
+        second_reply = slack_client.sent_messages[1]
+        assert second_reply.thread_ts is None, (
+            "Second @amp new reply must also start a brand-new thread"
+        )
+        thread_ts_B = second_reply.ts
+
+        # Sanity: the two threads are distinct
+        assert thread_ts_A != thread_ts_B
+
+        # --- Verify the routing table ---
+
+        # Bare "C_HUB" entry must be gone after both re-keys
+        assert session_manager.get_mapping("C_HUB") is None, (
+            "Bare 'C_HUB' routing key must be gone after re-keying. "
+            "Its presence means the second @amp new overwrote session A's entry."
+        )
+
+        # Each thread ts must resolve to its own independent session
+        mapping_A = session_manager.get_mapping("C_HUB", thread_ts_A)
+        mapping_B = session_manager.get_mapping("C_HUB", thread_ts_B)
+
+        assert mapping_A is not None, (
+            f"No routing entry found for thread_ts_A={thread_ts_A!r}. "
+            "Session A was lost — this is the cross-contamination bug."
+        )
+        assert mapping_B is not None, (
+            f"No routing entry found for thread_ts_B={thread_ts_B!r}. "
+            "Session B was not registered correctly."
+        )
+        assert mapping_A.session_id != mapping_B.session_id, (
+            "Session A and session B must be different objects. "
+            "If they match, session A's routing entry was overwritten by session B."
         )

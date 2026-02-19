@@ -134,13 +134,15 @@ class SlackSessionManager:
         self, channel_id: str, thread_ts: str | None = None
     ) -> SessionMapping | None:
         """Find the session mapping for a Slack conversation context."""
-        # First check for thread-specific mapping
+        # Thread-specific lookup: exact match only, no bare-channel fallback.
+        # When thread_ts is provided the caller is asking about a specific
+        # thread; falling back to a bare-channel key would silently match
+        # unrelated sessions and is the root cause of issue #54.
         if thread_ts:
             key = f"{channel_id}:{thread_ts}"
-            if key in self._mappings:
-                return self._mappings[key]
+            return self._mappings.get(key)
 
-        # Then check for channel-level mapping (breakout channels)
+        # Bare-channel lookup (breakout channels and top-level sessions).
         if channel_id in self._mappings:
             return self._mappings[channel_id]
 
@@ -367,3 +369,33 @@ class SlackSessionManager:
             for m in self._mappings.values()
             if m.created_by == user_id and m.is_active
         ]
+
+    def rekey_mapping(self, channel_id: str, thread_ts: str) -> None:
+        """Re-key a bare channel mapping to a composite channel_id:thread_ts key.
+
+        Called immediately after post_message() creates the reply thread for a
+        'new' command. Without this upgrade, a second 'new' command in the same
+        channel stores its session under the same bare channel_id key, silently
+        overwriting the first session's routing entry (issue #54).
+
+        Only targets the bare channel_id key. If no such key exists (e.g., the
+        session was already thread-scoped), logs a warning and returns safely.
+
+        Migration note (PR #49 — SurfaceSessionRegistry): When SurfaceSessionRegistry
+        lands, replace the bare _mappings pop-and-reinsert here with a call to
+        registry.rekey(old_key, new_key).
+        """
+        mapping = self._mappings.pop(channel_id, None)
+        if mapping is None:
+            logger.warning(
+                f"rekey_mapping: no bare-channel mapping found for {channel_id!r}"
+            )
+            return
+
+        mapping.thread_ts = thread_ts
+        new_key = f"{channel_id}:{thread_ts}"
+        self._mappings[new_key] = mapping
+        self._save_sessions()
+        logger.info(
+            f"Re-keyed session {mapping.session_id} from {channel_id!r} to {new_key!r}"
+        )
