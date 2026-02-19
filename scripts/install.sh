@@ -35,6 +35,16 @@ ensure_git() {
     exit 1
 }
 
+# ── Ensure gh CLI is available ─────────────────────────────────
+ensure_gh() {
+    if command -v gh &>/dev/null; then
+        return
+    fi
+    echo "[install] ERROR: GitHub CLI (gh) is required but not installed."
+    echo "  Install it and try again: https://cli.github.com"
+    exit 1
+}
+
 # ── Ensure uv is available ───────────────────────────────────────
 ensure_uv() {
     if command -v uv &>/dev/null; then
@@ -106,6 +116,7 @@ echo "=== Amplifier Distro - Install ==="
 echo ""
 
 ensure_git
+ensure_gh
 ensure_uv
 echo ""
 
