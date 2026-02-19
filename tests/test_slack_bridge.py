@@ -625,7 +625,9 @@ class TestSlackSessionManager:
         session_manager.rekey_mapping("C_NONEXISTENT", "ts.0")
         assert session_manager.get_mapping("C_NONEXISTENT") is None
 
-    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(self, session_manager):
+    def test_get_mapping_thread_does_not_fall_back_to_bare_channel(
+        self, session_manager
+    ):
         """Thread lookup must NOT fall back to a bare-channel key (issue #54 regression guard)."""
         # Session stored under bare key (slash command path before rekey_mapping runs)
         asyncio.run(session_manager.create_session("C_HUB", None, "U1"))
@@ -986,6 +988,54 @@ class TestSlackConfigFile:
             ):
                 cfg = config_mod.SlackConfig.from_env()
                 assert cfg.bot_token == "xoxb-env"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_reads_default_working_dir(self, tmp_path):
+        """default_working_dir is read from distro.yaml slack section."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        distro_file = tmp_path / "distro.yaml"
+        distro_file.write_text("slack:\n  default_working_dir: ~/repo/my-project\n")
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": ""}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "~/repo/my-project"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_default_working_dir_env_override(self, tmp_path):
+        """SLACK_DEFAULT_WORKING_DIR env var overrides distro.yaml."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        distro_file = tmp_path / "distro.yaml"
+        distro_file.write_text("slack:\n  default_working_dir: ~/repo/from-file\n")
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": "/custom/from-env"}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "/custom/from-env"
+        finally:
+            config_mod._amplifier_home = original
+
+    def test_from_env_default_working_dir_defaults_to_tilde(self, tmp_path):
+        """default_working_dir falls back to '~' when not configured."""
+        from amplifier_distro.server.apps.slack import config as config_mod
+
+        original = config_mod._amplifier_home
+        config_mod._amplifier_home = lambda: tmp_path
+        try:
+            env = {"SLACK_DEFAULT_WORKING_DIR": ""}
+            with patch.dict(os.environ, env, clear=False):
+                cfg = config_mod.SlackConfig.from_env()
+                assert cfg.default_working_dir == "~"
         finally:
             config_mod._amplifier_home = original
 
