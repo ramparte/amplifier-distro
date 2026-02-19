@@ -290,8 +290,7 @@ async def session_status() -> dict:
         }
 
     try:
-        backend = _get_backend()
-        info = await backend.get_session_info(session_id)
+        info = await manager._backend.get_session_info(session_id)
         if info and info.is_active:
             return {
                 "connected": True,
@@ -300,7 +299,7 @@ async def session_status() -> dict:
                 "working_dir": info.working_dir,
             }
         else:
-            manager._store.deactivate(session_id)
+            await manager.end_session()
             return {
                 "connected": False,
                 "session_id": None,

@@ -325,8 +325,8 @@ class TestAppDiscovery:
 class TestWebChatSessionLifecycle:
     """Test the full create -> end -> chat lifecycle.
 
-    Web Chat correctly clears _active_session_id on ValueError (line 297-299
-    of web_chat/__init__.py). These tests document and guard that behavior.
+    Guards the ValueError path: when the backend confirms a session is dead,
+    the manager deactivates the store entry and the route returns 409.
     """
 
     def test_chat_after_end_returns_409(self, webchat_client: TestClient):
