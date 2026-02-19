@@ -440,3 +440,83 @@ class TestWebChatSessionsListAPI:
         sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
         # project_id should be a string (may be empty for unknown sessions)
         assert isinstance(sessions[0]["project_id"], str)
+
+
+class TestWebChatSessionResumeAPI:
+    """Verify POST /apps/web-chat/api/session/resume endpoint."""
+
+    def test_resume_missing_session_id_returns_400(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={},
+        )
+        assert response.status_code == 400
+        assert "session_id" in response.json()["error"]
+
+    def test_resume_unknown_session_returns_404(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": "no-such-session"},
+        )
+        assert response.status_code == 404
+
+    def test_resume_known_session_returns_200(self, webchat_client: TestClient):
+        # Create a session to get a known ID
+        create_resp = webchat_client.post(
+            "/apps/web-chat/api/session", json={"description": "session to resume"}
+        )
+        session_id = create_resp.json()["session_id"]
+        # Create another session (pushes first to inactive)
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        # Resume first session
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+
+    def test_resume_response_has_required_fields(self, webchat_client: TestClient):
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        data = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        ).json()
+        assert data["session_id"] == session_id
+        assert data["resumed"] is True
+
+    def test_resume_makes_session_active(self, webchat_client: TestClient):
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+
+        # GET /api/session should now report this session as connected
+        status = webchat_client.get("/apps/web-chat/api/session").json()
+        assert status["connected"] is True
+        assert status["session_id"] == session_id
+
+    def test_resume_deactivates_current_session(self, webchat_client: TestClient):
+        create1 = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id_1 = create1.json()["session_id"]
+        create2 = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id_2 = create2.json()["session_id"]
+
+        # Resume first session
+        webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id_1},
+        )
+
+        # session_id_2 should no longer be the active one
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        by_id = {s["session_id"]: s for s in sessions}
+        assert by_id[session_id_1]["is_active"] is True
+        assert by_id[session_id_2]["is_active"] is False

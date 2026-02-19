@@ -159,14 +159,18 @@ class WebChatSessionManager:
         working_dir: str = "~",
         description: str = "Web chat session",
     ):
-        """End any active session, create a new one, register in store.
+        """Deactivate current session (store only), create a new one, register in store.
+
+        The previous session is only deactivated in the store registry — the
+        backend session stays alive so it can be resumed later via resume_session().
+        Explicit termination on the backend only happens via end_session().
 
         Returns the SessionInfo from the backend.
         """
-        # End existing session if any
+        # Deactivate existing session in store only (backend stays alive for resume)
         existing = self._store.active_session()
         if existing:
-            await self._end_active(existing.session_id)
+            self._store.deactivate(existing.session_id)
 
         info = await self._backend.create_session(
             working_dir=working_dir,
@@ -450,6 +454,43 @@ async def list_sessions() -> dict:
             for s in sessions
         ]
     }
+
+
+@router.post("/api/session/resume")
+async def resume_session(request: Request) -> JSONResponse:
+    """Resume a previously created session.
+
+    Body:
+        session_id: str - The session to resume
+
+    Returns:
+        200 with {session_id, resumed: true} on success
+        400 if session_id is missing
+        404 if session_id is not found in the registry
+    """
+    body = await request.json() if await request.body() else {}
+    session_id = body.get("session_id")
+
+    if not session_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "session_id is required"},
+        )
+
+    try:
+        manager = _get_manager()
+        session = manager.resume_session(session_id)
+        return JSONResponse(
+            content={
+                "session_id": session.session_id,
+                "resumed": True,
+            }
+        )
+    except ValueError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"error": str(e)},
+        )
 
 
 manifest = AppManifest(
