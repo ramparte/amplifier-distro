@@ -128,6 +128,9 @@ class TestCanonicalValues:
     def test_backup_repo_pattern(self):
         assert conventions.BACKUP_REPO_PATTERN == "{github_handle}/amplifier-backup"
 
+    def test_web_chat_sessions_filename(self):
+        assert conventions.WEB_CHAT_SESSIONS_FILENAME == "web-chat-sessions.json"
+
 
 class TestStringConstants:
     """Verify all filename and directory constants are non-empty strings.
