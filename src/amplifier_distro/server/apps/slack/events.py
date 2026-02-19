@@ -224,10 +224,13 @@ class SlackEventHandler:
         if result.create_thread:
             reply_thread = None  # Will create a new thread from the reply
 
-        # Send the response, with fallback for blocks failures
+        # Send the response, with fallback for blocks failures.
+        # Capture the ts of the first post_message() so we can re-key the session
+        # mapping from bare channel_id to channel_id:thread_ts (issue #54).
+        posted_ts: str | None = None
         try:
             if result.blocks:
-                await self._client.post_message(
+                posted_ts = await self._client.post_message(
                     message.channel_id,
                     text=result.text or "Amplifier",
                     thread_ts=reply_thread,
@@ -235,11 +238,13 @@ class SlackEventHandler:
                 )
             elif result.text:
                 for chunk in SlackFormatter.split_message(result.text):
-                    await self._client.post_message(
+                    ts = await self._client.post_message(
                         message.channel_id,
                         text=chunk,
                         thread_ts=reply_thread,
                     )
+                    if posted_ts is None:
+                        posted_ts = ts  # Capture ts of the first (thread-creating) post
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to send blocks, falling back to plain text", exc_info=True
@@ -249,13 +254,21 @@ class SlackEventHandler:
             if fallback:
                 try:
                     for chunk in SlackFormatter.split_message(fallback):
-                        await self._client.post_message(
+                        ts = await self._client.post_message(
                             message.channel_id,
                             text=chunk,
                             thread_ts=reply_thread,
                         )
+                        if posted_ts is None:
+                            posted_ts = ts
                 except Exception:
                     logger.exception("Fallback plain-text send also failed")
+
+        # Re-key the session mapping from bare channel_id to the new thread_ts.
+        # This prevents a second /new command from overwriting the first session's
+        # routing entry (issue #54).
+        if result.create_thread and posted_ts is not None:
+            self._sessions.rekey_mapping(message.channel_id, posted_ts)
 
         # Done reaction (best-effort, never fatal)
         await self._safe_react(message.channel_id, message.ts, "white_check_mark")
