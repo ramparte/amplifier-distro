@@ -87,6 +87,65 @@ def _write_session_info(session_dir: Path, working_dir: Path) -> None:
         )
 
 
+def _read_session_info_working_dir(session_dir: Path) -> Path | None:
+    """Read the original working_dir from session-info.json.
+
+    Returns the persisted working directory as a Path, or None if the
+    file is missing, corrupt, or lacks the working_dir key.
+
+    Used by resume_session() to recover the original CWD instead of
+    defaulting to the server's current directory.
+
+    Never raises — all errors are logged and swallowed.
+    """
+    info_file = session_dir / SESSION_INFO_FILENAME
+    try:
+        data = json.loads(info_file.read_text(encoding="utf-8"))
+        working_dir = data["working_dir"]
+        if not isinstance(working_dir, str) or not working_dir:
+            logger.warning(
+                "session-info.json in %s has invalid working_dir=%r, ignoring",
+                session_dir,
+                working_dir,
+            )
+            return None
+        logger.debug(
+            "Read working_dir=%s from session-info.json in %s",
+            working_dir,
+            session_dir,
+        )
+        return Path(working_dir)
+    except FileNotFoundError:
+        logger.debug(
+            "No session-info.json in %s (pre-fix session),"
+            " will use default working_dir",
+            session_dir,
+        )
+        return None
+    except (json.JSONDecodeError, KeyError):
+        logger.warning(
+            "Invalid or incomplete session-info.json in %s,"
+            " will use default working_dir",
+            session_dir,
+            exc_info=True,
+        )
+        return None
+    except OSError:
+        logger.warning(
+            "Could not read session-info.json from %s, will use default working_dir",
+            session_dir,
+            exc_info=True,
+        )
+        return None
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Unexpected error reading session-info.json from %s",
+            session_dir,
+            exc_info=True,
+        )
+        return None
+
+
 @dataclass
 class BridgeConfig:
     """Configuration for creating a session through the Bridge."""

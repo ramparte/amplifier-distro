@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Tests for _write_session_info()
 # ---------------------------------------------------------------------------
@@ -116,3 +118,203 @@ class TestWriteSessionInfo:
         data = json.loads((session_dir / "session-info.json").read_text())
         assert "~" not in data["working_dir"]
         assert data["working_dir"] == str(Path.home())
+
+
+# ---------------------------------------------------------------------------
+# Tests for _read_session_info_working_dir()
+# ---------------------------------------------------------------------------
+
+
+class TestReadSessionInfoWorkingDir:
+    """Verify _read_session_info_working_dir() reads correctly and handles errors."""
+
+    def test_returns_path_from_valid_file(self, tmp_path: Path) -> None:
+        """Reads working_dir from a well-formed session-info.json."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        info = {
+            "working_dir": "/Users/testuser",
+            "created_at": "2026-02-18T15:00:00+00:00",
+        }
+        (session_dir / "session-info.json").write_text(json.dumps(info))
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result == Path("/Users/testuser")
+
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        """Returns None when session-info.json does not exist."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result is None
+
+    def test_returns_none_for_corrupt_json(self, tmp_path: Path) -> None:
+        """Returns None when file contains invalid JSON."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        (session_dir / "session-info.json").write_text("not valid json {{{")
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result is None
+
+    def test_returns_none_for_missing_working_dir_key(self, tmp_path: Path) -> None:
+        """Returns None when JSON is valid but working_dir key is absent."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        (session_dir / "session-info.json").write_text(
+            json.dumps({"created_at": "2026-01-01"})
+        )
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result is None
+
+    def test_returns_none_for_empty_working_dir(self, tmp_path: Path) -> None:
+        """Returns None when working_dir is an empty string."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        (session_dir / "session-info.json").write_text(json.dumps({"working_dir": ""}))
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result is None
+
+    def test_returns_none_for_nonexistent_session_dir(self, tmp_path: Path) -> None:
+        """Returns None when the session directory itself doesn't exist."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        result = _read_session_info_working_dir(tmp_path / "does-not-exist")
+
+        assert result is None
+
+    def test_returns_none_for_permission_error(self, tmp_path: Path) -> None:
+        """Returns None when file exists but is unreadable."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        info_file = session_dir / "session-info.json"
+        info_file.write_text(json.dumps({"working_dir": "/Users/test"}))
+        info_file.chmod(0o000)
+
+        try:
+            result = _read_session_info_working_dir(session_dir)
+            assert result is None
+        finally:
+            info_file.chmod(0o644)  # restore for tmp_path cleanup
+
+    def test_returns_none_for_non_string_working_dir(self, tmp_path: Path) -> None:
+        """Returns None when working_dir is not a string (e.g. int, null)."""
+        from amplifier_distro.bridge import _read_session_info_working_dir
+
+        session_dir = tmp_path / "session-abc"
+        session_dir.mkdir()
+        (session_dir / "session-info.json").write_text(json.dumps({"working_dir": 42}))
+
+        result = _read_session_info_working_dir(session_dir)
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Round-trip test: write then read
+# ---------------------------------------------------------------------------
+
+
+class TestSessionInfoRoundTrip:
+    """Verify write + read produces consistent results."""
+
+    def test_write_then_read_returns_same_path(self, tmp_path: Path) -> None:
+        """Writing then reading recovers the original working_dir."""
+        from amplifier_distro.bridge import (
+            _read_session_info_working_dir,
+            _write_session_info,
+        )
+
+        session_dir = tmp_path / "session-abc"
+        original = Path("/Users/testuser/projects/my-app")
+
+        _write_session_info(session_dir, original)
+        recovered = _read_session_info_working_dir(session_dir)
+
+        assert recovered == original
+
+    def test_round_trip_with_home_dir(self, tmp_path: Path) -> None:
+        """Round-trip works for home directory path."""
+        from amplifier_distro.bridge import (
+            _read_session_info_working_dir,
+            _write_session_info,
+        )
+
+        session_dir = tmp_path / "session-abc"
+        home = Path.home()
+
+        _write_session_info(session_dir, home)
+        recovered = _read_session_info_working_dir(session_dir)
+
+        assert recovered == home
+
+    def test_round_trip_with_hyphenated_path(self, tmp_path: Path) -> None:
+        """Round-trip preserves hyphens (which _encode_cwd loses)."""
+        from amplifier_distro.bridge import (
+            _read_session_info_working_dir,
+            _write_session_info,
+        )
+
+        session_dir = tmp_path / "session-abc"
+        original = Path("/Users/sam/my-project")
+
+        _write_session_info(session_dir, original)
+        recovered = _read_session_info_working_dir(session_dir)
+
+        assert recovered == original
+
+    def test_round_trip_with_tilde_path(self, tmp_path: Path) -> None:
+        """Round-trip expands ~ on write and recovers expanded path."""
+        from amplifier_distro.bridge import (
+            _read_session_info_working_dir,
+            _write_session_info,
+        )
+
+        session_dir = tmp_path / "session-abc"
+        _write_session_info(session_dir, Path("~"))
+        recovered = _read_session_info_working_dir(session_dir)
+
+        assert recovered == Path.home()
+
+    @pytest.mark.parametrize(
+        "path_str",
+        [
+            "/Users/sam/my project/with spaces",
+            "/Users/sam/développeur/проект",
+            "/Users/sam/" + "a" * 200,
+            "/Users/sam/path'with\"quotes",
+        ],
+        ids=["spaces", "unicode", "long", "quotes"],
+    )
+    def test_round_trip_special_paths(self, tmp_path: Path, path_str: str) -> None:
+        """Round-trip preserves paths with special characters."""
+        from amplifier_distro.bridge import (
+            _read_session_info_working_dir,
+            _write_session_info,
+        )
+
+        session_dir = tmp_path / "session-abc"
+        original = Path(path_str)
+        _write_session_info(session_dir, original)
+        recovered = _read_session_info_working_dir(session_dir)
+        assert recovered == original.expanduser().resolve()
