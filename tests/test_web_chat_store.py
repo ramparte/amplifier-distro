@@ -417,7 +417,7 @@ class TestWebChatSessionManager:
     def test_resume_session_raises_for_unknown_id(self):
         manager, _ = self._make_manager()
         with pytest.raises(ValueError, match="not found"):
-            manager.resume_session("no-such-id")
+            asyncio.run(manager.resume_session("no-such-id"))
 
     def test_resume_session_reactivates_inactive_session(self):
         manager, _ = self._make_manager()
@@ -427,7 +427,7 @@ class TestWebChatSessionManager:
         # Create second session (deactivates first)
         asyncio.run(manager.create_session(working_dir="~", description="second"))
         # Resume first
-        resumed = manager.resume_session(info1.session_id)
+        resumed = asyncio.run(manager.resume_session(info1.session_id))
         assert resumed.is_active is True
         assert manager.active_session_id == info1.session_id
 
@@ -439,11 +439,27 @@ class TestWebChatSessionManager:
         info2 = asyncio.run(
             manager.create_session(working_dir="~", description="second")
         )
-        manager.resume_session(info1.session_id)
+        asyncio.run(manager.resume_session(info1.session_id))
         # Second session should be deactivated
         s2 = manager._store.get(info2.session_id)
         assert s2 is not None
         assert s2.is_active is False
+
+    def test_resume_session_calls_backend(self):
+        """resume_session() must call backend.resume_session() with the correct args."""
+        manager, backend = self._make_manager()
+        info = asyncio.run(
+            manager.create_session(working_dir="/tmp/proj", description="test")
+        )
+        # Clear the create_session call from the log so we can isolate the resume call
+        backend.calls.clear()
+
+        asyncio.run(manager.resume_session(info.session_id))
+
+        resume_calls = [c for c in backend.calls if c["method"] == "resume_session"]
+        assert len(resume_calls) == 1
+        assert resume_calls[0]["session_id"] == info.session_id
+        assert resume_calls[0]["working_dir"] == "/tmp/proj"
 
 
 class TestMockBackendResumeSession:
