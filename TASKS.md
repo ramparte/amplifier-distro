@@ -12,13 +12,13 @@
 | Desktop GUI | @michaeljabbour | Built it, owns it |
 | TUI | @samschillace (interim) | Candidate: @samueljklee |
 | CLI | @dluc (tentative) | |
-| Web UI | unassigned | Candidate: @samueljklee or @samschillace |
-| UI flows (onboarding, wizards, config) | @samschillace (interim) | Needs stub mode for fast iteration |
-| Bundle structure | @samueljklee | Currently active |
-| Teams integration | @marklicata | |
+| Web UI | @robotdad | Session list, resume, LLM context (#65) |
+| UI flows (onboarding, wizards, config) | @samschillace (interim) | Install wizard built |
+| Bundle structure | @samueljklee | |
+| Teams integration | @marklicata | In progress (local branch) |
 | M365 integration | @robotdad | |
 | Containers/Cloud/Azure | @marklicata + @robotdad | Co-owned |
-| Bridges (Slack, Voice) | @robotdad | Could involve @dluc |
+| Bridges (Slack, Voice) | @robotdad | Major hardening done |
 | Testing/QA strategy | unassigned | Suggested: @dluc |
 | Documentation | unassigned | Suggested: @marklicata or @samueljklee |
 | Security review | unassigned | Suggested: @dluc |
@@ -31,26 +31,7 @@
   - Priority: high
   - Added: 2026-02-10
   - Tags: meta, team
-
-- [ ] **DISTRO-002**: Build UI stub mode for fast flow preview without real installs
-  - Priority: high
-  - Added: 2026-02-10
-  - Tags: ui-flows, onboarding, developer-experience
-  - Notes: Allow quick iteration on onboarding/wizard/config UI without spinning up real services. Mock backends, fake config, skip preflight.
-
-- [ ] **DISTRO-003**: Polish and own the Web UI surface
-  - Priority: medium
-  - Added: 2026-02-10
-  - Tags: web-ui, surfaces
-  - Notes: Needs an owner. Candidates: @samueljklee, @samschillace
-
-- [ ] **DISTRO-004**: Bundle structure finalization
-  - Assigned: @samueljklee
-  - Priority: high
-  - Added: 2026-02-10
-  - Tags: phase-1, bundle, core
-  - Spec: `specs/distro-004-bundle-structure.md`
-  - Notes: Bridge loads distro bundle by convention path instead of CLI registry name lookup. 2 files, ~20 lines changed. Spec ready for implementation.
+  - Notes: Ownership map above is draft. Need team confirmation.
 
 - [ ] **DISTRO-005**: Desktop GUI continued development
   - Assigned: @michaeljabbour
@@ -58,11 +39,18 @@
   - Added: 2026-02-10
   - Tags: phase-2, gui, surfaces
 
-- [ ] **DISTRO-006**: Containers and cloud deployment (Azure, Docker)
-  - Assigned: @marklicata, @robotdad
+- [ ] **DISTRO-009**: Voice bridge hardening and production readiness
+  - Assigned: @robotdad
   - Priority: medium
   - Added: 2026-02-10
-  - Tags: phase-4, containers, cloud, azure
+  - Tags: phase-2, bridges, voice, webrtc
+  - Notes: Voice transcript controls added (PR #40). Further hardening needed.
+
+- [ ] **DISTRO-011**: CLI surface ownership and review
+  - Priority: medium
+  - Added: 2026-02-10
+  - Tags: cli, surfaces
+  - Notes: Tentatively @dluc. CLI needs to be robust and well-structured. Update check improvements merged.
 
 - [ ] **DISTRO-018**: M365 integration
   - Assigned: @robotdad
@@ -71,49 +59,25 @@
   - Tags: phase-2, m365, surfaces
   - Notes: Split from DISTRO-007. M365 integration beyond Teams (Outlook, SharePoint, etc.).
 
-- [ ] **DISTRO-008**: Slack bridge hardening and production readiness
-  - Assigned: @robotdad
-  - Priority: medium
-  - Added: 2026-02-10
-  - Tags: phase-2, bridges, slack
-
-- [ ] **DISTRO-009**: Voice bridge hardening and production readiness
-  - Assigned: @robotdad
-  - Priority: medium
-  - Added: 2026-02-10
-  - Tags: phase-2, bridges, voice, webrtc
-
-- [ ] **DISTRO-010**: Onboarding and wizard flow design
-  - Assigned: @samschillace
-  - Priority: high
-  - Added: 2026-02-10
-  - Tags: ui-flows, onboarding, install-wizard
-
-- [ ] **DISTRO-011**: CLI surface ownership and review
-  - Priority: medium
-  - Added: 2026-02-10
-  - Tags: cli, surfaces
-  - Notes: Tentatively @dluc. CLI needs to be robust and well-structured.
-
 ## Backlog
 
 - [ ] **DISTRO-012**: Testing/QA strategy and ownership
   - Priority: medium
   - Added: 2026-02-10
   - Tags: testing, qa, infrastructure
-  - Notes: 755 tests exist. Need strategy for DGX CI, Docker test profiles, coverage gaps. Suggested owner: @dluc.
+  - Notes: Test count growing significantly with team PRs. Need strategy for DGX CI, Docker test profiles, coverage gaps. Suggested owner: @dluc.
 
 - [ ] **DISTRO-013**: Documentation plan (user-facing docs, install guides)
   - Priority: low
   - Added: 2026-02-10
   - Tags: docs, phase-3
-  - Notes: As surfaces multiply, docs become critical. Suggested owner: @marklicata or @samueljklee.
+  - Notes: Install script now exists. As surfaces multiply, docs become critical. Suggested owner: @marklicata or @samueljklee.
 
 - [ ] **DISTRO-014**: Security review (auth, keys, API exposure across surfaces)
   - Priority: medium
   - Added: 2026-02-10
   - Tags: security, review
-  - Notes: Suggested owner: @dluc.
+  - Notes: Email bridge removed for security reasons (open ingestion = prompt injection). Suggested owner: @dluc.
 
 - [ ] **DISTRO-015**: TUI surface development
   - Priority: low
@@ -134,6 +98,46 @@
 
 ## Completed
 
+- [x] **DISTRO-002**: Build UI stub mode for fast flow preview without real installs
+  - Priority: high
+  - Completed: 2026-02-10
+  - Tags: ui-flows, onboarding, developer-experience
+  - Resolution: `--stub` mode implemented (commit 68dd1df)
+
+- [x] **DISTRO-004**: Bundle structure finalization
+  - Assigned: @samueljklee
+  - Priority: high
+  - Completed: 2026-02-13
+  - Tags: phase-1, bundle, core
+  - Resolution: Convention-path bundle loading replaced name-based resolution (PR #12)
+
+- [x] **DISTRO-008**: Slack bridge hardening and production readiness
+  - Assigned: @robotdad
+  - Priority: medium
+  - Completed: 2026-02-19
+  - Tags: phase-2, bridges, slack
+  - Resolution: Major hardening across 10+ PRs. Zombie session deactivation (#31), CWD support (#34/#58), cross-contamination fix (#54), concurrency fix (#57/#63), session resume (#64/#67), max_sessions cap removed (#66). Transcript persistence (#52). Session info persistence (#53/#56).
+
+- [x] **DISTRO-003**: Web UI surface - session list, resume, and LLM context
+  - Priority: medium
+  - Completed: 2026-02-19
+  - Tags: web-ui, surfaces
+  - Resolution: Web chat session list, resume, and LLM context restoration (PR #65). Session store added.
+
+- [x] **DISTRO-010**: Onboarding and wizard flow design
+  - Assigned: @samschillace
+  - Priority: high
+  - Completed: 2026-02-12
+  - Tags: ui-flows, onboarding, install-wizard
+  - Resolution: Install wizard and Slack setup UI implemented (PR #16, #17). Install script added. Landing page created (PR #18).
+
+- [x] **DISTRO-006**: Containers and cloud deployment (Azure, Docker)
+  - Assigned: @marklicata, @robotdad
+  - Priority: medium
+  - Completed: 2026-02-14
+  - Tags: phase-4, containers, cloud, azure
+  - Resolution: Dockerfile consolidated (prod+dev merged), devcontainer.json added, docker-entrypoint.sh updated. One-click setup (PR #39).
+
 ## Blocked
 
 - [ ] **DISTRO-007**: Teams integration
@@ -141,4 +145,4 @@
   - Priority: medium
   - Added: 2026-02-10
   - Tags: phase-2, teams, surfaces
-
+  - Notes: In progress on local branch `fix/bundle-resolution-precedence` (teams/ dir + test). Blocked on server stability.
