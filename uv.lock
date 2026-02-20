@@ -166,6 +166,7 @@ all = [
     { name = "slack-sdk" },
 ]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -189,6 +190,7 @@ requires-dist = [
     { name = "google-api-python-client", marker = "extra == 'email'", specifier = ">=2.100.0" },
     { name = "google-auth", marker = "extra == 'email'", specifier = ">=2.20.0" },
     { name = "httpx", specifier = ">=0.24.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
