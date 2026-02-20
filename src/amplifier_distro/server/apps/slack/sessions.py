@@ -178,18 +178,6 @@ class SlackSessionManager:
         If thread_per_session is enabled and thread_ts is None, the bridge
         will create a new thread in the hub channel for this session.
         """
-        # Check session limit
-        user_sessions = [
-            m
-            for m in self._mappings.values()
-            if m.created_by == user_id and m.is_active
-        ]
-        if len(user_sessions) >= self._config.max_sessions_per_user:
-            raise ValueError(
-                f"Session limit reached ({self._config.max_sessions_per_user}). "
-                "End an existing session first."
-            )
-
         # Resolve working directory: explicit param > config default
         effective_dir = working_dir or self._config.default_working_dir
         logger.info(
@@ -239,18 +227,6 @@ class SlackSessionManager:
         this creates a backend session in the same directory as a previously
         discovered session so the user lands in the right project context.
         """
-        # Check session limit (same as create_session)
-        user_sessions = [
-            m
-            for m in self._mappings.values()
-            if m.created_by == user_id and m.is_active
-        ]
-        if len(user_sessions) >= self._config.max_sessions_per_user:
-            raise ValueError(
-                f"Session limit reached ({self._config.max_sessions_per_user}). "
-                "End an existing session first."
-            )
-
         # Create a real backend session in the discovered session's directory
         info = await self._backend.create_session(
             working_dir=working_dir,
@@ -302,8 +278,7 @@ class SlackSessionManager:
             return response
         except ValueError:
             # Session is permanently dead (backend can't find or reconnect it).
-            # Deactivate the mapping so the user isn't stuck in a zombie loop
-            # and their max_sessions_per_user slot is freed.
+            # Deactivate the mapping so the user isn't stuck in a zombie loop.
             mapping.is_active = False
             self._save_sessions()
             logger.warning(
