@@ -57,7 +57,7 @@ class IdentityConfig(BaseModel):
 
 
 class BundleConfig(BaseModel):
-    active: str = "my-amplifier"
+    active: str | None = None
     validate_on_start: bool = True
     strict: bool = True
 

@@ -214,7 +214,7 @@ class DistroServer:
                 else:
                     logger.warning(f"App {app_path.name} missing 'manifest'")
 
-            except (ImportError, AttributeError):
+            except Exception:
                 logger.exception(f"Failed to load app {app_path.name}")
 
         return registered
