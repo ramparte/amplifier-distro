@@ -179,14 +179,23 @@ stages:
         {{webchat_results}}
 
         ---------------------------------------------------------------
-        To continue with Slack bridge tests, please confirm you are
-        logged into Slack:
+        Ready to run Slack bridge tests.
 
-          1. Open a browser window (headed / visible)
-          2. Navigate to {{slack_workspace}}
-          3. Log in as yourself
-          4. Confirm you can see the #{{slack_channel}} channel
-          5. Confirm the "Distro" bot is present in that channel
+        When you APPROVE, a headed browser window will open automatically
+        pointing at {{slack_workspace}}.
+
+        TWO POSSIBLE SITUATIONS:
+
+        A) Already logged in (most runs after the first):
+           The workspace loads immediately. No action needed — just approve
+           and the test runs on its own.
+
+        B) Login page appears (first run, or session expired):
+           Log in through THAT browser window (not your own Chrome/Edge).
+           The test will automatically detect once you are logged in and
+           continue. Your credentials are saved to a local profile at
+           ~/.agent-browser/profiles/slack-distro-test so future runs
+           will not require this step.
 
         Approve → Slack bridge tests run next.
         Deny    → Stop here (web-chat results are already saved).
@@ -212,7 +221,9 @@ stages:
           MANDATORY RULES
           ---------------
           - Use --headed on EVERY SINGLE agent-browser command. No exceptions.
-          - Use --session slack-e2e on EVERY agent-browser command.
+          - Use --profile ~/.agent-browser/profiles/slack-distro-test on EVERY
+            agent-browser command. This persists your Slack login across runs.
+            Do NOT use --session for this stage.
           - Take a screenshot at every meaningful step.
           - Name screenshots descriptively:
               sl-01-login-check.png, sl-02-channel.png, etc.
@@ -226,19 +237,30 @@ stages:
           Bot name         : Distro
 
           ================================================================
-          SCENARIO 1 — Login Verification
+          SCENARIO 1 — Login Verification (with login-page handling)
           ================================================================
           Action  : Navigate to {{slack_workspace}}
-          Verify  : You are already logged in — the workspace sidebar
-                    is visible (channel list, DM list, workspace switcher).
-                    A login / email-entry form means NOT logged in.
-          Screenshot: sl-01-login-check.png
-          PASS → workspace sidebar visible; you are logged in
-          FAIL → login screen appeared
-                 Message: "Please log into Slack in the browser before
-                 approving the gate."
-                 Take screenshot sl-01-login-required.png and STOP all
-                 remaining Slack scenarios immediately.
+
+          CASE A — Already logged in (workspace sidebar is visible):
+            Take screenshot sl-01-logged-in.png
+            PASS → sidebar visible, continue to Scenario 2 immediately.
+
+          CASE B — Login page appeared (email/password form visible):
+            Take screenshot sl-01-login-required.png
+            This is a headed browser window — the user can see it and
+            will log in manually right now.
+            Wait up to 120 seconds, polling every 5 seconds, for the
+            workspace sidebar to appear (sign that login succeeded).
+            Once sidebar is visible:
+              Take screenshot sl-01-login-complete.png
+              PASS → user logged in through the browser window; continue.
+            If sidebar is still not visible after 120 seconds:
+              Take screenshot sl-01-login-timeout.png
+              FAIL → login timed out after 120 s without completing.
+                     (Include: "The browser window is still open — check
+                     ~/.agent-browser/profiles/slack-distro-test exists
+                     and retry the recipe. Credentials will be saved for
+                     future runs once login succeeds.")
 
           ================================================================
           SCENARIO 2 — Navigate to Channel
