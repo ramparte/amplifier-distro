@@ -573,14 +573,6 @@ class TestSlackSessionManager:
         response = asyncio.run(session_manager.route_message(msg))
         assert response is None
 
-    def test_session_limit(self, session_manager, slack_config):
-        slack_config.max_sessions_per_user = 2
-        asyncio.run(session_manager.create_session("C1", "t1", "U1"))
-        asyncio.run(session_manager.create_session("C1", "t2", "U1"))
-
-        with pytest.raises(ValueError, match="Session limit"):
-            asyncio.run(session_manager.create_session("C1", "t3", "U1"))
-
     def test_breakout_to_channel(self, session_manager):
         asyncio.run(
             session_manager.create_session("C_HUB", "t1", "U1", "breakout test")
@@ -2011,8 +2003,7 @@ class TestZombieSessionFix:
     Bug: route_message() catches ALL exceptions from backend.send_message()
     with a bare 'except Exception' and returns a generic error string, but
     never deactivates the mapping. A session whose backend handle is lost
-    (BridgeBackend raises ValueError) persists as is_active=True forever,
-    eventually blocking new session creation via max_sessions_per_user.
+    (BridgeBackend raises ValueError) persists as is_active=True forever.
 
     Fix: catch ValueError specifically (= session permanently dead),
     deactivate the mapping, and save. Keep the broad except Exception
@@ -2083,35 +2074,3 @@ class TestZombieSessionFix:
         # Response should be the generic error
         assert response is not None
         assert "Error" in response
-
-    def test_zombie_session_freed_from_limit(
-        self, session_manager, mock_backend, slack_config
-    ):
-        """After a zombie is deactivated, the user can create a new session."""
-        from amplifier_distro.server.apps.slack.models import SlackMessage
-
-        slack_config.max_sessions_per_user = 1
-
-        # Create session (uses the 1 allowed slot)
-        mapping_a = asyncio.run(
-            session_manager.create_session("C1", "t1", "U1", "session A")
-        )
-
-        # Verify limit is hit
-        with pytest.raises(ValueError, match="Session limit"):
-            asyncio.run(session_manager.create_session("C1", "t2", "U1", "session B"))
-
-        # Kill the session via backend end (simulates dead handle)
-        asyncio.run(mock_backend.end_session(mapping_a.session_id))
-
-        msg = SlackMessage(
-            channel_id="C1", user_id="U1", text="ping", ts="3.0", thread_ts="t1"
-        )
-        asyncio.run(session_manager.route_message(msg))
-
-        # Now the slot should be free — new session should succeed
-        mapping_b = asyncio.run(
-            session_manager.create_session("C1", "t2", "U1", "session B")
-        )
-        assert mapping_b.session_id is not None
-        assert mapping_b.is_active is True

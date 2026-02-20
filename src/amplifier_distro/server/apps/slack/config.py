@@ -116,7 +116,6 @@ class SlackConfig:
 
     # --- Limits ---
     max_message_length: int = 3900
-    max_sessions_per_user: int = 10
     response_timeout: int = 300
 
     # --- Mode ---
