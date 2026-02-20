@@ -223,31 +223,29 @@ class WebChatSessionManager:
     async def resume_session(self, session_id: str) -> WebChatSession:
         """Switch active session to session_id and restore LLM context.
 
-        Deactivates the current active session (store only — backend stays alive).
-        Calls backend.resume_session() to inject transcript history into the LLM
-        context so the model is not starting fresh after a server restart.
-        If session_id is already active, still calls the backend (idempotent —
-        BridgeBackend guards against double-reconnect).
-        Raises ValueError if session_id is not found.
+        Calls backend.resume_session() first to inject transcript history into
+        the LLM context. Only mutates the store if the backend call succeeds,
+        preventing half-resumed state on backend failure.
+        If session_id is already active, BridgeBackend guards against
+        double-reconnect.
+        Raises ValueError if session_id is not found or backend cannot reconnect.
         """
         store_session = self._store.get(session_id)
         if store_session is None:
             raise ValueError(f"Session {session_id!r} not found")
 
-        # Deactivate current if it's a different session
-        current = self._store.active_session()
-        if current and current.session_id != session_id:
-            self._store.deactivate(current.session_id)
-
-        result = self._store.reactivate(session_id)
-
-        # Restore LLM context by reconnecting on the backend.
-        # working_dir comes from extra (stored at creation time in Task 1).
+        # Restore LLM context first — fail fast before committing store changes.
+        # working_dir comes from extra (stored at creation time).
         # Falls back to "~" for sessions created before this change.
         working_dir = store_session.extra.get("working_dir", "~")
         await self._backend.resume_session(session_id, working_dir)
 
-        return result
+        # Backend succeeded — now safe to update the store.
+        current = self._store.active_session()
+        if current and current.session_id != session_id:
+            self._store.deactivate(current.session_id)
+
+        return self._store.reactivate(session_id)
 
     async def _end_active(self, session_id: str) -> None:
         """Deactivate in store and end on backend. Swallows backend errors."""

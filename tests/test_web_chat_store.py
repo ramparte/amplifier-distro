@@ -461,6 +461,45 @@ class TestWebChatSessionManager:
         assert resume_calls[0]["session_id"] == info.session_id
         assert resume_calls[0]["working_dir"] == "/tmp/proj"
 
+    def test_resume_session_does_not_mutate_store_on_backend_failure(self):
+        """Store must not be mutated when backend.resume_session() raises ValueError.
+
+        If the backend fails to restore LLM context, the store should remain
+        unchanged — current session stays active, target session stays inactive.
+        This guards against a half-resumed state where the old session is
+        deactivated and the new one marked active but LLM context was never set.
+        """
+        from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        class FailingResumeBackend(MockBackend):
+            async def resume_session(self, session_id: str, working_dir: str) -> None:
+                raise ValueError("Bridge cannot locate session directory")
+
+        backend = FailingResumeBackend()
+        manager = WebChatSessionManager(backend, persistence_path=None)
+
+        # Create two sessions; second is active, first is inactive
+        info1 = asyncio.run(
+            manager.create_session(working_dir="~", description="first")
+        )
+        info2 = asyncio.run(
+            manager.create_session(working_dir="~", description="second")
+        )
+
+        # Resuming first should raise because backend fails
+        with pytest.raises(ValueError, match="Bridge cannot locate"):
+            asyncio.run(manager.resume_session(info1.session_id))
+
+        # Store must be unchanged: first still inactive, second still active
+        s1 = manager._store.get(info1.session_id)
+        assert s1 is not None
+        assert s1.is_active is False, "first session must remain inactive after backend failure"
+
+        s2 = manager._store.get(info2.session_id)
+        assert s2 is not None
+        assert s2.is_active is True, "second (current) session must remain active after backend failure"
+
 
 class TestMockBackendResumeSession:
     """Verify MockBackend.resume_session() records the call correctly."""
