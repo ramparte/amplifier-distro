@@ -71,6 +71,7 @@ SERVER_LOG_FILE = "server.log"
 SERVER_DEFAULT_PORT = 8400
 SLACK_SESSIONS_FILENAME = "slack-sessions.json"  # Slack bridge session mappings
 TEAMS_SESSIONS_FILENAME = "teams-sessions.json"  # Teams bridge session mappings
+WEB_CHAT_SESSIONS_FILENAME = "web-chat-sessions.json"  # Web chat session registry
 
 # --- Crash logs ---
 CRASH_LOG_FILE = "crash.log"  # relative to SERVER_DIR

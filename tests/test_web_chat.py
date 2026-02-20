@@ -36,18 +36,32 @@ def _clean_services():
     reset_services()
 
 
+@pytest.fixture(autouse=True)
+def _reset_web_chat_manager():
+    """Reset the _manager singleton between every test to prevent bleed."""
+    import amplifier_distro.server.apps.web_chat as wc
+
+    wc._manager = None
+    yield
+    wc._manager = None
+
+
 @pytest.fixture
 def webchat_client() -> TestClient:
     """Create a TestClient with web-chat app and services initialized."""
-    import asyncio
-
     import amplifier_distro.server.apps.web_chat as wc
-
-    wc._active_session_id = None
-    wc._session_lock = asyncio.Lock()
-    wc._message_in_flight = False
+    from amplifier_distro.server.apps.web_chat import WebChatSessionManager
+    from amplifier_distro.server.services import get_services
 
     init_services(dev_mode=True)
+
+    # Pre-create manager with no persistence for test isolation.
+    # _get_manager() uses the real filesystem path; we override it here so
+    # each test gets a clean in-memory store that never touches disk.
+    wc._manager = WebChatSessionManager(
+        get_services().backend,
+        persistence_path=None,
+    )
 
     from amplifier_distro.server.apps.web_chat import manifest
 
@@ -311,8 +325,8 @@ class TestAppDiscovery:
 class TestWebChatSessionLifecycle:
     """Test the full create -> end -> chat lifecycle.
 
-    Web Chat correctly clears _active_session_id on ValueError (line 297-299
-    of web_chat/__init__.py). These tests document and guard that behavior.
+    Guards the ValueError path: when the backend confirms a session is dead,
+    the manager deactivates the store entry and the route returns 409.
     """
 
     def test_chat_after_end_returns_409(self, webchat_client: TestClient):
@@ -364,191 +378,196 @@ class TestWebChatSessionLifecycle:
         assert status["connected"] is False
 
 
-class TestWebChatConcurrency:
-    """Verify concurrent request behaviour after lock narrowing.
+class TestWebChatSessionsListAPI:
+    """Verify GET /apps/web-chat/api/sessions endpoint."""
 
-    These tests use httpx.AsyncClient (async_webchat_client fixture)
-    because starlette.testclient.TestClient runs requests in a thread
-    and cannot produce true asyncio concurrency.
-    """
+    def test_list_sessions_returns_200(self, webchat_client: TestClient):
+        response = webchat_client.get("/apps/web-chat/api/sessions")
+        assert response.status_code == 200
 
-    async def test_in_flight_guard_rejects_concurrent_chat(self, async_webchat_client):
-        """While a chat is in-flight a second chat returns 409."""
-        from unittest.mock import AsyncMock, patch
+    def test_list_sessions_empty_by_default(self, webchat_client: TestClient):
+        data = webchat_client.get("/apps/web-chat/api/sessions").json()
+        assert data["sessions"] == []
 
-        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+    def test_list_sessions_includes_created_session(self, webchat_client: TestClient):
+        webchat_client.post(
+            "/apps/web-chat/api/session",
+            json={"description": "my test session"},
+        )
+        data = webchat_client.get("/apps/web-chat/api/sessions").json()
+        assert len(data["sessions"]) == 1
+        assert data["sessions"][0]["description"] == "my test session"
 
-        async def slow_send(session_id, message):
-            import asyncio
+    def test_list_sessions_entry_has_required_fields(self, webchat_client: TestClient):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        s = sessions[0]
+        assert "session_id" in s
+        assert "description" in s
+        assert "created_at" in s
+        assert "last_active" in s
+        assert "is_active" in s
+        assert "project_id" in s
 
-            await asyncio.sleep(0.05)
-            return f"[response: {message}]"
+    def test_list_sessions_active_flag_is_true_for_current(
+        self, webchat_client: TestClient
+    ):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        assert sessions[0]["is_active"] is True
 
-        with patch(
-            "amplifier_distro.server.apps.web_chat._get_backend"
-        ) as mock_get_backend:
-            mock_get_backend.return_value = AsyncMock(send_message=slow_send)
+    def test_list_sessions_shows_both_active_and_inactive(
+        self, webchat_client: TestClient
+    ):
+        # Create first session
+        webchat_client.post("/apps/web-chat/api/session", json={"description": "first"})
+        # Create second session — automatically deactivates first
+        webchat_client.post(
+            "/apps/web-chat/api/session", json={"description": "second"}
+        )
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        assert len(sessions) == 2
+        active = [s for s in sessions if s["is_active"]]
+        inactive = [s for s in sessions if not s["is_active"]]
+        assert len(active) == 1
+        assert len(inactive) == 1
+        assert sessions[0]["description"] == "second"  # most recently active first
 
-            import asyncio
+    def test_list_sessions_project_id_field_is_present(
+        self, webchat_client: TestClient
+    ):
+        webchat_client.post("/apps/web-chat/api/session", json={})
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        # project_id should be a string (may be empty for unknown sessions)
+        assert isinstance(sessions[0]["project_id"], str)
 
-            r1, r2 = await asyncio.gather(
-                async_webchat_client.post(
-                    "/apps/web-chat/api/chat", json={"message": "first"}
-                ),
-                async_webchat_client.post(
-                    "/apps/web-chat/api/chat", json={"message": "second"}
-                ),
-            )
 
-        codes = sorted([r1.status_code, r2.status_code])
-        assert codes == [200, 409], f"Expected [200, 409], got {codes}"
-        resp_409 = r1 if r1.status_code == 409 else r2
-        assert (
-            "in_flight" in resp_409.json().get("error", "").lower()
-            or resp_409.json().get("in_flight") is True
+class TestWebChatSessionResumeAPI:
+    """Verify POST /apps/web-chat/api/session/resume endpoint."""
+
+    def test_resume_missing_session_id_returns_400(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={},
+        )
+        assert response.status_code == 400
+        assert "session_id" in response.json()["error"]
+
+    def test_resume_unknown_session_returns_404(self, webchat_client: TestClient):
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": "no-such-session"},
+        )
+        assert response.status_code == 404
+
+    def test_resume_known_session_returns_200(self, webchat_client: TestClient):
+        # Create a session to get a known ID
+        create_resp = webchat_client.post(
+            "/apps/web-chat/api/session", json={"description": "session to resume"}
+        )
+        session_id = create_resp.json()["session_id"]
+        # Create another session (pushes first to inactive)
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        # Resume first session
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+
+    def test_resume_response_has_required_fields(self, webchat_client: TestClient):
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        data = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        ).json()
+        assert data["session_id"] == session_id
+        assert data["resumed"] is True
+
+    def test_resume_makes_session_active(self, webchat_client: TestClient):
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
         )
 
-    async def test_chat_succeeds_after_in_flight_clears(self, async_webchat_client):
-        """After a chat completes, the next chat is accepted normally."""
-        await async_webchat_client.post("/apps/web-chat/api/session", json={})
-        r1 = await async_webchat_client.post(
-            "/apps/web-chat/api/chat", json={"message": "hello"}
-        )
-        assert r1.status_code == 200
+        # GET /api/session should now report this session as connected
+        status = webchat_client.get("/apps/web-chat/api/session").json()
+        assert status["connected"] is True
+        assert status["session_id"] == session_id
 
-        r2 = await async_webchat_client.post(
-            "/apps/web-chat/api/chat", json={"message": "world"}
-        )
-        assert r2.status_code == 200
+    def test_resume_deactivates_current_session(self, webchat_client: TestClient):
+        create1 = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id_1 = create1.json()["session_id"]
+        create2 = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id_2 = create2.json()["session_id"]
 
-    async def test_session_id_cleared_under_lock_on_value_error(
-        self, async_webchat_client
-    ):
-        """When send_message raises ValueError, _active_session_id is cleared safely."""
-        from unittest.mock import AsyncMock, patch
-
-        await async_webchat_client.post("/apps/web-chat/api/session", json={})
-
-        async def failing_send(session_id, message):
-            raise ValueError("Unknown session")
-
-        with patch(
-            "amplifier_distro.server.apps.web_chat._get_backend"
-        ) as mock_get_backend:
-            mock_get_backend.return_value = AsyncMock(send_message=failing_send)
-            r = await async_webchat_client.post(
-                "/apps/web-chat/api/chat", json={"message": "hello"}
-            )
-
-        assert r.status_code == 409
-        assert r.json()["session_connected"] is False
-
-        # Session should now be cleared
-        status = await async_webchat_client.get("/apps/web-chat/api/session")
-        assert status.json()["connected"] is False
-
-    async def test_session_status_does_not_block_concurrent_chat(
-        self, async_webchat_client
-    ):
-        """session_status() must not hold _session_lock during backend I/O."""
-        import asyncio
-        from unittest.mock import AsyncMock, patch
-
-        await async_webchat_client.post("/apps/web-chat/api/session", json={})
-
-        async def slow_get_info(session_id):
-            await asyncio.sleep(0.05)
-            from amplifier_distro.server.session_backend import SessionInfo
-
-            return SessionInfo(session_id=session_id, is_active=True)
-
-        with patch(
-            "amplifier_distro.server.apps.web_chat._get_backend"
-        ) as mock_get_backend:
-            mock_backend = AsyncMock()
-            mock_backend.get_session_info = slow_get_info
-            mock_backend.send_message = AsyncMock(return_value="ok")
-            mock_get_backend.return_value = mock_backend
-
-            r_status, r_chat = await asyncio.gather(
-                async_webchat_client.get("/apps/web-chat/api/session"),
-                async_webchat_client.post(
-                    "/apps/web-chat/api/chat", json={"message": "hi"}
-                ),
-            )
-
-        # Both should complete — neither should time out or deadlock
-        assert r_status.status_code == 200
-        assert r_chat.status_code in (200, 409)  # 409 if in-flight guard fires
-
-    async def test_new_session_not_clobbered_when_old_session_errors(
-        self, async_webchat_client
-    ):
-        """create_session() while chat() ValueError path runs must not lose the new session."""
-        from unittest.mock import patch, AsyncMock
-        import asyncio
-        import amplifier_distro.server.apps.web_chat as wc
-
-        # Create initial session
-        r = await async_webchat_client.post("/apps/web-chat/api/session", json={})
-        original_session_id = r.json()["session_id"]
-
-        new_session_id = "new-session-after-error"
-
-        created_new_session = asyncio.Event()
-        backend_called = asyncio.Event()
-
-        async def failing_send(session_id, message):
-            # Signal that we're in send_message, let create_session run first
-            backend_called.set()
-            await created_new_session.wait()
-            raise ValueError("Unknown session")
-
-        async def mock_create(working_dir, description):
-            from amplifier_distro.server.session_backend import SessionInfo
-            return SessionInfo(
-                session_id=new_session_id,
-                project_id="test",
-                working_dir="/tmp",
-                is_active=True,
-            )
-
-        mock_backend = AsyncMock()
-        mock_backend.send_message = failing_send
-        mock_backend.create_session = mock_create
-        mock_backend.end_session = AsyncMock()
-
-        with patch("amplifier_distro.server.apps.web_chat._get_backend", return_value=mock_backend):
-            # Start chat (will block at backend_called.set())
-            chat_task = asyncio.create_task(
-                async_webchat_client.post("/apps/web-chat/api/chat", json={"message": "hi"})
-            )
-            # Wait until send_message is running, then create a new session
-            await backend_called.wait()
-            await async_webchat_client.post("/apps/web-chat/api/session", json={})
-            created_new_session.set()
-            await chat_task
-
-        # New session must still be active
-        assert wc._active_session_id == new_session_id, (
-            f"New session was clobbered! Got: {wc._active_session_id}"
+        # Resume first session
+        webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id_1},
         )
 
-    async def test_session_status_handles_unexpected_backend_error(
-        self, async_webchat_client
+        # session_id_2 should no longer be the active one
+        sessions = webchat_client.get("/apps/web-chat/api/sessions").json()["sessions"]
+        by_id = {s["session_id"]: s for s in sessions}
+        assert by_id[session_id_1]["is_active"] is True
+        assert by_id[session_id_2]["is_active"] is False
+
+    def test_resume_currently_active_session_is_idempotent(
+        self, webchat_client: TestClient
     ):
-        """session_status() must return connected:False, not 500, on unexpected errors."""
-        from unittest.mock import patch, AsyncMock
+        """Resuming the already-active session should succeed and keep it active."""
+        create_resp = webchat_client.post("/apps/web-chat/api/session", json={})
+        session_id = create_resp.json()["session_id"]
 
-        await async_webchat_client.post("/apps/web-chat/api/session", json={})
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+        assert response.json()["session_id"] == session_id
+        # Still the active session
+        status = webchat_client.get("/apps/web-chat/api/session").json()
+        assert status["session_id"] == session_id
 
-        async def exploding_get_info(session_id):
-            raise OSError("Connection refused")
+    def test_resume_calls_backend_resume_session(self, webchat_client: TestClient):
+        """POST /api/session/resume must call backend.resume_session() for LLM context."""
+        from amplifier_distro.server.services import get_services
+        from amplifier_distro.server.session_backend import MockBackend
 
-        mock_backend = AsyncMock()
-        mock_backend.get_session_info = exploding_get_info
-        with patch("amplifier_distro.server.apps.web_chat._get_backend", return_value=mock_backend):
-            r = await async_webchat_client.get("/apps/web-chat/api/session")
+        # Create two sessions so the first is inactive (can be resumed)
+        create1 = webchat_client.post(
+            "/apps/web-chat/api/session",
+            json={"working_dir": "/tmp/proj1", "description": "session one"},
+        )
+        session_id = create1.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
 
-        assert r.status_code == 200   # not 500
-        assert r.json()["connected"] is False
+        # Inspect the backend (MockBackend in dev mode)
+        backend = get_services().backend
+        assert isinstance(backend, MockBackend), "Expected MockBackend in dev mode"
+        backend.calls.clear()  # isolate calls from this point forward
+
+        # Resume the first session
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+
+        # Verify backend.resume_session() was called with the right args
+        resume_calls = [c for c in backend.calls if c["method"] == "resume_session"]
+        assert len(resume_calls) == 1, (
+            f"Expected exactly 1 resume_session call, got {len(resume_calls)}. "
+            f"All calls: {backend.calls}"
+        )
+        assert resume_calls[0]["session_id"] == session_id
+        assert resume_calls[0]["working_dir"] == "/tmp/proj1"

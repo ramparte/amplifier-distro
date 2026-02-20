@@ -18,7 +18,6 @@ Routes:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from pathlib import Path
@@ -27,19 +26,22 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from amplifier_distro.conventions import (
+    AMPLIFIER_HOME,
+    SERVER_DIR,
+    WEB_CHAT_SESSIONS_FILENAME,
+)
 from amplifier_distro.server.app import AppManifest
+from amplifier_distro.server.apps.web_chat.session_store import (
+    WebChatSession,
+    WebChatSessionStore,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 _static_dir = Path(__file__).parent / "static"
-
-# Per-connection session tracking (simple: one active session for web-chat)
-# In the future this becomes per-user via auth tokens.
-_active_session_id: str | None = None
-_session_lock = asyncio.Lock()
-_message_in_flight: bool = False  # True while a send_message() call is in progress
 
 # --- Memory pattern matching ---
 
@@ -128,6 +130,163 @@ def _get_backend():
     return get_services().backend
 
 
+class WebChatSessionManager:
+    """Manages web chat sessions: store registry + backend lifecycle.
+
+    Replaces the module-level _active_session_id global and _session_lock.
+    One active session at a time (single-user web chat).
+
+    Pass persistence_path=None to disable disk persistence (test mode).
+    In production, persistence_path is resolved at singleton creation time.
+    """
+
+    def __init__(
+        self,
+        backend: Any,
+        persistence_path: Path | None = None,
+    ) -> None:
+        self._backend = backend
+        self._store = WebChatSessionStore(persistence_path=persistence_path)
+
+    @property
+    def active_session_id(self) -> str | None:
+        """ID of the current active session, or None."""
+        session = self._store.active_session()
+        return session.session_id if session else None
+
+    async def create_session(
+        self,
+        working_dir: str = "~",
+        description: str = "Web chat session",
+    ):
+        """Deactivate current session (store only), create a new one, register in store.
+
+        The previous session is only deactivated in the store registry — the
+        backend session stays alive so it can be resumed later via resume_session().
+        Explicit termination on the backend only happens via end_session().
+
+        Returns the SessionInfo from the backend.
+        """
+        # Deactivate existing session in store only (backend stays alive for resume)
+        existing = self._store.active_session()
+        if existing:
+            self._store.deactivate(existing.session_id)
+
+        info = await self._backend.create_session(
+            working_dir=working_dir,
+            description=description,
+        )
+        self._store.add(
+            info.session_id,
+            description,
+            extra={
+                "project_id": info.project_id,
+                "working_dir": info.working_dir,
+            },
+        )
+        return info
+
+    async def send_message(self, message: str) -> str | None:
+        """Send message to active session. Returns None if no session.
+
+        Updates last_active on success.
+        On backend ValueError (session died), deactivates store entry and re-raises.
+        """
+        session = self._store.active_session()
+        if session is None:
+            return None
+
+        self._store.touch(session.session_id)
+
+        try:
+            return await self._backend.send_message(session.session_id, message)
+        except ValueError:
+            # Backend confirmed session is dead — deactivate in store
+            self._store.deactivate(session.session_id)
+            raise
+
+    async def end_session(self) -> bool:
+        """Deactivate and end the active session.
+
+        Returns True if a session existed, False otherwise.
+        """
+        session = self._store.active_session()
+        if session is None:
+            return False
+        await self._end_active(session.session_id)
+        return True
+
+    def mark_disconnected(self, session_id: str) -> None:
+        """Mark a session as inactive in the store without terminating the backend.
+
+        Use when the backend handle is gone (e.g. server restart) but the
+        transcript is still on disk and the user should be able to resume.
+
+        Distinct from end_session() which calls backend.end_session() and
+        permanently tombstones the session, making _reconnect() refuse it.
+        """
+        self._store.deactivate(session_id)
+
+    def list_sessions(self) -> list[WebChatSession]:
+        """All sessions sorted by last_active desc."""
+        return self._store.list_all()
+
+    async def resume_session(self, session_id: str) -> WebChatSession:
+        """Switch active session to session_id and restore LLM context.
+
+        Calls backend.resume_session() first to inject transcript history into
+        the LLM context. Only mutates the store if the backend call succeeds,
+        preventing half-resumed state on backend failure.
+        If session_id is already active, BridgeBackend guards against
+        double-reconnect.
+        Raises ValueError if session_id is not found or backend cannot reconnect.
+        """
+        store_session = self._store.get(session_id)
+        if store_session is None:
+            raise ValueError(f"Session {session_id!r} not found")
+
+        # Restore LLM context first — fail fast before committing store changes.
+        # working_dir comes from extra (stored at creation time).
+        # Falls back to "~" for sessions created before this change.
+        working_dir = store_session.extra.get("working_dir", "~")
+        await self._backend.resume_session(session_id, working_dir)
+
+        # Backend succeeded — now safe to update the store.
+        current = self._store.active_session()
+        if current and current.session_id != session_id:
+            self._store.deactivate(current.session_id)
+
+        return self._store.reactivate(session_id)
+
+    async def _end_active(self, session_id: str) -> None:
+        """Deactivate in store and end on backend. Swallows backend errors."""
+        self._store.deactivate(session_id)
+        try:
+            await self._backend.end_session(session_id)
+        except (RuntimeError, ValueError, OSError):
+            logger.warning("Error ending session %s", session_id, exc_info=True)
+
+
+_manager: WebChatSessionManager | None = None
+
+
+def _get_manager() -> WebChatSessionManager:
+    """Return the module-level WebChatSessionManager singleton.
+
+    Creates it on first call, wiring up the real persistence path.
+    """
+    global _manager
+    if _manager is None:
+        persistence_path = (
+            Path(AMPLIFIER_HOME).expanduser() / SERVER_DIR / WEB_CHAT_SESSIONS_FILENAME
+        )
+        _manager = WebChatSessionManager(
+            _get_backend(),
+            persistence_path=persistence_path,
+        )
+    return _manager
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Serve the web chat interface."""
@@ -145,22 +304,22 @@ async def index() -> HTMLResponse:
 
 @router.get("/api/session")
 async def session_status() -> dict:
-    """Return session connection status."""
-    global _active_session_id
+    """Return session connection status.
 
-    async with _session_lock:
-        if _active_session_id is None:
-            return {
-                "connected": False,
-                "session_id": None,
-                "message": "No active session. Click 'New Session' to start.",
-            }
-        session_id = _active_session_id
+    Reports whether a session is active and its ID.
+    """
+    manager = _get_manager()
+    session_id = manager.active_session_id
 
-    # Lock released — backend I/O runs without blocking other routes
+    if session_id is None:
+        return {
+            "connected": False,
+            "session_id": None,
+            "message": "No active session. Click 'New Session' to start.",
+        }
+
     try:
-        backend = _get_backend()
-        info = await backend.get_session_info(session_id)
+        info = await manager._backend.get_session_info(session_id)
         if info and info.is_active:
             return {
                 "connected": True,
@@ -169,20 +328,20 @@ async def session_status() -> dict:
                 "working_dir": info.working_dir,
             }
         else:
-            async with _session_lock:
-                # Only clear if it hasn't been replaced by a new session
-                if _active_session_id == session_id:
-                    _active_session_id = None
+            manager.mark_disconnected(session_id)
             return {
                 "connected": False,
                 "session_id": None,
-                "message": "Previous session ended. Start a new one.",
+                "message": (
+                    "Session disconnected. Resume from the Sessions list"
+                    " or start a new one."
+                ),
             }
-    except Exception:  # noqa: BLE001
+    except RuntimeError:
         return {
             "connected": False,
             "session_id": None,
-            "message": "Could not reach session backend.",
+            "message": "Server services not ready. Is the server fully started?",
         }
 
 
@@ -194,32 +353,13 @@ async def create_session(request: Request) -> JSONResponse:
         working_dir: str - Working directory for the session
         description: str - Human-readable description
     """
-    global _active_session_id
-
     body = await request.json() if await request.body() else {}
-
-    # Capture and clear the old session id under the lock
-    async with _session_lock:
-        old_session_id = _active_session_id
-        _active_session_id = None
-
-    # End old session outside the lock
-    if old_session_id:
-        try:
-            backend = _get_backend()
-            await backend.end_session(old_session_id)
-        except (RuntimeError, ValueError, OSError):
-            logger.warning("Error ending previous session", exc_info=True)
-
     try:
-        backend = _get_backend()
-        info = await backend.create_session(
+        manager = _get_manager()
+        info = await manager.create_session(
             working_dir=body.get("working_dir", "~"),
             description=body.get("description", "Web chat session"),
         )
-        async with _session_lock:
-            _active_session_id = info.session_id
-
         return JSONResponse(
             content={
                 "session_id": info.session_id,
@@ -228,15 +368,11 @@ async def create_session(request: Request) -> JSONResponse:
             }
         )
     except RuntimeError as e:
-        return JSONResponse(
-            status_code=503,
-            content={"error": str(e)},
-        )
+        return JSONResponse(status_code=503, content={"error": str(e)})
     except Exception as e:  # noqa: BLE001
         logger.warning("Session creation failed: %s", e, exc_info=True)
         return JSONResponse(
-            status_code=500,
-            content={"error": str(e), "type": type(e).__name__},
+            status_code=500, content={"error": str(e), "type": type(e).__name__}
         )
 
 
@@ -251,8 +387,7 @@ async def chat(request: Request) -> JSONResponse:
     Body:
         message: str - The user's message
     """
-    global _active_session_id, _message_in_flight
-
+    manager = _get_manager()
     body = await request.json()
     user_message = body.get("message", "")
 
@@ -268,8 +403,7 @@ async def chat(request: Request) -> JSONResponse:
         action, text = memory_intent
         try:
             result = _handle_memory_command(action, text)
-            async with _session_lock:
-                result["session_connected"] = _active_session_id is not None
+            result["session_connected"] = manager.active_session_id is not None
             return JSONResponse(content=result)
         except Exception as e:  # noqa: BLE001
             logger.warning("Memory command failed: %s", e, exc_info=True)
@@ -278,45 +412,25 @@ async def chat(request: Request) -> JSONResponse:
                 content={"error": str(e), "type": type(e).__name__},
             )
 
-    async with _session_lock:
-        if _active_session_id is None:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": (
-                        "No active session. Create one first via POST /api/session."
-                    ),
-                    "session_connected": False,
-                },
-            )
-        if _message_in_flight:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": "A message is already in-flight. Wait for it to complete.",
-                    "session_connected": True,
-                    "in_flight": True,
-                },
-            )
-        session_id = _active_session_id
-        _message_in_flight = True
+    if manager.active_session_id is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "No active session. Create one first via POST /api/session.",
+                "session_connected": False,
+            },
+        )
 
-    # Lock released — backend call runs concurrently with other routes
     try:
-        backend = _get_backend()
-        response = await backend.send_message(session_id, user_message)
+        response = await manager.send_message(user_message)
         return JSONResponse(
             content={
                 "response": response,
-                "session_id": session_id,
+                "session_id": manager.active_session_id,
                 "session_connected": True,
             }
         )
     except ValueError:
-        # Session disappeared — CAS guard: don't clobber a new session
-        async with _session_lock:
-            if _active_session_id == session_id:
-                _active_session_id = None
         return JSONResponse(
             status_code=409,
             content={
@@ -325,42 +439,85 @@ async def chat(request: Request) -> JSONResponse:
             },
         )
     except RuntimeError as e:
-        return JSONResponse(
-            status_code=503,
-            content={"error": str(e)},
-        )
+        return JSONResponse(status_code=503, content={"error": str(e)})
     except Exception as e:  # noqa: BLE001
         logger.warning("Chat message failed: %s", e, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"error": str(e), "type": type(e).__name__},
         )
-    finally:
-        _message_in_flight = False
 
 
 @router.post("/api/end")
 async def end_session() -> JSONResponse:
     """End the active web chat session."""
-    global _active_session_id
+    manager = _get_manager()
+    session_id = manager.active_session_id
 
-    async with _session_lock:
-        if _active_session_id is None:
-            return JSONResponse(
-                content={"ended": False, "message": "No active session."}
-            )
+    if session_id is None:
+        return JSONResponse(content={"ended": False, "message": "No active session."})
 
-        session_id = _active_session_id
-        _active_session_id = None
+    await manager.end_session()
+    return JSONResponse(content={"ended": True, "session_id": session_id})
+
+
+@router.get("/api/sessions")
+async def list_sessions() -> dict:
+    """List all web chat sessions.
+
+    Returns all sessions (active and inactive), sorted by last_active desc.
+    """
+    manager = _get_manager()
+    sessions = manager.list_sessions()
+    return {
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "description": s.description,
+                "created_at": s.created_at,
+                "last_active": s.last_active,
+                "is_active": s.is_active,
+                "project_id": s.extra.get("project_id", ""),
+            }
+            for s in sessions
+        ]
+    }
+
+
+@router.post("/api/session/resume")
+async def resume_session(request: Request) -> JSONResponse:
+    """Resume a previously created session.
+
+    Body:
+        session_id: str - The session to resume
+
+    Returns:
+        200 with {session_id, resumed: true} on success
+        400 if session_id is missing
+        404 if session_id is not found in the registry
+    """
+    body = await request.json() if await request.body() else {}
+    session_id = body.get("session_id")
+
+    if not session_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "session_id is required"},
+        )
 
     try:
-        backend = _get_backend()
-        await backend.end_session(session_id)
-        return JSONResponse(content={"ended": True, "session_id": session_id})
-    except (RuntimeError, ValueError, OSError) as e:
-        logger.warning("Error ending session %s: %s", session_id, e)
+        manager = _get_manager()
+        session = await manager.resume_session(session_id)
         return JSONResponse(
-            content={"ended": True, "session_id": session_id, "warning": str(e)}
+            content={
+                "session_id": session.session_id,
+                "resumed": True,
+            }
+        )
+    except ValueError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"error": str(e)},
         )
 
 
