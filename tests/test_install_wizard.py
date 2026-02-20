@@ -420,9 +420,7 @@ class TestQuickstartIdempotency:
 
         # Simulate user setting identity via settings app
         cfg = DistroConfig(
-            identity=IdentityConfig(
-                github_handle="myuser", git_email="me@example.com"
-            )
+            identity=IdentityConfig(github_handle="myuser", git_email="me@example.com")
         )
         save_config(cfg)
 
@@ -455,27 +453,28 @@ class TestQuickstartIdempotency:
         data = _yaml.safe_load(settings_path.read_text())
         assert data["custom_key"] == "preserved_value"
 
-    def test_settings_appends_to_added_list(
+    def test_settings_preserves_other_added_bundles(
         self, wizard_client: TestClient, wizard_home: Path
     ):
-        """Bundle path should be appended, not replace existing added entries."""
+        """Bundle path should be added without replacing other added entries."""
         import yaml as _yaml
 
         # First quickstart
         self._run_quickstart(wizard_client)
 
-        # Manually add another bundle to the added list
+        # Manually add another bundle to the added dict
         settings_path = wizard_home / "settings.yaml"
         data = _yaml.safe_load(settings_path.read_text())
-        data["bundle"]["added"].insert(0, "/some/other/bundle.yaml")
+        data["bundle"]["added"]["other-bundle"] = "/some/other/bundle.yaml"
         settings_path.write_text(_yaml.dump(data, default_flow_style=False))
 
-        # Second quickstart — should append, not replace
+        # Second quickstart — should preserve other entry
         self._run_quickstart(wizard_client)
 
         data = _yaml.safe_load(settings_path.read_text())
         added = data["bundle"]["added"]
-        assert "/some/other/bundle.yaml" in added
+        assert isinstance(added, dict)
+        assert added["other-bundle"] == "/some/other/bundle.yaml"
         assert len(added) == 2  # other + distro bundle
 
     def test_settings_no_duplicate_in_added(
@@ -490,7 +489,10 @@ class TestQuickstartIdempotency:
         settings_path = wizard_home / "settings.yaml"
         data = _yaml.safe_load(settings_path.read_text())
         added = data["bundle"]["added"]
-        assert len(added) == len(set(added))  # no duplicates
+        assert isinstance(added, dict)
+        assert len(added) == 1  # only the distro bundle
+
+
 
     def test_quickstart_note_on_existing_settings(
         self, wizard_client: TestClient, wizard_home: Path

@@ -94,7 +94,7 @@ def _seed_stub_config(home: Path) -> None:
     settings = {
         "bundle": {
             "active": "distro",
-            "added": [str(home / "bundles" / "distro.yaml")],
+            "added": {"distro": str(home / "bundles" / "distro.yaml")},
         }
     }
     (home / "settings.yaml").write_text(

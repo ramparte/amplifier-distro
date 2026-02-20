@@ -78,10 +78,8 @@ def _write_settings(bundle_path: Path) -> dict[str, str]:
 
     bundle_data = existing.get("bundle", {})
     bundle_data["active"] = bundle_composer.BUNDLE_NAME
-    added = bundle_data.get("added", [])
-    bp_str = str(bundle_path)
-    if bp_str not in added:
-        added.append(bp_str)
+    added = bundle_data.get("added", {})
+    added[bundle_composer.BUNDLE_NAME] = str(bundle_path)
     bundle_data["added"] = added
     existing["bundle"] = bundle_data
 
