@@ -351,3 +351,11 @@ class TestStopServicesShutdown:
 
         reset_services()
         await stop_services()  # should silently do nothing
+
+
+class TestSessionBackendProtocol:
+    def test_protocol_declares_resume_session(self):
+        from amplifier_distro.server.session_backend import SessionBackend
+        assert hasattr(SessionBackend, "resume_session"), (
+            "SessionBackend Protocol must declare resume_session"
+        )
