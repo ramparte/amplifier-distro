@@ -216,6 +216,17 @@ class WebChatSessionManager:
         await self._end_active(session.session_id)
         return True
 
+    def mark_disconnected(self, session_id: str) -> None:
+        """Mark a session as inactive in the store without terminating the backend.
+
+        Use when the backend handle is gone (e.g. server restart) but the
+        transcript is still on disk and the user should be able to resume.
+
+        Distinct from end_session() which calls backend.end_session() and
+        permanently tombstones the session, making _reconnect() refuse it.
+        """
+        self._store.deactivate(session_id)
+
     def list_sessions(self) -> list[WebChatSession]:
         """All sessions sorted by last_active desc."""
         return self._store.list_all()
@@ -317,11 +328,14 @@ async def session_status() -> dict:
                 "working_dir": info.working_dir,
             }
         else:
-            await manager.end_session()
+            manager.mark_disconnected(session_id)
             return {
                 "connected": False,
                 "session_id": None,
-                "message": "Previous session ended. Start a new one.",
+                "message": (
+                    "Session disconnected. Resume from the Sessions list"
+                    " or start a new one."
+                ),
             }
     except RuntimeError:
         return {

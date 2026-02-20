@@ -396,6 +396,45 @@ class TestWebChatSessionManager:
         assert manager.active_session_id is None
 
     # ------------------------------------------------------------------
+    # mark_disconnected()
+    # ------------------------------------------------------------------
+
+    def test_mark_disconnected_deactivates_in_store(self):
+        """mark_disconnected() deactivates the session store entry only."""
+        manager, _ = self._make_manager()
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
+        manager.mark_disconnected(info.session_id)
+        assert manager.active_session_id is None
+
+    def test_mark_disconnected_does_not_call_backend_end_session(self):
+        """mark_disconnected() must NOT call backend.end_session() — that tombstones.
+
+        This is the stop-ship bug: calling end_session() on the backend when the
+        handle is missing (e.g. server restart) permanently prevents _reconnect()
+        from resuming the session. mark_disconnected() must only touch the store.
+        """
+        manager, backend = self._make_manager()
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
+        backend.calls.clear()
+
+        manager.mark_disconnected(info.session_id)
+
+        end_calls = [c for c in backend.calls if c["method"] == "end_session"]
+        assert len(end_calls) == 0, (
+            "mark_disconnected() must not call backend.end_session() — "
+            "that permanently tombstones the session and prevents resume."
+        )
+
+    def test_mark_disconnected_session_remains_in_store(self):
+        """Session still exists in store after mark_disconnected — can be resumed."""
+        manager, _ = self._make_manager()
+        info = asyncio.run(manager.create_session(working_dir="~", description="test"))
+        manager.mark_disconnected(info.session_id)
+        stored = manager._store.get(info.session_id)
+        assert stored is not None
+        assert stored.is_active is False
+
+    # ------------------------------------------------------------------
     # list_sessions()
     # ------------------------------------------------------------------
 
@@ -494,11 +533,15 @@ class TestWebChatSessionManager:
         # Store must be unchanged: first still inactive, second still active
         s1 = manager._store.get(info1.session_id)
         assert s1 is not None
-        assert s1.is_active is False, "first session must remain inactive after backend failure"
+        assert s1.is_active is False, (
+            "first session must remain inactive after backend failure"
+        )
 
         s2 = manager._store.get(info2.session_id)
         assert s2 is not None
-        assert s2.is_active is True, "second (current) session must remain active after backend failure"
+        assert s2.is_active is True, (
+            "second (current) session must remain active after backend failure"
+        )
 
 
 class TestMockBackendResumeSession:
