@@ -873,6 +873,81 @@ class TestCommandHandler:
         result = asyncio.run(command_handler.handle("connect", [], ctx))
         assert "Usage" in result.text
 
+    def test_cmd_connect_passes_session_id_to_resume(
+        self, command_handler, mock_backend, tmp_path
+    ):
+        """cmd_connect passes the discovered session_id to
+        connect_session (resume path).
+        """
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        # Create a session directory so AmplifierDiscovery can find it.
+        session_id = "abcdef01-0000-0000-0000-000000000001"
+        sessions_dir = tmp_path / "projects" / "-tmp-testproj" / "sessions" / session_id
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "transcript.jsonl").write_text(
+            '{"role":"user","content":"hello"}\n'
+        )
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(command_handler.handle("connect", [session_id[:8]], ctx))
+
+        # Should succeed — no error message
+        assert "Could not resume" not in result.text
+
+        # resume_session was called with the exact session_id from discovery
+        resume_calls = [
+            c for c in mock_backend.calls if c["method"] == "resume_session"
+        ]
+        assert len(resume_calls) == 1, "resume_session must be called exactly once"
+        assert resume_calls[0]["session_id"] == session_id
+
+        # create_session was NOT called — no fresh session
+        create_calls = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ]
+        assert len(create_calls) == 0, "create_session must NOT be called"
+
+    def test_cmd_connect_returns_error_on_resume_failure(
+        self, tmp_path, slack_config, slack_client
+    ):
+        """If resume_session raises ValueError,
+        cmd_connect returns a clear error message.
+        """
+        from amplifier_distro.server.apps.slack.commands import (
+            CommandContext,
+            CommandHandler,
+        )
+        from amplifier_distro.server.apps.slack.discovery import AmplifierDiscovery
+        from amplifier_distro.server.apps.slack.sessions import SlackSessionManager
+        from amplifier_distro.server.session_backend import MockBackend
+
+        class FailingResumeBackend(MockBackend):
+            async def resume_session(self, session_id: str, working_dir: str) -> None:
+                raise ValueError("Bridge cannot locate session directory")
+
+        failing_backend = FailingResumeBackend()
+        discovery = AmplifierDiscovery(amplifier_home=str(tmp_path))
+        session_manager = SlackSessionManager(
+            slack_client, failing_backend, slack_config
+        )
+        handler = CommandHandler(session_manager, discovery, slack_config)
+
+        session_id = "deadbeef-0000-0000-0000-000000000002"
+        sessions_dir = tmp_path / "projects" / "-tmp-testproj" / "sessions" / session_id
+        sessions_dir.mkdir(parents=True)
+        (sessions_dir / "transcript.jsonl").write_text(
+            '{"role":"user","content":"hello"}\n'
+        )
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(handler.handle("connect", [session_id[:8]], ctx))
+
+        # Error message must mention the failure and
+        # include the target_id the user typed
+        assert "Could not resume" in result.text
+        assert session_id[:8] in result.text
+
 
 # --- Events Handler Tests ---
 

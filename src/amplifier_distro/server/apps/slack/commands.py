@@ -255,18 +255,19 @@ class CommandHandler:
         if session is None:
             return CommandResult(text=f"Session not found: `{target_id}`")
 
-        # Create a real backend session in the discovered session's project
-        # directory so messages can actually be routed to a live session.
+        # Resume the discovered session in the backend so messages can be
+        # routed to the live session process.
         try:
             mapping = await self._sessions.connect_session(
                 channel_id=ctx.channel_id,
                 thread_ts=ctx.thread_ts,
                 user_id=ctx.user_id,
+                session_id=session.session_id,  # NEW — triggers resume path
                 working_dir=session.project_path,
                 description=session.description or session.name,
             )
         except ValueError as e:
-            return CommandResult(text=str(e))
+            return CommandResult(text=f"Could not resume session `{target_id}`: {e}")
 
         short_id = mapping.session_id[:8]
         text = f"Connected to session `{short_id}` ({session.project})"
