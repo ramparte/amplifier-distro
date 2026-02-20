@@ -318,6 +318,15 @@ class TestWebChatSessionManager:
         assert stored is not None
         assert stored.extra.get("project_id") == info.project_id
 
+    def test_create_session_stores_working_dir_in_extra(self):
+        manager, _ = self._make_manager()
+        info = asyncio.run(
+            manager.create_session(working_dir="/tmp/myproject", description="test")
+        )
+        stored = manager._store.get(info.session_id)
+        assert stored is not None
+        assert stored.extra.get("working_dir") == "/tmp/myproject"
+
     def test_create_session_ends_previous_session(self):
         manager, _backend = self._make_manager()
         info1 = asyncio.run(

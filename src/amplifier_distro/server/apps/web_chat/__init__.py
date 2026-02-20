@@ -179,7 +179,10 @@ class WebChatSessionManager:
         self._store.add(
             info.session_id,
             description,
-            extra={"project_id": info.project_id},
+            extra={
+                "project_id": info.project_id,
+                "working_dir": info.working_dir,
+            },
         )
         return info
 
