@@ -1,0 +1,433 @@
+name: "e2e-browser-tests"
+description: >
+  End-to-end browser tests for amplifier-distro. Stage 1 checks server health,
+  Stage 2 runs 5 web-chat browser scenarios, an approval gate pauses for Slack
+  login confirmation, Stage 3 runs 6 Slack-bridge scenarios, Stage 4 validates
+  and produces a final PASS/FAIL summary table.
+version: "1.0.0"
+author: "amplifier-distro team"
+created: "2026-02-20T14:32:00Z"
+tags:
+  - e2e
+  - browser-testing
+  - web-chat
+  - slack
+  - distro
+  - qa
+
+# ---------------------------------------------------------------------------
+# Context — defaults; override at execution time if needed
+# ---------------------------------------------------------------------------
+context:
+  server_url: "http://127.0.0.1:8400"
+  slack_workspace: "https://amplifiercrew.slack.com/"
+  slack_channel: "amplifier"
+
+# ---------------------------------------------------------------------------
+# Stages
+# ---------------------------------------------------------------------------
+stages:
+
+  # =========================================================================
+  # STAGE 1: server-check
+  # Bash curl against the health endpoint. Fails fast with a developer-friendly
+  # error if the server is not running, including the exact command to fix it.
+  # =========================================================================
+  - name: "server-check"
+    steps:
+      - id: "health-check"
+        type: "bash"
+        command: |
+          set -e
+
+          response=$(curl -s -o /tmp/_distro_health.json -w "%{http_code}" \
+            --connect-timeout 5 --max-time 10 \
+            "{{server_url}}/api/health" 2>&1)
+
+          if [ "$response" != "200" ]; then
+            echo "==========================================================" >&2
+            echo "ERROR: amp-distro-server is not healthy (HTTP $response)"   >&2
+            echo ""                                                            >&2
+            echo "Start the server with:"                                      >&2
+            echo "  amp-distro-server start --port 8400"                      >&2
+            echo ""                                                            >&2
+            echo "Then re-run this recipe."                                    >&2
+            echo "==========================================================" >&2
+            exit 1
+          fi
+
+          cat /tmp/_distro_health.json
+          echo ""
+          echo "Server healthy at {{server_url}}"
+        output: "server_health"
+        timeout: 30
+        on_error: "fail"
+
+
+  # =========================================================================
+  # STAGE 2: web-chat-tests
+  # Five browser scenarios against /apps/web-chat/.
+  # An APPROVAL GATE follows this stage to pause before Slack tests.
+  # =========================================================================
+  - name: "web-chat-tests"
+    steps:
+      - id: "webchat-e2e"
+        agent: "browser-tester:browser-operator"
+        prompt: |
+          You are running automated E2E browser tests for the amplifier-distro
+          web-chat surface. Follow every rule below exactly.
+
+          MANDATORY RULES
+          ---------------
+          - Use --headed on EVERY SINGLE agent-browser command. No exceptions.
+          - Use --session webchat-e2e on EVERY agent-browser command.
+          - Take a screenshot at every meaningful step (page load, after each
+            action, after each assertion).
+          - Name screenshots descriptively:
+              wc-01-page-load.png, wc-02-footer.png, wc-03a-sent.png, etc.
+          - Report each scenario as exactly PASS or FAIL plus evidence
+            (actual value observed / error encountered).
+
+          Server health confirmed. Target base URL: {{server_url}}
+
+          ================================================================
+          SCENARIO 1 — Page Load & Title
+          ================================================================
+          Action  : Navigate to {{server_url}}/apps/web-chat/
+          Verify  : The page <title> is exactly "Amplifier - Chat"
+          Screenshot: wc-01-page-load.png
+          PASS → title matches "Amplifier - Chat"
+          FAIL → title does not match (include actual title found)
+
+          ================================================================
+          SCENARIO 2 — Footer / Status Bar
+          ================================================================
+          Action  : Inspect the footer / status area at the bottom of the
+                    page. Do NOT reload; remain on the page from Scenario 1.
+          Verify  : Footer reads exactly:
+                    "No active session — type a message to start one automatically"
+          Screenshot: wc-02-footer.png
+          PASS → footer text matches
+          FAIL → footer text does not match (include actual text found)
+
+          ================================================================
+          SCENARIO 3 — Send Message & Bot Response
+          ================================================================
+          Action  : Type the message: hello, what can you help me with?
+                    Send it (press Enter or click the Send button).
+                    Wait up to 30 seconds for the bot to reply.
+          Verify  : A bot response appears in the chat within 30 seconds.
+          Screenshots:
+            wc-03a-message-sent.png    (right after sending)
+            wc-03b-bot-response.png    (after bot reply arrives, or on timeout)
+          PASS → bot responds within 30 s
+          FAIL → no response within 30 s, or an error appeared
+                 (include any error text / network status)
+
+          ================================================================
+          SCENARIO 4 — Sessions Panel
+          ================================================================
+          Action  : Click the "Sessions" button to open the sessions panel.
+          Verify  : At least 1 session entry is listed.
+          Screenshot: wc-04-sessions-panel.png
+          PASS → 1 or more sessions visible
+          FAIL → panel is empty, does not open, or shows an error
+                 (include what was actually displayed)
+
+          ================================================================
+          SCENARIO 5 — Resume Session
+          ================================================================
+          Action  : Click the most recent session entry in the sessions list.
+                    Wait up to 15 seconds for it to load.
+          Verify  : The text "Resumed session" appears in the chat area.
+          Screenshots:
+            wc-05a-session-clicked.png   (immediately after click)
+            wc-05b-resumed.png           (after load, or on timeout)
+          PASS → "Resumed session" text appears
+          FAIL → text does not appear, or load timed out
+                 (include actual chat state / any error)
+
+          ================================================================
+          FINAL REPORT — output this exact block after all 5 scenarios
+          ================================================================
+
+          WEB-CHAT E2E TEST RESULTS
+          =========================
+          Scenario 1 (Page Load)      : [PASS/FAIL] — [evidence]
+          Scenario 2 (Footer)         : [PASS/FAIL] — [evidence]
+          Scenario 3 (Bot Response)   : [PASS/FAIL] — [evidence]
+          Scenario 4 (Sessions Panel) : [PASS/FAIL] — [evidence]
+          Scenario 5 (Resume Session) : [PASS/FAIL] — [evidence]
+
+          Overall     : [X/5 PASSED]
+          Screenshots : [comma-separated list of all files saved]
+        output: "webchat_results"
+        timeout: 720
+
+    # -----------------------------------------------------------------------
+    # APPROVAL GATE
+    # Pauses after web-chat tests. Human must confirm Slack login before
+    # the Slack bridge tests can proceed.
+    # -----------------------------------------------------------------------
+    approval:
+      required: true
+      prompt: |
+        Web-chat E2E tests complete.
+
+        Results
+        -------
+        {{webchat_results}}
+
+        ---------------------------------------------------------------
+        To continue with Slack bridge tests, please confirm you are
+        logged into Slack:
+
+          1. Open a browser window (headed / visible)
+          2. Navigate to {{slack_workspace}}
+          3. Log in as yourself
+          4. Confirm you can see the #{{slack_channel}} channel
+          5. Confirm the "Distro" bot is present in that channel
+
+        Approve → Slack bridge tests run next.
+        Deny    → Stop here (web-chat results are already saved).
+        ---------------------------------------------------------------
+      timeout: 0
+      default: "deny"
+
+
+  # =========================================================================
+  # STAGE 3: slack-tests
+  # Six browser scenarios against the Slack bridge (Distro bot).
+  # Human has confirmed Slack login before this stage runs.
+  # CRITICAL: UUID captured in Scenario 3 is reused verbatim in Scenario 5.
+  # =========================================================================
+  - name: "slack-tests"
+    steps:
+      - id: "slack-e2e"
+        agent: "browser-tester:browser-operator"
+        prompt: |
+          You are running automated E2E browser tests for the amplifier-distro
+          Slack bridge (bot name: Distro).
+
+          MANDATORY RULES
+          ---------------
+          - Use --headed on EVERY SINGLE agent-browser command. No exceptions.
+          - Use --session slack-e2e on EVERY agent-browser command.
+          - Take a screenshot at every meaningful step.
+          - Name screenshots descriptively:
+              sl-01-login-check.png, sl-02-channel.png, etc.
+          - Report each scenario as exactly PASS or FAIL plus evidence.
+          - CRITICAL: You MUST extract the session UUID from the @Distro new
+            reply in Scenario 3 and reuse it verbatim in Scenario 5.
+            Record it clearly as: CAPTURED_UUID=<the-exact-uuid>
+
+          Target workspace : {{slack_workspace}}
+          Target channel   : #{{slack_channel}}
+          Bot name         : Distro
+
+          ================================================================
+          SCENARIO 1 — Login Verification
+          ================================================================
+          Action  : Navigate to {{slack_workspace}}
+          Verify  : You are already logged in — the workspace sidebar
+                    is visible (channel list, DM list, workspace switcher).
+                    A login / email-entry form means NOT logged in.
+          Screenshot: sl-01-login-check.png
+          PASS → workspace sidebar visible; you are logged in
+          FAIL → login screen appeared
+                 Message: "Please log into Slack in the browser before
+                 approving the gate."
+                 Take screenshot sl-01-login-required.png and STOP all
+                 remaining Slack scenarios immediately.
+
+          ================================================================
+          SCENARIO 2 — Navigate to Channel
+          ================================================================
+          Action  : Click the #{{slack_channel}} channel in the sidebar
+                    (or use the channel-jump shortcut Cmd+K / Ctrl+K).
+          Verify  : The channel feed for #{{slack_channel}} is open.
+          Screenshot: sl-02-channel.png
+          PASS → channel feed loaded
+          FAIL → channel not found, or channel did not load
+                 (include error / actual state)
+
+          ================================================================
+          SCENARIO 3 — @Distro new (Start New Session)
+          ================================================================
+          Action  : In the #{{slack_channel}} message box type exactly:
+                      @Distro new
+                    Send the message.
+                    Wait up to 15 seconds for the Distro bot to reply.
+          Verify  : Bot replies with a message containing:
+                    "Started new session" followed by a UUID
+                    (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+          CRITICAL: Extract the UUID and note it as CAPTURED_UUID.
+                    You will use it verbatim in Scenario 5.
+          Screenshots:
+            sl-03a-distro-new-sent.png    (after sending @Distro new)
+            sl-03b-distro-new-reply.png   (after bot reply, or timeout)
+          PASS → bot replied "Started new session <uuid>" within 15 s
+                 Include: CAPTURED_UUID=<the-exact-uuid>
+          FAIL → no reply within 15 s, or reply lacked a UUID
+                 (include actual reply text; set CAPTURED_UUID=UNKNOWN)
+
+          ================================================================
+          SCENARIO 4 — Thread: Ask the Date Question
+          ================================================================
+          Action  : Click "Reply" on the @Distro new reply to open its
+                    thread (or click the thread preview in the right panel).
+                    In the thread reply box type exactly:
+                      what day is it today?
+                    Send the message.
+                    Wait up to 30 seconds for the bot to respond in the
+                    thread.
+          Verify  : Bot responds with an answer that references today's
+                    date or directly answers "what day is it today?".
+          Screenshots:
+            sl-04a-thread-question-sent.png   (after sending)
+            sl-04b-thread-bot-reply.png       (after bot reply, or timeout)
+          PASS → bot responds within 30 s with a date-related answer
+          FAIL → no response within 30 s, or bot did not answer
+                 (include actual reply / timeout info)
+
+          ================================================================
+          SCENARIO 5 — @Distro connect <uuid>
+          ================================================================
+          Action  : Navigate back to the MAIN #{{slack_channel}} feed
+                    (close the thread view if open).
+                    In the channel message box type exactly:
+                      @Distro connect <CAPTURED_UUID from Scenario 3>
+                    (replace with the actual UUID — no angle brackets)
+                    Send the message.
+                    Wait up to 15 seconds for the bot to reply.
+          Verify  : Bot replies with:
+                    "Connected to session <uuid>"
+                    where <uuid> matches CAPTURED_UUID exactly.
+          Screenshots:
+            sl-05a-connect-sent.png     (after sending @Distro connect <uuid>)
+            sl-05b-connect-reply.png    (after bot reply, or timeout)
+          PASS → bot confirmed "Connected to session <uuid>" within 15 s
+          FAIL → no reply within 15 s, UUID mismatch, or wrong message
+                 (include actual reply text)
+
+          ================================================================
+          SCENARIO 6 — Thread Memory: Recall First Question
+          ================================================================
+          Action  : Click "Reply" on the @Distro connect reply to open its
+                    thread.
+                    In the thread reply box type exactly:
+                      what was the first question I asked you in this session?
+                    Send the message.
+                    Wait up to 30 seconds for the bot to respond.
+          Verify  : Bot's response references or recalls the first question
+                    asked in the session — specifically "what day is it today?".
+          Screenshots:
+            sl-06a-memory-question-sent.png   (after sending)
+            sl-06b-memory-bot-reply.png       (after bot reply, or timeout)
+          PASS → bot correctly recalls "what day is it today?"
+          FAIL → bot does not recall, gives a wrong answer, or times out
+                 (include actual bot reply)
+
+          ================================================================
+          FINAL REPORT — output this exact block after all 6 scenarios
+          ================================================================
+
+          SLACK BRIDGE E2E TEST RESULTS
+          ==============================
+          Scenario 1 (Login Check)      : [PASS/FAIL] — [evidence]
+          Scenario 2 (Navigate Channel) : [PASS/FAIL] — [evidence]
+          Scenario 3 (@Distro new)      : [PASS/FAIL] — UUID: [uuid or N/A]
+          Scenario 4 (Thread Question)  : [PASS/FAIL] — [evidence]
+          Scenario 5 (@Distro connect)  : [PASS/FAIL] — [evidence]
+          Scenario 6 (Thread Memory)    : [PASS/FAIL] — [evidence]
+
+          Overall     : [X/6 PASSED]
+          Screenshots : [comma-separated list of all files saved]
+        output: "slack_results"
+        timeout: 900
+
+
+  # =========================================================================
+  # STAGE 4: validate
+  # Receives both surface outputs and produces a final structured verdict.
+  # =========================================================================
+  - name: "validate"
+    steps:
+      - id: "final-validation"
+        agent: "recipes:result-validator"
+        prompt: |
+          Validate the complete end-to-end browser test run for amplifier-distro.
+
+          You have two test-suite outputs to assess:
+
+          WEB-CHAT RESULTS
+          ----------------
+          {{webchat_results}}
+
+          SLACK BRIDGE RESULTS
+          --------------------
+          {{slack_results}}
+
+          ================================================================
+          ACCEPTANCE CRITERIA
+          ================================================================
+
+          Web-Chat surface — all 5 must pass:
+            1. Page title is exactly "Amplifier - Chat"
+            2. Footer reads "No active session — type a message to start
+               one automatically"
+            3. Bot responds to "hello, what can you help me with?"
+               within 30 seconds
+            4. Sessions panel shows at least 1 session after sending
+               a message
+            5. Clicking the most recent session shows "Resumed session"
+
+          Slack bridge — all 6 must pass:
+            1. Already logged into {{slack_workspace}} (no login screen)
+            2. #{{slack_channel}} channel loaded successfully
+            3. @Distro new → bot replied "Started new session <uuid>"
+               within 15 s
+            4. Thread question "what day is it today?" → bot answered
+               within 30 s
+            5. @Distro connect <uuid> → bot confirmed
+               "Connected to session <uuid>"
+            6. Thread memory recall → bot correctly recalled
+               "what day is it today?"
+
+          ================================================================
+          REQUIRED OUTPUT — produce exactly this summary table
+          ================================================================
+
+          ================================================================
+                  AMPLIFIER-DISTRO  E2E BROWSER TEST SUMMARY
+          ================================================================
+
+          WEB-CHAT SURFACE  ({{server_url}}/apps/web-chat/)
+          --------------------------------------------------
+          [PASS/FAIL] Scenario 1 — Page title = "Amplifier - Chat"
+          [PASS/FAIL] Scenario 2 — Footer message correct
+          [PASS/FAIL] Scenario 3 — Bot responds within 30 s
+          [PASS/FAIL] Scenario 4 — Sessions panel shows 1+ sessions
+          [PASS/FAIL] Scenario 5 — Resume shows "Resumed session"
+
+          Web-Chat Result : [PASS (5/5) | PARTIAL (x/5) | FAIL (x/5)]
+
+          SLACK BRIDGE  ({{slack_workspace}} -> #{{slack_channel}})
+          ----------------------------------------------------------
+          [PASS/FAIL] Scenario 1 — Already logged into Slack
+          [PASS/FAIL] Scenario 2 — #{{slack_channel}} channel loaded
+          [PASS/FAIL] Scenario 3 — @Distro new -> UUID received
+          [PASS/FAIL] Scenario 4 — Thread date question answered within 30 s
+          [PASS/FAIL] Scenario 5 — @Distro connect confirmed
+          [PASS/FAIL] Scenario 6 — Bot recalled "what day is it today?"
+
+          Slack Bridge Result : [PASS (6/6) | PARTIAL (x/6) | FAIL (x/6)]
+
+          ================================================================
+          OVERALL : [ALL PASS | PARTIAL | FAILURES FOUND]
+          ================================================================
+
+          [If any FAILs — list each with a recommended next step:]
+            - [surface] Scenario N: [reason] -> [suggested fix / retest step]
+        output: "final_report"
+        timeout: 300
