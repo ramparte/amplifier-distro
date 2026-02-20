@@ -421,3 +421,20 @@ class BridgeBackend:
             )
             for h in self._sessions.values()
         ]
+
+    async def resume_session(self, session_id: str, working_dir: str) -> None:
+        """Restore the LLM context for a session after a server restart.
+
+        Calls _reconnect() which reads transcript.jsonl and injects the full
+        history as context. Safe to call even if the session handle is already
+        cached — _reconnect is only called when handle is missing, so we check
+        first to avoid double-reconnect.
+
+        Args:
+            session_id: The Amplifier session ID to resume.
+            working_dir: The working directory (stored in WebChatSession.extra
+                at creation time). The bridge locates the session directory from
+                the session_id itself; this arg is accepted for API symmetry.
+        """
+        if self._sessions.get(session_id) is None:
+            await self._reconnect(session_id)
