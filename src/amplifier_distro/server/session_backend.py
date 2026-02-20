@@ -159,6 +159,16 @@ class MockBackend:
         """Get the full message history for a session (testing helper)."""
         return self._message_history.get(session_id, [])
 
+    async def resume_session(self, session_id: str, working_dir: str) -> None:
+        """No-op resume for testing. Records the call for assertion."""
+        self.calls.append(
+            {
+                "method": "resume_session",
+                "session_id": session_id,
+                "working_dir": working_dir,
+            }
+        )
+
 
 class BridgeBackend:
     """Real backend using LocalBridge for Amplifier sessions.

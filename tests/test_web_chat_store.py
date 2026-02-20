@@ -444,3 +444,39 @@ class TestWebChatSessionManager:
         s2 = manager._store.get(info2.session_id)
         assert s2 is not None
         assert s2.is_active is False
+
+
+class TestMockBackendResumeSession:
+    """Verify MockBackend.resume_session() records the call correctly."""
+
+    def test_resume_session_records_call(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        asyncio.run(backend.resume_session("sess-001", "/tmp/myproject"))
+        assert len(backend.calls) == 1
+        call = backend.calls[0]
+        assert call["method"] == "resume_session"
+        assert call["session_id"] == "sess-001"
+        assert call["working_dir"] == "/tmp/myproject"
+
+    def test_resume_session_returns_none(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        result = asyncio.run(backend.resume_session("sess-001", "~"))
+        assert result is None
+
+    def test_resume_session_does_not_affect_existing_sessions(self):
+        """resume_session is a no-op from MockBackend's session state perspective."""
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        asyncio.run(backend.create_session(working_dir="~", description="existing"))
+        session_id = backend.calls[0]["result"]
+        before_count = len(backend._sessions)
+
+        asyncio.run(backend.resume_session(session_id, "~"))
+
+        # No new sessions were created
+        assert len(backend._sessions) == before_count
