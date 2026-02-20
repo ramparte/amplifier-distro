@@ -493,7 +493,7 @@ async def resume_session(request: Request) -> JSONResponse:
 
     try:
         manager = _get_manager()
-        session = manager.resume_session(session_id)
+        session = await manager.resume_session(session_id)
         return JSONResponse(
             content={
                 "session_id": session.session_id,

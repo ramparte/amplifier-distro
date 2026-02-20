@@ -537,3 +537,37 @@ class TestWebChatSessionResumeAPI:
         # Still the active session
         status = webchat_client.get("/apps/web-chat/api/session").json()
         assert status["session_id"] == session_id
+
+    def test_resume_calls_backend_resume_session(self, webchat_client: TestClient):
+        """POST /api/session/resume must call backend.resume_session() for LLM context."""
+        from amplifier_distro.server.services import get_services
+        from amplifier_distro.server.session_backend import MockBackend
+
+        # Create two sessions so the first is inactive (can be resumed)
+        create1 = webchat_client.post(
+            "/apps/web-chat/api/session",
+            json={"working_dir": "/tmp/proj1", "description": "session one"},
+        )
+        session_id = create1.json()["session_id"]
+        webchat_client.post("/apps/web-chat/api/session", json={})
+
+        # Inspect the backend (MockBackend in dev mode)
+        backend = get_services().backend
+        assert isinstance(backend, MockBackend), "Expected MockBackend in dev mode"
+        backend.calls.clear()  # isolate calls from this point forward
+
+        # Resume the first session
+        response = webchat_client.post(
+            "/apps/web-chat/api/session/resume",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+
+        # Verify backend.resume_session() was called with the right args
+        resume_calls = [c for c in backend.calls if c["method"] == "resume_session"]
+        assert len(resume_calls) == 1, (
+            f"Expected exactly 1 resume_session call, got {len(resume_calls)}. "
+            f"All calls: {backend.calls}"
+        )
+        assert resume_calls[0]["session_id"] == session_id
+        assert resume_calls[0]["working_dir"] == "/tmp/proj1"
