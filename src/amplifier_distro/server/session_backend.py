@@ -62,6 +62,10 @@ class SessionBackend(Protocol):
         """End a session and clean up."""
         ...
 
+    async def resume_session(self, session_id: str, working_dir: str) -> None:
+        """Restore LLM transcript context for a previously created session."""
+        ...
+
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         """Get info about an active session."""
         ...
