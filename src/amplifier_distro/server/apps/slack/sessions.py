@@ -220,39 +220,56 @@ class SlackSessionManager:
         user_id: str,
         working_dir: str,
         description: str = "",
+        session_id: str | None = None,  # NEW — resume existing session when provided
     ) -> SessionMapping:
-        """Connect a Slack context to a new backend session in *working_dir*.
+        """Connect a Slack context to a backend session in *working_dir*.
 
-        Unlike ``create_session`` (which uses the default working directory),
-        this creates a backend session in the same directory as a previously
-        discovered session so the user lands in the right project context.
+        When session_id is provided, resumes the existing session by replaying its
+        transcript (identical to the auto-reconnect path after a server restart).
+        When session_id is None, creates a fresh session in working_dir as before.
+
+        Errors from the backend propagate unmodified — callers must handle them.
         """
-        # Create a real backend session in the discovered session's directory
-        info = await self._backend.create_session(
-            working_dir=working_dir,
-            bundle_name=self._config.default_bundle,
-            description=description,
-        )
+        # Resume existing session or create a new one in the given directory.
+        # resume_session returns None — use our known session_id directly.
+        # Fail fast: call backend before mutating any local state.
+        if session_id is not None:
+            await self._backend.resume_session(session_id, working_dir)
+            effective_session_id = session_id
+            effective_project_id = ""  # no new project ID issued on resume
+            effective_working_dir = working_dir
+        else:
+            info = await self._backend.create_session(
+                working_dir=working_dir,
+                bundle_name=self._config.default_bundle,
+                description=description,
+            )
+            effective_session_id = info.session_id
+            effective_project_id = info.project_id
+            effective_working_dir = info.working_dir
 
         key = f"{channel_id}:{thread_ts}" if thread_ts else channel_id
         now = datetime.now(UTC).isoformat()
 
         mapping = SessionMapping(
-            session_id=info.session_id,
+            session_id=effective_session_id,
             channel_id=channel_id,
             thread_ts=thread_ts,
-            project_id=info.project_id,
+            project_id=effective_project_id,
             description=description,
             created_by=user_id,
             created_at=now,
             last_active=now,
-            working_dir=info.working_dir,
+            working_dir=effective_working_dir,
         )
 
         self._mappings[key] = mapping
         self._save_sessions()
         logger.info(
-            f"Connected session {info.session_id} (in {working_dir}) mapped to {key}"
+            "Connected session %s (in %s) mapped to %s",
+            effective_session_id,
+            effective_working_dir,
+            key,
         )
         return mapping
 

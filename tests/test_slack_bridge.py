@@ -662,6 +662,59 @@ class TestSlackSessionManager:
         )
         assert mapping.working_dir == "~/repo/specific-project"
 
+    def test_connect_session_with_session_id_calls_resume_not_create(
+        self, session_manager, mock_backend
+    ):
+        """When session_id is provided, backend.resume_session is called instead
+        of create_session."""
+        mapping = asyncio.run(
+            session_manager.connect_session(
+                "C_HUB",
+                "thread.resume-1",
+                "U1",
+                working_dir="~/repo/project",
+                session_id="known-session-abc123",
+            )
+        )
+
+        # The mapping carries the exact session_id we passed in
+        assert mapping.session_id == "known-session-abc123"
+        assert mapping.working_dir == "~/repo/project"
+
+        resume_calls = [
+            c for c in mock_backend.calls if c["method"] == "resume_session"
+        ]
+        create_calls = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ]
+        assert len(resume_calls) == 1, "resume_session must be called exactly once"
+        assert resume_calls[0]["session_id"] == "known-session-abc123"
+        assert resume_calls[0]["working_dir"] == "~/repo/project"
+        assert len(create_calls) == 0, "create_session must NOT be called"
+
+    def test_connect_session_without_session_id_calls_create_as_before(
+        self, session_manager, mock_backend
+    ):
+        """Backward compat: omitting session_id still calls backend.create_session."""
+        asyncio.run(
+            session_manager.connect_session(
+                "C_HUB",
+                "thread.resume-2",
+                "U1",
+                working_dir="~/repo/project",
+                # no session_id — must use create_session path
+            )
+        )
+
+        create_calls = [
+            c for c in mock_backend.calls if c["method"] == "create_session"
+        ]
+        resume_calls = [
+            c for c in mock_backend.calls if c["method"] == "resume_session"
+        ]
+        assert len(create_calls) == 1, "create_session must be called once"
+        assert len(resume_calls) == 0, "resume_session must NOT be called"
+
     def test_create_session_uses_explicit_working_dir(
         self, session_manager, mock_backend
     ):
