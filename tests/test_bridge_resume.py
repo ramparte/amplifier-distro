@@ -49,9 +49,13 @@ def _make_session_dir(tmp_path: Path) -> Path:
 
 def _mock_foundation():
     """Return (mock_load_bundle, mock_registry_cls, mock_session)."""
+    mock_context = MagicMock()
+    mock_context.set_messages = AsyncMock()
+    mock_context.get_messages = AsyncMock(return_value=[])
+
     mock_session = MagicMock()
     mock_session.coordinator.session_id = SESSION_ID
-    mock_session.coordinator.context.set_messages = AsyncMock()
+    mock_session.coordinator.get.return_value = mock_context  # correct API
     mock_session.coordinator.hooks.register = MagicMock()
 
     mock_prepared = AsyncMock()
@@ -77,7 +81,8 @@ def _run_resume(tmp_path: Path, transcript_lines: Sequence[dict | str] | None) -
         _write_transcript(session_dir, transcript_lines)
 
     mock_load, mock_reg, mock_session = _mock_foundation()
-    set_messages: AsyncMock = mock_session.coordinator.context.set_messages
+    context_mock = mock_session.coordinator.get.return_value
+    set_messages: AsyncMock = context_mock.set_messages
 
     bridge = LocalBridge()
     config = BridgeConfig(working_dir=tmp_path)
@@ -209,7 +214,7 @@ class TestTranscriptMalformedLines:
         )
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        set_messages = mock_session.coordinator.context.set_messages
+        set_messages = mock_session.coordinator.get.return_value.set_messages
         bridge = LocalBridge()
         config = BridgeConfig(working_dir=tmp_path)
 
@@ -233,7 +238,7 @@ class TestTranscriptMalformedLines:
         _write_transcript(session_dir, lines)
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        set_messages = mock_session.coordinator.context.set_messages
+        set_messages = mock_session.coordinator.get.return_value.set_messages
         bridge = LocalBridge()
         config = BridgeConfig(working_dir=tmp_path)
 
@@ -445,7 +450,7 @@ class TestSetMessagesGracefulDegradation:
         _write_transcript(session_dir, [{"role": "user", "content": "hi"}])
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        mock_session.coordinator.context.set_messages = AsyncMock(
+        mock_session.coordinator.get.return_value.set_messages = AsyncMock(
             side_effect=AttributeError("no set_messages"),
         )
         bridge = LocalBridge()
@@ -469,7 +474,7 @@ class TestSetMessagesGracefulDegradation:
         _write_transcript(session_dir, [{"role": "user", "content": "hi"}])
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        mock_session.coordinator.context.set_messages = AsyncMock(
+        mock_session.coordinator.get.return_value.set_messages = AsyncMock(
             side_effect=TypeError("wrong arg type"),
         )
         bridge = LocalBridge()
@@ -487,16 +492,46 @@ class TestSetMessagesGracefulDegradation:
 
         assert handle is not None
 
+    def test_context_unavailable_logs_warning(self, tmp_path, caplog):
+        """When coordinator.get('context') returns None, resume logs a WARNING."""
+        import logging
+
+        session_dir = _make_session_dir(tmp_path)
+        _write_transcript(session_dir, [{"role": "user", "content": "hi"}])
+
+        mock_load, mock_reg, mock_session = _mock_foundation()
+        mock_session.coordinator.get.return_value = None  # context not available
+
+        bridge = LocalBridge()
+        config = BridgeConfig(working_dir=tmp_path)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+            caplog.at_level(logging.WARNING, logger="amplifier_distro.bridge"),
+        ):
+            handle = asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        assert handle is not None
+        assert any(
+            "context" in r.message.lower() for r in caplog.records
+            if r.levelno >= logging.WARNING
+        ), f"Expected WARNING about context unavailability, got: {[r.message for r in caplog.records]}"
+
 
 class TestEmptyAndMissingTranscript:
     """Edge cases: no file, empty file."""
 
     def test_missing_transcript_file(self, tmp_path):
         """Resume succeeds even if transcript.jsonl does not exist."""
-        _make_session_dir(tmp_path)  # dir exists, but no transcript file
+        _make_session_dir(tmp_path)
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        set_messages = mock_session.coordinator.context.set_messages
+        set_messages = mock_session.coordinator.get.return_value.set_messages
         bridge = LocalBridge()
         config = BridgeConfig(working_dir=tmp_path)
 
@@ -512,6 +547,31 @@ class TestEmptyAndMissingTranscript:
 
         assert handle is not None
         assert not set_messages.called
+
+    def test_missing_transcript_logs_warning(self, tmp_path, caplog):
+        """Missing transcript.jsonl logs at WARNING, not DEBUG."""
+        import logging
+
+        _make_session_dir(tmp_path)
+
+        mock_load, mock_reg, mock_session = _mock_foundation()
+        bridge = LocalBridge()
+        config = BridgeConfig(working_dir=tmp_path)
+
+        with (
+            patch(
+                "amplifier_distro.bridge._require_foundation",
+                return_value=(mock_load, mock_reg),
+            ),
+            patch("amplifier_distro.bridge.AMPLIFIER_HOME", str(tmp_path)),
+            patch("amplifier_distro.bridge.PROJECTS_DIR", PROJECT_NAME),
+            caplog.at_level(logging.WARNING, logger="amplifier_distro.bridge"),
+        ):
+            asyncio.run(bridge.resume_session(SESSION_ID, config))
+
+        assert any(
+            r.levelno >= logging.WARNING for r in caplog.records
+        ), "Expected at least one WARNING for missing transcript"
 
     def test_empty_transcript_file(self, tmp_path):
         """An empty transcript.jsonl results in no injection."""
@@ -538,7 +598,7 @@ class TestSetMessagesApiContract:
         )
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        ctx = mock_session.coordinator.context
+        ctx = mock_session.coordinator.get.return_value  # correct API
         ctx.set_messages = AsyncMock()
         ctx.add_messages = AsyncMock()
 
@@ -614,7 +674,7 @@ class TestTranscriptFileErrors:
         transcript.chmod(0o000)
 
         mock_load, mock_reg, mock_session = _mock_foundation()
-        set_messages = mock_session.coordinator.context.set_messages
+        set_messages = mock_session.coordinator.get.return_value.set_messages
         bridge = LocalBridge()
         config = BridgeConfig(working_dir=tmp_path)
 

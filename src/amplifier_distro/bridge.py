@@ -671,16 +671,25 @@ class LocalBridge:
                     messages.pop()
 
                 if messages:
-                    try:
-                        await session.coordinator.context.set_messages(messages)
-                        logger.info(
-                            "Injected %d messages from previous transcript",
-                            len(messages),
-                        )
-                    except (AttributeError, TypeError):
-                        logger.debug(
-                            "Could not inject transcript messages"
-                            " (context API not available)"
+                    context = session.coordinator.get("context")
+                    if context and hasattr(context, "set_messages"):
+                        try:
+                            await context.set_messages(messages)
+                            logger.info(
+                                "Injected %d messages from previous transcript",
+                                len(messages),
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to inject transcript messages into context",
+                                exc_info=True,
+                            )
+                    else:
+                        logger.warning(
+                            "Could not restore session history:"
+                            " context module unavailable"
+                            " (coordinator.get('context') returned %r)",
+                            context,
                         )
             except (OSError, json.JSONDecodeError, KeyError, ValueError):
                 logger.warning(
@@ -689,7 +698,10 @@ class LocalBridge:
                     exc_info=True,
                 )
         else:
-            logger.debug("No transcript found at %s", transcript_file)
+            logger.warning(
+                "No transcript found for session %s — resuming without history",
+                session_id,
+            )
 
         logger.info(
             "Session resumed: id=%s project=%s bundle=%s",
