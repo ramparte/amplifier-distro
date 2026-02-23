@@ -1,121 +1,138 @@
 # amplifier-distro
 
-An opinionated distribution for AI-assisted development with Amplifier.
+The Amplifier Experience Server — web chat, Slack, voice, and more.
 
 ## What This Is
 
-A set of shared conventions, tools, and defaults that make Amplifier
-"just work" for a team. One config file, one setup command, consistent
-behavior across CLI, TUI, Voice, and any other interface.
+A server that hosts multiple interfaces to Amplifier sessions. It connects
+browsers, Slack workspaces, and voice clients to the same Amplifier runtime,
+with shared memory across all of them.
 
-**Guiding principle:** Minimize human attentional load. Every choice
-here exists so you don't have to make it.
+amplifier-distro is one part of a three-part setup:
 
-## Documents
-
-| File | Read This To... |
-|------|-----------------|
-| [OPINIONS.md](OPINIONS.md) | Understand the 10 shared conventions |
-| [ROADMAP.md](ROADMAP.md) | See the build plan with phases and tasks |
-| [context/DISTRO-PROJECT-CONTEXT.md](context/DISTRO-PROJECT-CONTEXT.md) | Resume work on this project from any session |
-| [planning/](planning/) | Deep research: friction analysis, architecture, gaps, task lists |
+| Component | Role |
+|-----------|------|
+| `amplifier` CLI | The tool — commands, doctor, init, sessions |
+| `amplifier-start` bundle | The opinions — conventions, context, agents, hooks |
+| `amplifier-distro` | The experiences — web chat, Slack, voice, routines |
 
 ## Install
 
-### General installation (for most users just wanting to try things out)
+### Prerequisites
+
+Install the Amplifier CLI and register the start bundle first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ramparte/amplifier-distro/main/scripts/install.sh | bash
-amp-distro init
+uv tool install git+https://github.com/microsoft/amplifier
+amplifier init
+amplifier bundle add amplifier-start
 ```
 
-This will install [uv](https://astral.sh/uv/) if you don't have it already, and use it to install all the Amplifier components to your system.
+### Install the experience server
+
+```bash
+uv tool install git+https://github.com/ramparte/amplifier-distro
+```
+
+With Slack support:
+
+```bash
+uv tool install "amplifier-distro[slack] @ git+https://github.com/ramparte/amplifier-distro"
+```
 
 ### Developer
 
 ```bash
 git clone https://github.com/ramparte/amplifier-distro && cd amplifier-distro
-bash scripts/install.sh
-source .venv/bin/activate
-```
-
-This will clone the Amplifier distro files locally and install components in "editable" mode, which is handy if you want to modify them.
-
-### GitHub Codespace
-
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=ramparte/amplifier-distro)
-
-Opens a browser-based environment with everything installed.
-
-### Docker (for isolated testing)
-
-Some examples for how to use the Docker container for local testing:
-
-```bash
-# Build a container from local source
-docker build -t amplifier-distro .
-
-# Start the container and web server
-docker run -e GH_TOKEN=$(gh auth token) -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY -e OPENAI_API_KEY=$OPEN_API_KEY -p 8400:8400 --name amp amplifier-distro
-
-# In another terminal, jump into the running container's shell
-docker exec -it amp bash
-
-# Or, just start a new instance with a shell
-docker run --rm -it -e GH_TOKEN=$(gh auth token) amplifier-distro bash
+uv venv && uv pip install -e ".[dev,slack]"
 ```
 
 ## Usage
 
-The install gives you four commands:
-
-### `amp-distro` — Distro management CLI
-
-Set up your environment, check health, and manage the Amplifier ecosystem.
+### `amp-distro server` — Start the experience server
 
 ```bash
-amp-distro init          # First-time setup: identity, workspace, config
-amp-distro status        # Check that everything is healthy
-amp-distro doctor --fix  # Diagnose and auto-repair common problems
-amp-distro backup        # Back up state to a private GitHub repo
-amp-distro restore       # Restore state from backup
-amp-distro update        # Self-update to the latest release
+amp-distro server                # Foreground on http://localhost:8400
+amp-distro server --dev          # Dev mode (mock sessions, no LLM needed)
+amp-distro server start          # Background daemon
+amp-distro server stop           # Stop the daemon
+amp-distro server status         # Check daemon status
+amp-distro server watchdog start # Health monitor with auto-restart
 ```
 
-### `amp-distro-server` — Web UI and API
+The server hosts web chat, Slack bridge, voice interface, and routines
+scheduler. Visit http://localhost:8400/.
+
+### `amp-distro backup` / `restore` — State backup
 
 ```bash
-amp-distro-server              # Start on http://localhost:8400
-amp-distro-server --dev        # Dev mode (mock sessions, no LLM needed)
-amp-distro-server start        # Run as a background daemon
-amp-distro-server stop         # Stop the daemon
+amp-distro backup                # Back up ~/.amplifier/ state to GitHub
+amp-distro restore               # Restore from backup
+amp-distro backup --name my-bak  # Custom backup repo name
 ```
 
-The server hosts the web chat, settings, Slack bridge simulator, voice interface, and routines scheduler. Visit the app at http://localhost:8400/.
+Uses a private GitHub repo (created automatically via `gh` CLI).
+API keys are never backed up.
 
-### `amplifier` — AI coding agent
+### `amp-distro service` — Auto-start on boot
 
 ```bash
-amplifier                      # Start an interactive session
-amplifier "fix the login bug"  # Start with a prompt
-amplifier continue             # Resume the most recent session
+amp-distro service install       # Register systemd/launchd service
+amp-distro service uninstall     # Remove the service
+amp-distro service status        # Check service status
 ```
 
-### `amplifier-tui` — Terminal UI
+## Experience Apps
 
-```bash
-amplifier-tui                  # Full-screen terminal interface
-amplifier-tui --web            # Launch web interface instead
-amplifier-tui --doctor         # Check environment health
+| App | Path | Description |
+|-----|------|-------------|
+| Web Chat | `/apps/web-chat/` | Browser-based chat with session persistence |
+| Slack | `/apps/slack/` | Full Slack bridge via Socket Mode |
+| Voice | `/apps/voice/` | WebRTC voice via OpenAI Realtime API |
+| Routines | `/apps/routines/` | Scheduled routine execution |
+
+Apps are auto-discovered from the `server/apps/` directory. Each is a FastAPI
+router that registers with the server at startup.
+
+## Configuration
+
+The experience server reads configuration from the environment and
+`~/.amplifier/keys.yaml`:
+
+| Setting | Source |
+|---------|--------|
+| Provider API keys | `keys.yaml` (exported to env at server startup) |
+| Voice model/voice | `AMPLIFIER_VOICE_MODEL`, `AMPLIFIER_VOICE_VOICE` env vars |
+| Server API key | `AMPLIFIER_SERVER_API_KEY` env var |
+| Workspace root | `AMPLIFIER_WORKSPACE_ROOT` env var |
+| Slack tokens | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` env vars |
+
+## Architecture
+
+```
+amp-distro server
+  │
+  ├─ FastAPI core (/api/health, /api/sessions, /api/bridge, /api/memory)
+  │
+  ├─ FoundationBackend
+  │    └─ amplifier-foundation: load_bundle() → prepare() → create_session()
+  │
+  └─ Apps (auto-discovered)
+       ├─ web-chat   (browser sessions via HTTP)
+       ├─ slack      (Slack workspace via Socket Mode)
+       ├─ voice      (WebRTC via OpenAI Realtime API)
+       └─ routines   (scheduled YAML-driven execution)
 ```
 
-## Quick Orientation
+The server creates sessions through `amplifier-foundation` directly. Each
+experience app adapts the session protocol for its transport (HTTP, WebSocket,
+Slack events, WebRTC). A shared `FoundationBackend` manages the session pool
+with per-session FIFO queues for safe concurrent access.
 
-```
-Ring 3: Workflows (attention firewall, morning brief, idea funnel)
-Ring 2: Interfaces (CLI, TUI, Voice - all share state)
-Ring 1: Foundation (distro.yaml, pre-flight, session handoffs, memory)
-Engine: amplifier-core + amplifier-foundation
-```
+## Documents
 
-We're building Rings 1-2. Ring 3 comes after. The engine already exists.
+| File | Description |
+|------|-------------|
+| [docs/plans/](docs/plans/) | Implementation plans for server features |
+| [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) | Slack bridge setup guide |
+| [planning/](planning/) | Historical research and architecture notes |
