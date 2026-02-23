@@ -193,6 +193,18 @@ class CommandHandler:
 
     async def cmd_new(self, args: list[str], ctx: CommandContext) -> CommandResult:
         """Start a new Amplifier session."""
+        working_dir: str | None = None
+
+        # Parse optional --dir <path> flag
+        if "--dir" in args:
+            idx = args.index("--dir")
+            if idx + 1 >= len(args):
+                return CommandResult(
+                    text="Missing value for `--dir`. Usage: `new [--dir <path>] [description]`"
+                )
+            working_dir = args[idx + 1]
+            args = args[:idx] + args[idx + 2 :]
+
         description = " ".join(args) if args else ""
 
         try:
@@ -201,6 +213,7 @@ class CommandHandler:
                 thread_ts=ctx.thread_ts,
                 user_id=ctx.user_id,
                 description=description,
+                working_dir=working_dir,
             )
         except ValueError as e:
             return CommandResult(text=str(e))

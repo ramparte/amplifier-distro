@@ -838,6 +838,46 @@ class TestCommandHandler:
         result = asyncio.run(command_handler.handle("new", ["test"], ctx))
         assert "default_working_dir" not in result.text
 
+
+    def test_cmd_new_dir_flag_sets_working_directory(self, command_handler, slack_config):
+        """--dir flag overrides the config default_working_dir."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "~"
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(
+            command_handler.handle("new", ["--dir", "/Users/samule/repo/myproject"], ctx)
+        )
+        assert "/Users/samule/repo/myproject" in result.text
+        # Explicit --dir should not trigger the "set default_working_dir" tip
+        assert "default_working_dir" not in result.text
+
+    def test_cmd_new_dir_flag_with_description(self, command_handler, slack_config):
+        """--dir extracts the path; remaining args become the session description."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(
+            command_handler.handle(
+                "new", ["--dir", "/some/path", "fix", "the", "auth", "bug"], ctx
+            )
+        )
+        # Path must appear as the working dir ("in `/some/path`"), not as part of description
+        assert "in `/some/path`" in result.text
+        # Description must be the remaining args only — --dir should not bleed into it
+        assert "--dir" not in result.text
+        assert "fix the auth bug" in result.text
+
+    def test_cmd_new_dir_flag_missing_value_returns_error(self, command_handler):
+        """--dir without a path argument returns a usage error, no session created."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
+        result = asyncio.run(command_handler.handle("new", ["--dir"], ctx))
+        # Should NOT start a session — must return an error
+        assert "Started new session" not in result.text
+        assert "--dir" in result.text
+
     def test_cmd_status_no_session(self, command_handler):
         from amplifier_distro.server.apps.slack.commands import CommandContext
 
