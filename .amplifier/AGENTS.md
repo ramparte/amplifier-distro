@@ -18,12 +18,12 @@ Session resume, handoff generation, server auth, and async safety added (Feb 10)
 ### Strategy: Three Environments
 
 We use Docker Compose as the primary mechanism for isolated development and testing.
-Sam's local `~/.amplifier/` is NEVER touched by test activities.
+Your local `~/.amplifier/` is NEVER touched by test activities.
 
 | Environment | Purpose | Infrastructure |
 |-------------|---------|----------------|
-| **Docker Compose on WSL2** | Primary dev/test. Daily use. | Docker Desktop on WIN-DLPODL2CIJB |
-| **DGX cluster (spark-1, spark-2)** | Headless CI/integration tests | NVIDIA DGX, local network, no monitors |
+| **Docker Compose on WSL2** | Primary dev/test. Daily use. | Windows host with Docker Desktop |
+| **Headless CI hosts** | Headless CI/integration tests | NVIDIA DGX or equivalent, local network, no monitors |
 | **Win32 test tenant** | Windows-native testing (Phase 2+) | Admin access available |
 
 ### Docker Compose Profiles
@@ -57,15 +57,13 @@ docker compose --profile human-test up    # Interactive testing with noVNC
 - Testcontainers-Python for programmatic container management
 - Textual Pilot API for TUI headless testing
 
-### DGX Machines
+### Secondary Test Hosts (optional)
 
-- **spark-1**: Primary headless test host
-- **spark-2**: Overflow/parallel testing
-- Access via `docker context create spark-1 --docker "host=ssh://sam@spark-1"`
+- Headless hosts can be added via `docker context create <host> --docker "host=ssh://user@host"`
 - Code sync via rsync, SSH tunnels for web UIs
-- Potential GitHub Actions self-hosted runner
+- Can be configured as GitHub Actions self-hosted runners
 
-### WSL2 LAN Exposure (for DGX access)
+### WSL2 LAN Exposure (for remote host access)
 
 Use PowerShell port forwarding to make container services accessible on LAN:
 ```bash
@@ -196,7 +194,7 @@ to produce structured JSON descriptions of what's on screen.
 
 ```bash
 # Editable install with ALL extras (Slack, email, aiohttp — never omit [all]):
-uv tool install -e ".[all]" ~/repo/distro-3
+uv tool install -e ".[all]" path/to/amplifier-distro
 
 # Start server (auto-loads .env from project root):
 amp-distro-server --port 8400
@@ -206,7 +204,7 @@ amp-distro-server --port 8400
 
 ### Environment
 
-Tokens live in `~/repo/distro-3/.env`. The server auto-loads this on startup — no `source`, no `keys.yaml` needed.
+Tokens live in `.env` at the project root. The server auto-loads this on startup — no `source`, no `keys.yaml` needed.
 
 For Socket Mode to activate, `~/.amplifier/distro.yaml` must have:
 ```yaml
@@ -219,9 +217,9 @@ If server shows **"simulator mode"**: check `socket_mode: true` in `distro.yaml`
 
 ---
 
-## Sam's Working Style
+## Development Workflow
 
-Sam works in structured mode cycles — always follow this sequence:
+Work in structured mode cycles — always follow this sequence:
 
 1. **`/brainstorm`** — root cause analysis, issue scoping, PR/issue overlap check before any code
 2. **`/write-plan`** — task breakdown, TDD plan saved to `docs/plans/YYYY-MM-DD-<slug>.md`
@@ -229,7 +227,7 @@ Sam works in structured mode cycles — always follow this sequence:
 4. **`/verify`** — full test suite (`pytest -q`, no `-x`), static analysis, compare against pre-existing failure baseline
 5. **`/finish`** — summary, squash merge via `foundation:git-ops`, delete branch
 
-**Mode transitions:** Sam switches modes manually. Never call the `mode` tool from within a mode — it will be blocked. Say "switch to X with `/mode X`" instead.
+**Mode transitions:** Switch modes manually. Never call the `mode` tool from within a mode — it will be blocked. Say "switch to X with `/mode X`" instead.
 
 **PRs:** Always squash merge. Delegate all git/PR work to `foundation:git-ops`.
 
