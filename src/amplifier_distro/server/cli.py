@@ -44,7 +44,7 @@ from amplifier_distro import conventions
 @click.option(
     "--dev",
     is_flag=True,
-    help="Dev mode: skip wizard, use existing environment, mock session backend (no LLM)",
+    help="Dev mode: mock session backend (no LLM)",
 )
 @click.option(
     "--stub",
@@ -89,7 +89,7 @@ def serve(
 @click.option(
     "--dev",
     is_flag=True,
-    help="Dev mode: skip wizard, use existing environment, mock session backend (no LLM)",
+    help="Dev mode: mock session backend (no LLM)",
 )
 def start(host: str, port: int, apps_dir: str | None, dev: bool) -> None:
     """Start the server as a background daemon."""
@@ -138,7 +138,7 @@ def stop() -> None:
     pid_file = pid_file_path()
     pid = read_pid(pid_file)
     if pid is None:
-        click.echo("No PID file found — server may not be running.")
+        click.echo("No PID file found -- server may not be running.")
         return
 
     click.echo(f"Stopping server (PID {pid})...")
@@ -166,7 +166,7 @@ def stop() -> None:
 @click.option(
     "--dev",
     is_flag=True,
-    help="Dev mode: skip wizard, use existing environment, mock session backend (no LLM)",
+    help="Dev mode: mock session backend (no LLM)",
 )
 @click.pass_context
 def restart(
@@ -306,7 +306,7 @@ def watchdog_stop() -> None:
     wd_pid_file = watchdog_pid_file_path()
     pid = read_pid(wd_pid_file)
     if pid is None:
-        click.echo("No watchdog PID file found \u2014 watchdog may not be running.")
+        click.echo("No watchdog PID file found -- watchdog may not be running.")
         return
 
     click.echo(f"Stopping watchdog (PID {pid})...")
@@ -350,7 +350,7 @@ def _run_foreground(
     *,
     stub: bool = False,
 ) -> None:
-    """Run the server in the foreground (existing behavior + startup improvements)."""
+    """Run the server in the foreground."""
     import logging
 
     import uvicorn
@@ -361,7 +361,6 @@ def _run_foreground(
         export_keys,
         load_env_file,
         log_startup_info,
-        run_startup_checks,
         setup_logging,
     )
 
@@ -397,10 +396,6 @@ def _run_foreground(
                 ", ".join(exported),
             )
 
-    # Run pre-flight checks (skip in stub mode)
-    if not stub:
-        run_startup_checks(logger)
-
     # Initialize shared services
     services = init_services(dev_mode=dev)
     click.echo(f"Services: backend={type(services.backend).__name__}")
@@ -423,24 +418,7 @@ def _run_foreground(
                 click.echo(f"Loaded {len(discovered)} app(s): {', '.join(discovered)}")
 
     if dev:
-        click.echo("--- Dev mode: using existing environment ---")
-        # Show detected config
-        try:
-            from amplifier_distro.config import config_path, load_config
-
-            if config_path().exists():
-                cfg = load_config()
-                click.echo(f"  Config: {config_path()}")
-                click.echo(f"  Workspace: {cfg.workspace_root}")
-                click.echo(
-                    f"  Identity: {cfg.identity.github_handle or '(auto-detect)'}"
-                )
-            else:
-                click.echo(f"  No distro.yaml found at {config_path()}")
-                click.echo("  Creating default config...")
-                _create_default_config()
-        except (OSError, ValueError, KeyError) as e:
-            click.echo(f"  Config issue: {e}")
+        click.echo("--- Dev mode: using mock session backend ---")
 
     # Log startup info (structured)
     log_startup_info(
@@ -491,29 +469,9 @@ def _run_foreground(
             log_level="info",
         )
 
-    # Auto-backup on shutdown (if enabled in distro.yaml)
-    try:
-        from amplifier_distro.backup import run_auto_backup
-
-        result = run_auto_backup()
-        if result is not None:
-            if result.status == "success":
-                logger.info("Auto-backup: %s", result.message)
-            else:
-                logger.warning("Auto-backup failed: %s", result.message)
-    except (ImportError, RuntimeError, OSError):
-        logger.exception("Auto-backup error")
-
 
 def _setup_tailscale(port: int) -> str | None:
-    """Auto-detect Tailscale and set up HTTPS reverse proxy.
-
-    If Tailscale is connected, runs ``tailscale serve --bg <port>`` so the
-    server is reachable at ``https://<magicDNS>`` with auto-provisioned TLS.
-    Registers atexit cleanup to tear down serve on exit.
-
-    Returns the HTTPS URL on success, or None if Tailscale is unavailable.
-    """
+    """Auto-detect Tailscale and set up HTTPS reverse proxy."""
     import atexit
 
     from amplifier_distro import tailscale
@@ -524,66 +482,8 @@ def _setup_tailscale(port: int) -> str | None:
     return url
 
 
-def _create_default_config() -> None:
-    """Create a default distro.yaml from environment detection."""
-    import subprocess
-
-    from amplifier_distro.config import save_config
-    from amplifier_distro.schema import DistroConfig, IdentityConfig
-
-    # Detect identity
-    gh_handle = ""
-    git_email = ""
-    try:
-        result = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            gh_handle = result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    try:
-        result = subprocess.run(
-            ["git", "config", "--global", "user.email"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            git_email = result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # Detect workspace
-    home = Path.home()
-    workspace = str(home / "dev")
-    for candidate in ["dev/ANext", "dev", "projects", "workspace"]:
-        if (home / candidate).exists():
-            workspace = str(home / candidate)
-            break
-
-    cfg = DistroConfig(
-        workspace_root=workspace,
-        identity=IdentityConfig(github_handle=gh_handle, git_email=git_email),
-    )
-    save_config(cfg)
-    click.echo(f"  Created: {cfg.workspace_root} ({gh_handle or 'no gh handle'})")
-
-
 def _create_app():
-    """Factory for uvicorn --reload mode.
-
-    Returns a FastAPI/ASGI app instance. Called by uvicorn when using
-    import-string mode (required for --reload to work).
-
-    Configuration is passed from the supervisor process via environment
-    variables (_AMPLIFIER_DEV_MODE, _AMPLIFIER_APPS_DIR) because the
-    worker is a fresh Python process with no access to CLI args.
-    """
+    """Factory for uvicorn --reload mode."""
     import os
 
     from amplifier_distro.server.app import create_server

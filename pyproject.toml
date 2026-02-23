@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amplifier-distro"
-version = "0.1.0"
-description = "An opinionated Amplifier distribution"
+version = "0.2.0"
+description = "Amplifier Experience Server - web chat, Slack, voice, and more"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -29,11 +29,6 @@ slack = [
     "slack-sdk>=3.26.0",
     "aiohttp>=3.9.0",
 ]
-# Email bridge with Gmail API support
-email = [
-    "google-api-python-client>=2.100.0",
-    "google-auth>=2.20.0",
-]
 # Development and testing
 dev = [
     "pytest>=7.0",
@@ -42,14 +37,14 @@ dev = [
 ]
 # All optional features
 all = [
-    "amplifier-distro[slack,email]",
+    "amplifier-distro[slack]",
 ]
 
 [project.scripts]
 amp-distro = "amplifier_distro.cli:main"
 amp-distro-server = "amplifier_distro.server.cli:serve"
 
-# ── Packaging Boundary ──────────────────────────────────────
+# -- Packaging Boundary ----------------------------------------
 # Only src/ is packaged. Everything else in the repo (planning/,
 # notes/, Dockerfile.dev, INSTRUCTIONS.md, etc.) is working files
 # for development and does NOT ship to users.
@@ -59,7 +54,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 amplifier_distro = ["**/*.html"]
 
-# ── Code Quality ────────────────────────────────────────────
+# -- Code Quality ----------------------------------------------
 [tool.ruff]
 target-version = "py311"
 src = ["src"]
@@ -76,7 +71,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S106", "S108", "BLE001"]  # asserts, hardcoded passwords, temp files OK in tests
+"tests/**" = ["S101", "S106", "S108", "BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

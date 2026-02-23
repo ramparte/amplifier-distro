@@ -136,43 +136,32 @@ def _get_openai_api_key() -> str | None:
 
 
 def _get_voice_config() -> dict[str, Any]:
-    """Load voice config from distro.yaml, with safe defaults."""
-    try:
-        from amplifier_distro.config import load_config
+    """Load voice config from environment, with safe defaults.
 
-        cfg = load_config()
-        return {
-            "voice": cfg.voice.voice,
-            "model": cfg.voice.model,
-            "instructions": cfg.voice.instructions,
-            "tools_enabled": cfg.voice.tools_enabled,
-        }
-    except (ImportError, AttributeError, OSError):
-        logger.debug("Could not load voice config, using defaults")
-        return {
-            "voice": "ash",
-            "model": "gpt-4o-realtime-preview",
-            "instructions": "",
-            "tools_enabled": False,
-        }
+    Voice settings can be overridden via environment variables:
+      AMPLIFIER_VOICE_VOICE, AMPLIFIER_VOICE_MODEL,
+      AMPLIFIER_VOICE_INSTRUCTIONS, AMPLIFIER_VOICE_TOOLS_ENABLED
+    """
+    return {
+        "voice": os.environ.get("AMPLIFIER_VOICE_VOICE", "ash"),
+        "model": os.environ.get("AMPLIFIER_VOICE_MODEL", "gpt-4o-realtime-preview"),
+        "instructions": os.environ.get("AMPLIFIER_VOICE_INSTRUCTIONS", ""),
+        "tools_enabled": os.environ.get("AMPLIFIER_VOICE_TOOLS_ENABLED", "").lower()
+        in ("1", "true", "yes"),
+    }
 
 
 def _get_workspace_root() -> Path:
-    """Resolve workspace root from config, falling back to home dir."""
-    try:
-        from amplifier_distro.config import load_config
-
-        cfg = load_config()
-        return Path(cfg.workspace_root).expanduser().resolve()
-    except (ImportError, AttributeError, OSError):
-        return Path.home()
+    """Resolve workspace root from environment, falling back to home dir."""
+    workspace = os.environ.get("AMPLIFIER_WORKSPACE_ROOT", "")
+    if workspace:
+        return Path(workspace).expanduser().resolve()
+    return Path.home()
 
 
 @router.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Voice interface page."""
-    # TODO: voice.html needs updating to handle tool calls from OpenAI
-    # and relay them to POST /tools/execute (TASK-13)
     html_path = Path(__file__).parent / "voice.html"
     if html_path.exists():
         return HTMLResponse(content=html_path.read_text())
@@ -184,14 +173,7 @@ async def index() -> HTMLResponse:
 
 @router.get("/session")
 async def create_session() -> JSONResponse:
-    """Create an ephemeral client secret from OpenAI Realtime API.
-
-    Calls POST https://api.openai.com/v1/realtime/sessions to get
-    a short-lived token the browser uses for WebRTC auth.
-
-    Returns:
-        JSON with client_secret.value and client_secret.expires_at
-    """
+    """Create an ephemeral client secret from OpenAI Realtime API."""
     from amplifier_distro.server.stub import is_stub_mode, stub_voice_session
 
     if is_stub_mode():
@@ -271,21 +253,7 @@ async def create_session() -> JSONResponse:
 
 @router.post("/sdp", response_model=None)
 async def exchange_sdp(request: Request) -> PlainTextResponse | JSONResponse:
-    """Exchange WebRTC SDP offer/answer via OpenAI.
-
-    The browser sends its SDP offer here along with an Authorization
-    header containing the ephemeral token from /session.
-    We relay this to OpenAI and return the SDP answer.
-
-    Headers required:
-        Authorization: Bearer <ephemeral_token>
-        Content-Type: application/sdp
-
-    Body: Raw SDP offer text
-
-    Returns:
-        SDP answer from OpenAI (text/sdp)
-    """
+    """Exchange WebRTC SDP offer/answer via OpenAI."""
     from amplifier_distro.server.stub import is_stub_mode, stub_voice_sdp
 
     if is_stub_mode():
@@ -458,13 +426,7 @@ _TOOL_HANDLERS: dict[str, Any] = {
 
 @router.post("/tools/execute", dependencies=[Depends(verify_api_key)])
 async def execute_tool(request: Request) -> JSONResponse:
-    """Execute an Amplifier tool on behalf of the voice session.
-
-    Called by the browser when OpenAI's function calling returns a tool
-    invocation. The browser relays the function name and arguments here,
-    we execute via the bridge, and return the result for the browser to
-    send back to OpenAI.
-    """
+    """Execute an Amplifier tool on behalf of the voice session."""
     try:
         body = await request.json()
     except (ValueError, TypeError):

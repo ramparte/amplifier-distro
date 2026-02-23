@@ -2171,7 +2171,7 @@ class TestZombieSessionFix:
     Bug: route_message() catches ALL exceptions from backend.send_message()
     with a bare 'except Exception' and returns a generic error string, but
     never deactivates the mapping. A session whose backend handle is lost
-    (BridgeBackend raises ValueError) persists as is_active=True forever.
+    (FoundationBackend raises ValueError) persists as is_active=True forever.
 
     Fix: catch ValueError specifically (= session permanently dead),
     deactivate the mapping, and save. Keep the broad except Exception
@@ -2192,7 +2192,7 @@ class TestZombieSessionFix:
 
         # End the session on the backend (simulates lost handle).
         # After Task 1's fix, MockBackend.send_message raises ValueError
-        # for ended sessions — matching BridgeBackend production behavior.
+        # for ended sessions — matching FoundationBackend production behavior.
         asyncio.run(mock_backend.end_session(mapping.session_id))
 
         msg = SlackMessage(

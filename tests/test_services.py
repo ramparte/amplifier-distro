@@ -215,11 +215,11 @@ class TestMockBackendOperations:
 
 
 # ---------------------------------------------------------------------------
-# BridgeBackend reconnect lock tests (#20)
+# FoundationBackend reconnect lock tests (#20)
 # ---------------------------------------------------------------------------
 
 
-class TestBridgeBackendReconnectLock:
+class TestFoundationBackendReconnectLock:
     """Verify that concurrent reconnects for the same session are serialized.
 
     Uses a mock bridge to track how many times resume_session is called.
@@ -233,9 +233,9 @@ class TestBridgeBackendReconnectLock:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -283,9 +283,9 @@ class TestBridgeBackendReconnectLock:
         """Normal send_message with cached handle doesn't touch locks."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._reconnect_locks = {}
         backend._session_queues = {}
         backend._worker_tasks = {}
@@ -311,9 +311,9 @@ class TestBridgeBackendReconnectLock:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -353,9 +353,9 @@ class TestBridgeBackendReconnectLock:
         """Lock entry is removed after successful reconnect."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -381,9 +381,9 @@ class TestBridgeBackendReconnectLock:
         """Lock entry is removed even when reconnect fails."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -406,9 +406,9 @@ class TestBridgeBackendReconnectLock:
         """After failed reconnect, a retry can proceed (not deadlocked)."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from amplifier_distro.server.session_backend import BridgeBackend
+        from amplifier_distro.server.session_backend import FoundationBackend
 
-        backend = BridgeBackend.__new__(BridgeBackend)
+        backend = FoundationBackend.__new__(FoundationBackend)
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -452,7 +452,7 @@ class TestSessionBackendContract:
     - Surfaces should deactivate their routing entry on ValueError
 
     Note: test_get_session_info_after_end_shows_inactive is MockBackend-specific.
-    BridgeBackend returns None for ended sessions (handle is popped).
+    FoundationBackend returns None for ended sessions (handle is popped).
     """
 
     @pytest.fixture
@@ -486,7 +486,7 @@ class TestSessionBackendContract:
     async def test_get_session_info_after_end_shows_inactive(self, backend):
         """get_session_info on ended session returns info with is_active=False.
 
-        NOTE: This is MockBackend-specific behavior. BridgeBackend returns None
+        NOTE: This is MockBackend-specific behavior. FoundationBackend returns None
         for ended sessions because the handle is popped from _sessions.
         """
         info = await backend.create_session()

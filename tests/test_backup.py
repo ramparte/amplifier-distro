@@ -1,19 +1,16 @@
 """Backup System Tests
 
-These tests validate the T6 backup system: configuration, file collection,
-backup/restore flows, CLI commands, and auto-backup.
+These tests validate the backup system: file collection,
+backup/restore flows, and CLI commands.
 
 Exit criteria verified:
-1. BackupConfig defaults and custom values
-2. BackupConfig integrates with DistroConfig
-3. File collection includes correct files (conventions.BACKUP_INCLUDE)
-4. File collection excludes keys, cache, projects, server
-5. Backup flow creates repo and pushes (mocked gh/git)
-6. Restore flow clones and copies (mocked git)
-7. Restore never restores keys.yaml
-8. CLI backup and restore commands exist and work
-9. Configurable repo names via CLI --name flag
-10. Auto-backup respects config.backup.auto
+1. File collection includes correct files (conventions.BACKUP_INCLUDE)
+2. File collection excludes keys, cache, projects, server
+3. Backup flow creates repo and pushes (mocked gh/git)
+4. Restore flow clones and copies (mocked git)
+5. Restore never restores keys.yaml
+6. CLI backup and restore commands exist and work
+7. Configurable repo names via CLI --name flag
 """
 
 from pathlib import Path
@@ -28,63 +25,8 @@ from amplifier_distro.backup import (
     RestoreResult,
     _resolve_repo,
     collect_backup_files,
-    run_auto_backup,
 )
 from amplifier_distro.cli import main
-from amplifier_distro.schema import BackupConfig, DistroConfig, IdentityConfig
-
-# ---------------------------------------------------------------------------
-#  BackupConfig schema
-# ---------------------------------------------------------------------------
-
-
-class TestBackupConfig:
-    """Verify BackupConfig defaults and integration with DistroConfig."""
-
-    def test_default_repo_name(self):
-        cfg = BackupConfig()
-        assert cfg.repo_name == "amplifier-backup"
-
-    def test_default_repo_owner_is_none(self):
-        cfg = BackupConfig()
-        assert cfg.repo_owner is None
-
-    def test_default_auto_is_false(self):
-        cfg = BackupConfig()
-        assert cfg.auto is False
-
-    def test_custom_values(self):
-        cfg = BackupConfig(repo_name="my-backup", repo_owner="myorg", auto=True)
-        assert cfg.repo_name == "my-backup"
-        assert cfg.repo_owner == "myorg"
-        assert cfg.auto is True
-
-    def test_distro_config_has_backup_section(self):
-        config = DistroConfig()
-        assert hasattr(config, "backup")
-        assert isinstance(config.backup, BackupConfig)
-
-    def test_distro_config_backup_defaults(self):
-        config = DistroConfig()
-        assert config.backup.repo_name == "amplifier-backup"
-        assert config.backup.repo_owner is None
-        assert config.backup.auto is False
-
-    def test_distro_config_roundtrips_backup(self):
-        """BackupConfig survives YAML-style dict round-trip."""
-        import yaml
-
-        config = DistroConfig(
-            backup=BackupConfig(repo_name="custom-bak", auto=True),
-        )
-        data = config.model_dump()
-        yaml_str = yaml.dump(data)
-        loaded = yaml.safe_load(yaml_str)
-        restored = DistroConfig(**loaded)
-        assert restored.backup.repo_name == "custom-bak"
-        assert restored.backup.auto is True
-        assert restored.backup.repo_owner is None
-
 
 # ---------------------------------------------------------------------------
 #  Repo name resolution
@@ -95,20 +37,19 @@ class TestResolveRepo:
     """Verify _resolve_repo builds the correct owner/repo string."""
 
     def test_defaults_to_gh_handle(self):
-        cfg = BackupConfig()
-        assert _resolve_repo(cfg, "alice") == "alice/amplifier-backup"
+        assert _resolve_repo("alice") == "alice/amplifier-backup"
 
     def test_custom_repo_name(self):
-        cfg = BackupConfig(repo_name="my-bak")
-        assert _resolve_repo(cfg, "alice") == "alice/my-bak"
+        assert _resolve_repo("alice", repo_name="my-bak") == "alice/my-bak"
 
     def test_custom_owner_overrides_handle(self):
-        cfg = BackupConfig(repo_owner="myorg")
-        assert _resolve_repo(cfg, "alice") == "myorg/amplifier-backup"
+        assert _resolve_repo("alice", repo_owner="myorg") == "myorg/amplifier-backup"
 
     def test_custom_owner_and_name(self):
-        cfg = BackupConfig(repo_name="state", repo_owner="myorg")
-        assert _resolve_repo(cfg, "alice") == "myorg/state"
+        assert (
+            _resolve_repo("alice", repo_name="state", repo_owner="myorg")
+            == "myorg/state"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +179,7 @@ class TestBackupFlow:
     def test_backup_success(self, _mock_repo, _mock_git, amp_home):
         from amplifier_distro.backup import backup
 
-        cfg = BackupConfig()
-        result = backup(cfg, amp_home, "alice")
+        result = backup(amp_home, "alice")
         assert result.status == "success"
         assert result.repo == "alice/amplifier-backup"
         assert len(result.files) > 0
@@ -249,8 +189,7 @@ class TestBackupFlow:
     def test_backup_fails_when_repo_unavailable(self, _mock_repo, amp_home):
         from amplifier_distro.backup import backup
 
-        cfg = BackupConfig()
-        result = backup(cfg, amp_home, "alice")
+        result = backup(amp_home, "alice")
         assert result.status == "error"
         assert "Could not create" in result.message
 
@@ -259,15 +198,18 @@ class TestBackupFlow:
 
         empty = tmp_path / "empty"
         empty.mkdir()
-        result = backup(BackupConfig(), empty, "alice")
+        result = backup(empty, "alice")
         assert result.status == "error"
         assert "No files" in result.message
 
-    @patch("amplifier_distro.backup._ensure_repo_exists", side_effect=FileNotFoundError)
+    @patch(
+        "amplifier_distro.backup._ensure_repo_exists",
+        side_effect=FileNotFoundError,
+    )
     def test_backup_handles_missing_gh_cli(self, _mock, amp_home):
         from amplifier_distro.backup import backup
 
-        result = backup(BackupConfig(), amp_home, "alice")
+        result = backup(amp_home, "alice")
         assert result.status == "error"
         assert "gh CLI" in result.message
 
@@ -302,7 +244,7 @@ class TestRestoreFlow:
             return MagicMock(returncode=0)
 
         mock_run.side_effect = fake_clone
-        result = restore(BackupConfig(), amp_home, "alice")
+        result = restore(amp_home, "alice")
 
         assert result.status == "success"
         assert len(result.files) == 2  # distro.yaml + settings.yaml
@@ -311,19 +253,22 @@ class TestRestoreFlow:
         assert (amp_home / conventions.SETTINGS_FILENAME).exists()
         assert not (amp_home / conventions.KEYS_FILENAME).exists()
 
-    @patch("amplifier_distro.backup.subprocess.run", side_effect=FileNotFoundError)
+    @patch(
+        "amplifier_distro.backup.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
     def test_restore_clone_failure(self, _mock, tmp_path):
         from amplifier_distro.backup import restore
 
         amp_home = tmp_path / ".amplifier"
         amp_home.mkdir()
-        result = restore(BackupConfig(), amp_home, "alice")
+        result = restore(amp_home, "alice")
         assert result.status == "error"
         assert "Clone failed" in result.message
 
     @patch("amplifier_distro.backup.subprocess.run")
     def test_restore_never_restores_keys(self, mock_run, tmp_path):
-        """Security: keys.yaml must NEVER be restored even if present in backup."""
+        """Security: keys.yaml must NEVER be restored even if present."""
         from amplifier_distro.backup import restore
 
         amp_home = tmp_path / ".amplifier"
@@ -336,51 +281,11 @@ class TestRestoreFlow:
             return MagicMock(returncode=0)
 
         mock_run.side_effect = fake_clone
-        result = restore(BackupConfig(), amp_home, "alice")
+        result = restore(amp_home, "alice")
 
         assert result.status == "success"
         assert not (amp_home / conventions.KEYS_FILENAME).exists()
         assert conventions.KEYS_FILENAME in result.message
-
-
-# ---------------------------------------------------------------------------
-#  Auto-backup
-# ---------------------------------------------------------------------------
-
-
-class TestAutoBackup:
-    """Verify run_auto_backup honours the config flag."""
-
-    @patch("amplifier_distro.config.load_config")
-    def test_auto_backup_disabled_returns_none(self, mock_load):
-        mock_load.return_value = DistroConfig(
-            backup=BackupConfig(auto=False),
-        )
-        assert run_auto_backup() is None
-
-    @patch("amplifier_distro.config.load_config")
-    def test_auto_backup_no_handle_returns_error(self, mock_load):
-        mock_load.return_value = DistroConfig(
-            backup=BackupConfig(auto=True),
-            identity=IdentityConfig(github_handle=""),
-        )
-        result = run_auto_backup()
-        assert result is not None
-        assert result.status == "error"
-        assert "github_handle" in result.message
-
-    @patch("amplifier_distro.backup.backup")
-    @patch("amplifier_distro.config.load_config")
-    def test_auto_backup_enabled_calls_backup(self, mock_load, mock_backup):
-        mock_load.return_value = DistroConfig(
-            backup=BackupConfig(auto=True),
-            identity=IdentityConfig(github_handle="alice"),
-        )
-        mock_backup.return_value = BackupResult(status="success", message="ok")
-        result = run_auto_backup()
-        assert result is not None
-        assert result.status == "success"
-        mock_backup.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -413,19 +318,17 @@ class TestBackupCLI:
         result = runner.invoke(main, ["restore", "--help"])
         assert "--name" in result.output
 
-    @patch("amplifier_distro.cli.load_config")
-    def test_backup_fails_without_identity(self, mock_load):
-        """backup must fail if no github_handle is configured."""
-        mock_load.return_value = DistroConfig()
+    @patch("amplifier_distro.backup._detect_gh_handle", return_value=None)
+    def test_backup_fails_without_gh_handle(self, _mock):
+        """backup must fail if gh handle cannot be detected."""
         runner = CliRunner()
         result = runner.invoke(main, ["backup"])
         assert result.exit_code != 0
-        assert "github_handle" in result.output or "init" in result.output
+        assert "GitHub handle" in result.output or "gh CLI" in result.output
 
-    @patch("amplifier_distro.cli.load_config")
-    def test_restore_fails_without_identity(self, mock_load):
-        """restore must fail if no github_handle is configured."""
-        mock_load.return_value = DistroConfig()
+    @patch("amplifier_distro.backup._detect_gh_handle", return_value=None)
+    def test_restore_fails_without_gh_handle(self, _mock):
+        """restore must fail if gh handle cannot be detected."""
         runner = CliRunner()
         result = runner.invoke(main, ["restore"])
         assert result.exit_code != 0

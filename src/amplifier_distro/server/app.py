@@ -6,7 +6,6 @@ Apps register themselves and get mounted at their designated paths.
 Architecture:
     DistroServer
         /api/health          - Health check
-        /api/config          - Distro configuration
         /api/sessions        - Unified session list (all apps)
         /api/bridge          - Amplifier Bridge API (session creation)
         /api/memory          - Memory storage and retrieval
@@ -27,12 +26,13 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
@@ -43,14 +43,8 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _get_configured_api_key() -> str:
-    """Read the server.api_key from distro config. Returns '' if unset."""
-    try:
-        from amplifier_distro.config import load_config
-
-        return load_config().server.api_key
-    except (ImportError, AttributeError, OSError):
-        logger.debug("Could not read API key from config", exc_info=True)
-        return ""
+    """Read the server API key from environment. Returns '' if unset."""
+    return os.environ.get("AMPLIFIER_SERVER_API_KEY", "")
 
 
 _bearer_dependency = Depends(_bearer_scheme)
@@ -61,14 +55,14 @@ async def verify_api_key(
 ) -> None:
     """FastAPI dependency that enforces bearer-token auth on mutation routes.
 
-    - If no ``server.api_key`` is configured the request passes through
+    - If no ``AMPLIFIER_SERVER_API_KEY`` is set the request passes through
       (backward-compatible / local-only use).
     - If a key IS configured the caller must supply an
       ``Authorization: Bearer <key>`` header that matches.
     """
     api_key = _get_configured_api_key()
     if not api_key:
-        return  # No key configured — open access
+        return  # No key configured -- open access
 
     if credentials is None or credentials.credentials != api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -91,21 +85,7 @@ class AppManifest:
 
 
 class DistroServer:
-    """The core distro server with app plugin system.
-
-    Usage:
-        server = DistroServer()
-
-        # Register apps
-        server.register_app(slack_app)
-        server.register_app(voice_app)
-
-        # Or auto-discover from directory
-        server.discover_apps(Path("./apps"))
-
-        # Get the FastAPI instance (for uvicorn)
-        app = server.app
-    """
+    """The core distro server with app plugin system."""
 
     def __init__(
         self,
@@ -125,7 +105,7 @@ class DistroServer:
         self._setup_core_routes()
         self._setup_bridge_routes()
         self._setup_memory_routes()
-        self._setup_root_redirect()
+        self._setup_root()
         # Register graceful backend shutdown
         from amplifier_distro.server.services import stop_services
 
@@ -148,10 +128,7 @@ class DistroServer:
         return self._dev_mode
 
     def register_app(self, manifest: AppManifest) -> None:
-        """Register an app with the server.
-
-        The app's router is mounted at /apps/{name}/.
-        """
+        """Register an app with the server."""
         if manifest.name in self._apps:
             raise ValueError(f"App already registered: {manifest.name}")
 
@@ -171,23 +148,13 @@ class DistroServer:
             self._app.add_event_handler("shutdown", manifest.on_shutdown)
 
         self._apps[manifest.name] = manifest
-        logger.info(f"Registered app: {manifest.name} at {manifest.mount_path}")
+        logger.info("Registered app: %s at %s", manifest.name, manifest.mount_path)
 
     def discover_apps(self, apps_dir: Path) -> list[str]:
-        """Auto-discover and register apps from a directory.
-
-        Each app is a Python package with an __init__.py that exposes:
-        - manifest: AppManifest (required)
-
-        Args:
-            apps_dir: Directory containing app packages
-
-        Returns:
-            List of registered app names
-        """
+        """Auto-discover and register apps from a directory."""
         registered = []
         if not apps_dir.exists():
-            logger.warning(f"Apps directory not found: {apps_dir}")
+            logger.warning("Apps directory not found: %s", apps_dir)
             return registered
 
         for app_path in sorted(apps_dir.iterdir()):
@@ -197,7 +164,6 @@ class DistroServer:
                 continue
 
             try:
-                # Import the app module
                 module_name = f"amplifier_distro.server.apps.{app_path.name}"
                 spec = importlib.util.spec_from_file_location(
                     module_name, app_path / "__init__.py"
@@ -212,10 +178,10 @@ class DistroServer:
                     self.register_app(module.manifest)
                     registered.append(module.manifest.name)
                 else:
-                    logger.warning(f"App {app_path.name} missing 'manifest'")
+                    logger.warning("App %s missing 'manifest'", app_path.name)
 
             except Exception:
-                logger.exception(f"Failed to load app {app_path.name}")
+                logger.exception("Failed to load app %s", app_path.name)
 
         return registered
 
@@ -226,38 +192,6 @@ class DistroServer:
         async def health() -> dict[str, str]:
             """Health check endpoint."""
             return {"status": "ok", "version": self._app.version}
-
-        @self._core_router.get("/config")
-        async def config() -> dict[str, Any]:
-            """Get distro configuration."""
-            from amplifier_distro.config import load_config
-
-            cfg = load_config()
-            return cfg.model_dump()
-
-        @self._core_router.get("/status")
-        async def status() -> dict[str, Any]:
-            """Get distro status (preflight results)."""
-            from amplifier_distro.server.stub import is_stub_mode, stub_preflight_status
-
-            if is_stub_mode():
-                return stub_preflight_status()
-
-            from amplifier_distro.preflight import run_preflight
-
-            report = run_preflight()
-            return {
-                "passed": report.passed,
-                "checks": [
-                    {
-                        "name": c.name,
-                        "passed": c.passed,
-                        "message": c.message,
-                        "severity": c.severity,
-                    }
-                    for c in report.checks
-                ],
-            }
 
         @self._core_router.get("/apps")
         async def list_apps() -> dict[str, dict[str, Any]]:
@@ -272,59 +206,12 @@ class DistroServer:
                 for name, m in self._apps.items()
             }
 
-        @self._core_router.put("/config", dependencies=[Depends(verify_api_key)])
-        async def update_config(request: Request) -> JSONResponse:
-            """Update distro.yaml with partial config values.
-
-            Accepts a JSON body with keys matching DistroConfig fields.
-            Only provided fields are updated; others are preserved.
-            """
-            from pydantic import ValidationError
-
-            from amplifier_distro.config import load_config, save_config
-
-            body = await request.json()
-            try:
-                cfg = load_config()
-
-                # Update top-level scalar fields
-                if "workspace_root" in body:
-                    cfg.workspace_root = body["workspace_root"]
-
-                # Update nested identity fields
-                if "identity" in body and isinstance(body["identity"], dict):
-                    if "github_handle" in body["identity"]:
-                        cfg.identity.github_handle = body["identity"]["github_handle"]
-                    if "git_email" in body["identity"]:
-                        cfg.identity.git_email = body["identity"]["git_email"]
-
-                save_config(cfg)
-                return JSONResponse(content=cfg.model_dump())
-            except (ValidationError, ValueError) as e:
-                logger.info("Config update rejected: %s", e)
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": str(e), "type": type(e).__name__},
-                )
-            except Exception as e:
-                logger.warning("Config update failed: %s", e, exc_info=True)
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": str(e), "type": type(e).__name__},
-                )
-
         @self._core_router.get("/integrations")
         async def get_integrations() -> JSONResponse:
             """Status of each integration (Slack, Voice)."""
-            import os
-            from pathlib import Path as _Path
+            from amplifier_distro.conventions import AMPLIFIER_HOME, KEYS_FILENAME
 
-            from amplifier_distro.conventions import (
-                AMPLIFIER_HOME,
-                KEYS_FILENAME,
-            )
-
-            keys_path = _Path(AMPLIFIER_HOME).expanduser() / KEYS_FILENAME
+            keys_path = Path(AMPLIFIER_HOME).expanduser() / KEYS_FILENAME
             keys_data: dict[str, str] = {}
             if keys_path.exists():
                 import yaml as _yaml
@@ -332,7 +219,6 @@ class DistroServer:
                 keys_data = _yaml.safe_load(keys_path.read_text()) or {}
 
             def _check_key(env_var: str) -> str:
-                """Return 'configured' if key is in env or keys.yaml."""
                 if os.environ.get(env_var):
                     return "configured"
                 if keys_data.get(env_var):
@@ -359,12 +245,7 @@ class DistroServer:
             "/test-provider", dependencies=[Depends(verify_api_key)]
         )
         async def test_provider(request: Request) -> JSONResponse:
-            """Test a provider connection with a minimal API request.
-
-            Body: {"provider": "anthropic"} or {"provider": "openai"}
-            """
-            import os
-
+            """Test a provider connection with a minimal API request."""
             import httpx
 
             body = await request.json()
@@ -639,37 +520,20 @@ class DistroServer:
                     content={"error": str(e), "type": type(e).__name__},
                 )
 
-    def _setup_root_redirect(self) -> None:
-        """Phase-aware root: landing page when ready, redirect when not."""
+    def _setup_root(self) -> None:
+        """Root route: serve the landing page."""
 
         _landing_page = Path(__file__).parent / "static" / "index.html"
 
         @self._app.get("/", response_model=None)
         async def root():
-            from amplifier_distro.server.apps.settings import compute_phase
-
-            phase = compute_phase()
-            if phase == "unconfigured":
-                return RedirectResponse(url="/apps/install-wizard/")
-            return HTMLResponse(content=_landing_page.read_text())
+            if _landing_page.exists():
+                return HTMLResponse(content=_landing_page.read_text())
+            return HTMLResponse(
+                content="<h1>Amplifier Distro</h1><p>Server is running.</p>"
+            )
 
 
 def create_server(dev_mode: bool = False, **kwargs: Any) -> DistroServer:
-    """Factory function to create and configure the server.
-
-    This is the main entry point for starting the server.
-
-    Args:
-        dev_mode: If True, skip wizard and use existing environment.
-
-    Usage:
-        server = create_server()
-
-        # Auto-discover apps
-        server.discover_apps(Path("./apps"))
-
-        # Run with uvicorn
-        import uvicorn
-        uvicorn.run(server.app, host="0.0.0.0", port=8400)
-    """
+    """Factory function to create and configure the server."""
     return DistroServer(dev_mode=dev_mode, **kwargs)

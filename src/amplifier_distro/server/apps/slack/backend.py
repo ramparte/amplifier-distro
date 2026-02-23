@@ -12,14 +12,14 @@ from __future__ import annotations
 
 # Re-export everything from the server-level module
 from amplifier_distro.server.session_backend import (
-    BridgeBackend,
+    FoundationBackend,
     MockBackend,
     SessionBackend,
     SessionInfo,
 )
 
 __all__ = [
-    "BridgeBackend",
+    "FoundationBackend",
     "MockBackend",
     "SessionBackend",
     "SessionInfo",
