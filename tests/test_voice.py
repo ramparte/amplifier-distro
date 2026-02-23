@@ -341,43 +341,25 @@ class TestVoiceSdpEndpoint:
 
 
 class TestVoiceConfig:
-    """Verify VoiceConfig schema and defaults."""
+    """Verify voice configuration defaults via _get_voice_config()."""
 
     def test_voice_config_defaults(self) -> None:
-        from amplifier_distro.schema import VoiceConfig
+        from amplifier_distro.server.apps.voice import _get_voice_config
 
-        cfg = VoiceConfig()
-        assert cfg.voice == "ash"
-        assert cfg.model == "gpt-4o-realtime-preview"
+        cfg = _get_voice_config()
+        assert cfg["voice"] == "ash"
+        assert cfg["model"] == "gpt-4o-realtime-preview"
 
+    @patch.dict(
+        "os.environ",
+        {
+            "AMPLIFIER_VOICE_VOICE": "coral",
+            "AMPLIFIER_VOICE_MODEL": "gpt-4o-mini-realtime-preview",
+        },
+    )
     def test_voice_config_custom_values(self) -> None:
-        from amplifier_distro.schema import VoiceConfig
+        from amplifier_distro.server.apps.voice import _get_voice_config
 
-        cfg = VoiceConfig(voice="coral", model="gpt-4o-mini-realtime-preview")
-        assert cfg.voice == "coral"
-        assert cfg.model == "gpt-4o-mini-realtime-preview"
-
-    def test_distro_config_has_voice(self) -> None:
-        from amplifier_distro.schema import DistroConfig
-
-        cfg = DistroConfig()
-        assert hasattr(cfg, "voice")
-        assert cfg.voice.voice == "ash"
-        assert cfg.voice.model == "gpt-4o-realtime-preview"
-
-    def test_distro_config_loads_voice_from_dict(self) -> None:
-        from amplifier_distro.schema import DistroConfig
-
-        cfg = DistroConfig.model_validate(
-            {"voice": {"voice": "sage", "model": "gpt-4o-realtime-preview"}}
-        )
-        assert cfg.voice.voice == "sage"
-
-    def test_voice_config_in_model_dump(self) -> None:
-        from amplifier_distro.schema import DistroConfig
-
-        cfg = DistroConfig()
-        dumped = cfg.model_dump()
-        assert "voice" in dumped
-        assert dumped["voice"]["voice"] == "ash"
-        assert dumped["voice"]["model"] == "gpt-4o-realtime-preview"
+        cfg = _get_voice_config()
+        assert cfg["voice"] == "coral"
+        assert cfg["model"] == "gpt-4o-mini-realtime-preview"

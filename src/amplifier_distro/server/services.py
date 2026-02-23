@@ -93,11 +93,11 @@ def init_services(
             backend = MockBackend()
             logger.info("Server services: using MockBackend (dev mode)")
         else:
-            # Late import - BridgeBackend requires amplifier-foundation
-            from amplifier_distro.server.session_backend import BridgeBackend
+            # Late import - FoundationBackend requires amplifier-foundation
+            from amplifier_distro.server.session_backend import FoundationBackend
 
-            backend = BridgeBackend()
-            logger.info("Server services: using BridgeBackend (production)")
+            backend = FoundationBackend()
+            logger.info("Server services: using FoundationBackend (production)")
 
     with _instance_lock:
         _instance = ServerServices(backend=backend, dev_mode=dev_mode)

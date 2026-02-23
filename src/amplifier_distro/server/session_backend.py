@@ -6,10 +6,7 @@ owns ONE backend instance and shares it with all apps.
 
 Implementations:
 - MockBackend: Echo/canned responses (testing, dev/simulator mode)
-- BridgeBackend: Real sessions via LocalBridge (production)
-
-History: Originally lived in server/apps/slack/backend.py. Promoted to
-server level so all apps share a single session pool.
+- FoundationBackend: Real sessions via amplifier-foundation (production)
 """
 
 from __future__ import annotations
@@ -17,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -34,6 +32,41 @@ class SessionInfo:
     # Which app created this session (e.g., "web-chat", "slack", "voice")
     created_by_app: str = ""
     description: str = ""
+
+
+@dataclass
+class _SessionHandle:
+    """Lightweight handle wrapping a foundation session.
+
+    Keeps the metadata the backend needs without coupling to bridge
+    internals.  The ``session`` field holds the actual
+    ``AmplifierSession`` object from amplifier-foundation.
+    """
+
+    session_id: str
+    project_id: str
+    working_dir: Path
+    session: Any  # AmplifierSession from foundation
+    _cleanup_done: bool = field(default=False, repr=False)
+
+    async def run(self, prompt: str) -> str:
+        """Execute a prompt and return the response text."""
+        if self.session is None:
+            raise RuntimeError(
+                f"Session {self.session_id} has no active session object"
+            )
+        return await self.session.execute(prompt)
+
+    async def cleanup(self) -> None:
+        """Clean up the session resources."""
+        if self._cleanup_done or self.session is None:
+            return
+        try:
+            await self.session.cleanup()
+        except Exception:  # noqa: BLE001
+            logger.debug("Session cleanup error for %s", self.session_id, exc_info=True)
+        finally:
+            self._cleanup_done = True
 
 
 @runtime_checkable
@@ -174,20 +207,18 @@ class MockBackend:
         )
 
 
-class BridgeBackend:
-    """Real backend using LocalBridge for Amplifier sessions.
+class FoundationBackend:
+    """Real backend using amplifier-foundation for Amplifier sessions.
 
-    This connects to the actual Amplifier runtime via the distro bridge.
-    Used in production mode.
+    This connects to the Amplifier runtime via foundation's bundle loading
+    and session creation APIs.  Used in production mode.
 
     NOTE: Requires amplifier-foundation to be available at runtime.
     """
 
-    def __init__(self) -> None:
-        from amplifier_distro.bridge import LocalBridge
-
-        self._bridge = LocalBridge()
-        self._sessions: dict[str, Any] = {}  # session_id -> SessionHandle
+    def __init__(self, bundle_name: str = "amplifier-start") -> None:
+        self._bundle_name = bundle_name
+        self._sessions: dict[str, _SessionHandle] = {}
         self._reconnect_locks: dict[str, asyncio.Lock] = {}
         # Per-session FIFO queues for serializing handle.run() calls
         self._session_queues: dict[str, asyncio.Queue] = {}
@@ -196,35 +227,47 @@ class BridgeBackend:
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
 
+    def _load_bundle(self, bundle_name: str | None = None) -> Any:
+        """Load and prepare a bundle via foundation.
+
+        Returns a prepared bundle ready for create_session().
+        """
+        from amplifier_foundation import load_bundle
+
+        name = bundle_name or self._bundle_name
+        bundle = load_bundle(name)
+        return bundle.prepare()
+
     async def create_session(
         self,
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
     ) -> SessionInfo:
-        from pathlib import Path
+        wd = Path(working_dir).expanduser()
 
-        from amplifier_distro.bridge import BridgeConfig
+        prepared = self._load_bundle(bundle_name)
+        session = prepared.create_session(working_dir=str(wd))
 
-        config = BridgeConfig(
-            working_dir=Path(working_dir).expanduser(),
-            bundle_name=bundle_name,
-            run_preflight=False,  # Server already validated
+        session_id = session.session_id
+        handle = _SessionHandle(
+            session_id=session_id,
+            project_id=getattr(session, "project_id", ""),
+            working_dir=wd,
+            session=session,
         )
-        handle = await self._bridge.create_session(config)
-        self._sessions[handle.session_id] = handle
+        self._sessions[session_id] = handle
 
         # Pre-start the session worker so the first message doesn't pay
-        # the task-creation overhead, and so the worker is available for
-        # reconnect paths that also route through the queue.
+        # the task-creation overhead
         queue: asyncio.Queue = asyncio.Queue()
-        self._session_queues[handle.session_id] = queue
-        self._worker_tasks[handle.session_id] = asyncio.create_task(
-            self._session_worker(handle.session_id)
+        self._session_queues[session_id] = queue
+        self._worker_tasks[session_id] = asyncio.create_task(
+            self._session_worker(session_id)
         )
 
         return SessionInfo(
-            session_id=handle.session_id,
+            session_id=session_id,
             project_id=handle.project_id,
             working_dir=str(handle.working_dir),
             is_active=True,
@@ -264,7 +307,7 @@ class BridgeBackend:
         await self._session_queues[session_id].put((message, future))
         return await future
 
-    async def _reconnect(self, session_id: str) -> Any:
+    async def _reconnect(self, session_id: str) -> _SessionHandle:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
 
         On success the handle is cached so subsequent messages don't pay
@@ -276,14 +319,16 @@ class BridgeBackend:
                 f"Session {session_id} was intentionally ended"
                 " and cannot be reconnected"
             )
-        logger.info(f"Attempting to reconnect lost session {session_id}")
+        logger.info("Attempting to reconnect lost session %s", session_id)
         try:
-            handle = await self._bridge.resume_session(session_id)
-            self._sessions[session_id] = handle
-            logger.info(f"Reconnected session {session_id}")
-            return handle
+            # TODO: implement session resume via foundation
+            # This requires loading the transcript from disk and restoring
+            # the session context.  For now, reconnection is not supported.
+            raise NotImplementedError(
+                "Session reconnection not yet implemented for FoundationBackend"
+            )
         except (FileNotFoundError, ValueError, RuntimeError, OSError) as err:
-            logger.warning(f"Failed to reconnect session {session_id}", exc_info=True)
+            logger.warning("Failed to reconnect session %s", session_id, exc_info=True)
             raise ValueError(f"Unknown session: {session_id}") from err
 
     async def _session_worker(self, session_id: str) -> None:
@@ -313,7 +358,7 @@ class BridgeBackend:
                 raise
 
             if item is None:
-                # Sentinel — exit cleanly
+                # Sentinel -- exit cleanly
                 queue.task_done()
                 break
 
@@ -331,20 +376,18 @@ class BridgeBackend:
             except asyncio.CancelledError:
                 if not future.done():
                     future.cancel()
-                # No task_done() here — finally handles it for all paths
                 raise
             except Exception as exc:  # noqa: BLE001
                 if not future.done():
                     future.set_exception(exc)
             finally:
-                queue.task_done()  # exactly one call per item, all exit paths
+                queue.task_done()
 
     async def end_session(self, session_id: str) -> None:
-        # Tombstone first — prevents _reconnect() from reviving this session
+        # Tombstone first -- prevents _reconnect() from reviving this session
         self._ended_sessions.add(session_id)
 
-        # Pop handle before signalling the worker so the worker sees no handle
-        # and rejects any racing messages with ValueError
+        # Pop handle before signalling the worker
         handle = self._sessions.pop(session_id, None)
 
         # Signal worker to exit cleanly via sentinel
@@ -365,7 +408,7 @@ class BridgeBackend:
                 with contextlib.suppress(asyncio.CancelledError):
                     await worker
 
-        # Drain any remaining queued futures (unlikely but safe)
+        # Drain any remaining queued futures
         if queue is not None:
             while not queue.empty():
                 try:
@@ -382,7 +425,7 @@ class BridgeBackend:
         self._worker_tasks.pop(session_id, None)
 
         if handle:
-            await self._bridge.end_session(handle)
+            await handle.cleanup()
 
     async def stop(self) -> None:
         """Gracefully stop all session workers.
@@ -427,18 +470,6 @@ class BridgeBackend:
         ]
 
     async def resume_session(self, session_id: str, working_dir: str) -> None:
-        """Restore the LLM context for a session after a server restart.
-
-        Calls _reconnect() which reads transcript.jsonl and injects the full
-        history as context. Safe to call even if the session handle is already
-        cached — _reconnect is only called when handle is missing, so we check
-        first to avoid double-reconnect.
-
-        Args:
-            session_id: The Amplifier session ID to resume.
-            working_dir: The working directory (stored in WebChatSession.extra
-                at creation time). The bridge locates the session directory from
-                the session_id itself; this arg is accepted for API symmetry.
-        """
+        """Restore the LLM context for a session after a server restart."""
         if self._sessions.get(session_id) is None:
             await self._reconnect(session_id)

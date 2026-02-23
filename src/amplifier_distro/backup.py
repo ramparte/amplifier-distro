@@ -6,7 +6,7 @@ repository. Uses the ``gh`` CLI for repo creation and ``git`` for push/pull.
 Security: keys.yaml is NEVER backed up or restored.  After a restore the
 user must re-enter their API keys.
 
-All paths are derived from conventions.py constants — no hardcoded paths.
+All paths are derived from conventions.py constants -- no hardcoded paths.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from . import conventions
-from .schema import BackupConfig
 
 # ---------------------------------------------------------------------------
 #  Result models
@@ -57,12 +56,6 @@ def collect_backup_files(amplifier_home: Path) -> list[Path]:
     Uses :pydata:`conventions.BACKUP_INCLUDE` to decide which top-level
     files and directories to include.  Each entry is either a plain file
     or a directory whose contents are collected recursively.
-
-    Args:
-        amplifier_home: Expanded path to ``~/.amplifier``.
-
-    Returns:
-        Sorted list of absolute paths to files that should be backed up.
     """
     files: list[Path] = []
 
@@ -82,24 +75,17 @@ def collect_backup_files(amplifier_home: Path) -> list[Path]:
 
 
 def backup(
-    config: BackupConfig,
     amplifier_home: Path,
     gh_handle: str,
+    repo_name: str = "amplifier-backup",
+    repo_owner: str | None = None,
 ) -> BackupResult:
     """Back up Amplifier state to a private GitHub repository.
 
     Creates a private repo via ``gh`` if it does not exist, copies the
     selected files into a temporary directory, then force-pushes them.
-
-    Args:
-        config: ``BackupConfig`` from distro.yaml.
-        amplifier_home: Expanded path to ``~/.amplifier``.
-        gh_handle: GitHub username (used as default repo owner).
-
-    Returns:
-        A :class:`BackupResult` with status and details.
     """
-    repo_full = _resolve_repo(config, gh_handle)
+    repo_full = _resolve_repo(gh_handle, repo_name, repo_owner)
     timestamp = datetime.now(tz=UTC).isoformat()
 
     # Collect files
@@ -176,24 +162,17 @@ def backup(
 
 
 def restore(
-    config: BackupConfig,
     amplifier_home: Path,
     gh_handle: str,
+    repo_name: str = "amplifier-backup",
+    repo_owner: str | None = None,
 ) -> RestoreResult:
     """Restore Amplifier state from a private GitHub repository.
 
     Clones the backup repo and copies files back to *amplifier_home*.
     ``keys.yaml`` is **never** restored.
-
-    Args:
-        config: ``BackupConfig`` from distro.yaml.
-        amplifier_home: Expanded path to ``~/.amplifier``.
-        gh_handle: GitHub username (used as default repo owner).
-
-    Returns:
-        A :class:`RestoreResult` with status and details.
     """
-    repo_full = _resolve_repo(config, gh_handle)
+    repo_full = _resolve_repo(gh_handle, repo_name, repo_owner)
 
     with tempfile.TemporaryDirectory(prefix="amplifier-restore-") as tmp:
         clone_dest = Path(tmp) / "repo"
@@ -256,53 +235,38 @@ def restore(
 
 
 # ---------------------------------------------------------------------------
-#  Auto-backup (called on server shutdown)
-# ---------------------------------------------------------------------------
-
-
-def run_auto_backup() -> BackupResult | None:
-    """Run backup if ``backup.auto`` is enabled in distro.yaml.
-
-    Loads the distro config, checks whether auto-backup is on, and
-    performs a backup if so.
-
-    Returns:
-        A :class:`BackupResult`, or ``None`` if auto-backup is disabled.
-    """
-    from .config import load_config
-
-    config = load_config()
-    if not config.backup.auto:
-        return None
-
-    gh_handle = config.identity.github_handle
-    if not gh_handle:
-        return BackupResult(
-            status="error",
-            message="Cannot auto-backup: no github_handle in identity config",
-        )
-
-    amplifier_home = Path(conventions.AMPLIFIER_HOME).expanduser()
-    return backup(config.backup, amplifier_home, gh_handle)
-
-
-# ---------------------------------------------------------------------------
 #  Helpers (private)
 # ---------------------------------------------------------------------------
 
 
-def _resolve_repo(config: BackupConfig, gh_handle: str) -> str:
+def _detect_gh_handle() -> str | None:
+    """Detect GitHub handle via gh CLI. Returns None on failure."""
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _resolve_repo(
+    gh_handle: str,
+    repo_name: str = "amplifier-backup",
+    repo_owner: str | None = None,
+) -> str:
     """Build the ``owner/repo`` string."""
-    owner = config.repo_owner or gh_handle
-    return f"{owner}/{config.repo_name}"
+    owner = repo_owner or gh_handle
+    return f"{owner}/{repo_name}"
 
 
 def _ensure_repo_exists(repo_full: str) -> bool:
-    """Create a private GitHub repo if it does not already exist.
-
-    Returns:
-        ``True`` if the repo exists (or was just created).
-    """
+    """Create a private GitHub repo if it does not already exist."""
     result = subprocess.run(
         ["gh", "repo", "view", repo_full],
         capture_output=True,

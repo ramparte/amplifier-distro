@@ -1,12 +1,11 @@
-"""Server startup utilities: structured logging, key export, pre-flight checks.
+"""Server startup utilities: structured logging, key export.
 
 Handles server initialization tasks that run before the main event loop:
 - Structured logging (JSON to file, human-readable to console)
 - API key export from keys.yaml into the environment
-- Pre-flight health checks with result logging
 - Server version and configuration logging
 
-All paths are constructed from conventions.py constants — no hardcoded paths.
+All paths are constructed from conventions.py constants.
 """
 
 from __future__ import annotations
@@ -55,12 +54,7 @@ class JSONFormatter(logging.Formatter):
 
 
 def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
-    """Configure structured logging: JSON to file, human-readable to console.
-
-    Args:
-        log_file: Path for the JSON log file. Uses convention default if None.
-        level: Logging level for both handlers.
-    """
+    """Configure structured logging: JSON to file, human-readable to console."""
     root = logging.getLogger()
     # Prevent duplicate handlers on uvicorn reload
     if root.handlers:
@@ -114,15 +108,7 @@ def load_env_file(env_file: Path | None = None) -> list[str]:
 
     Parses simple ``KEY=value`` lines (with optional quoting) and sets
     them via ``os.environ.setdefault`` so existing env vars take
-    precedence.  Comments (``#``) and blank lines are skipped.
-
-    Args:
-        env_file: Explicit path to a ``.env`` file.  When *None*, both
-            ``~/.amplifier/.env`` and the project directory ``.env``
-            are checked (first found wins per variable).
-
-    Returns:
-        List of variable names that were loaded.
+    precedence.
     """
     files = [env_file] if env_file is not None else env_file_paths()
     loaded: list[str] = []
@@ -153,19 +139,7 @@ def load_env_file(env_file: Path | None = None) -> list[str]:
 
 
 def export_keys(keys_file: Path | None = None) -> list[str]:
-    """Export keys from keys.yaml as environment variables.
-
-    Reads the keys file and sets each key-value pair as an environment
-    variable using ``os.environ.setdefault`` so that existing env vars
-    take precedence.
-
-    Args:
-        keys_file: Path to keys.yaml. Uses convention default if None.
-
-    Returns:
-        List of exported environment variable names (values are not
-        included for security).
-    """
+    """Export keys from keys.yaml as environment variables."""
     import yaml
 
     if keys_file is None:
@@ -201,15 +175,7 @@ def log_startup_info(
     dev_mode: bool,
     logger: logging.Logger,
 ) -> None:
-    """Log server version, port, and loaded apps at startup.
-
-    Args:
-        host: Bind host address.
-        port: Bind port number.
-        apps: List of loaded app names.
-        dev_mode: Whether the server is running in dev mode.
-        logger: Logger instance to write to.
-    """
+    """Log server version, port, and loaded apps at startup."""
     try:
         from importlib.metadata import version as pkg_version
 
@@ -226,32 +192,3 @@ def log_startup_info(
         logger.info("Loaded apps: %s", ", ".join(apps))
     else:
         logger.info("No apps loaded")
-
-
-def run_startup_checks(logger: logging.Logger) -> None:
-    """Run pre-flight checks and log results.
-
-    Does not block server startup — issues are logged as warnings.
-
-    Args:
-        logger: Logger instance to write to.
-    """
-    try:
-        from amplifier_distro.preflight import run_preflight
-
-        report = run_preflight()
-
-        for check in report.checks:
-            if check.passed:
-                logger.info("Preflight %-20s OK: %s", check.name, check.message)
-            elif check.severity == "warning":
-                logger.warning("Preflight %-20s WARN: %s", check.name, check.message)
-            else:
-                logger.error("Preflight %-20s FAIL: %s", check.name, check.message)
-
-        if report.passed:
-            logger.info("Pre-flight checks passed")
-        else:
-            logger.warning("Pre-flight checks have failures (server will continue)")
-    except (ImportError, RuntimeError, OSError):
-        logger.exception("Pre-flight checks could not run")
