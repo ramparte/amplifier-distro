@@ -254,3 +254,102 @@ The server extraction is the critical path -- Samuel can't formalize the plugin 
 **When you're needed:** When a contract change affects multiple owners. When two owners disagree on a boundary. When someone wants to add a new "decision" to the distro. When a new component needs to be created.
 
 **When you're NOT needed:** Implementation within a component. Bug fixes. Feature work that stays within one owner's boundary. Anything that doesn't change a contract.
+
+---
+
+## Section 6: Decision Record -- Paul's `lean-experience-server` Branch
+
+Paul Payne created a branch (`lean-experience-server`) that proposes an alternative architecture: delete the registry layer entirely and redefine the distro as just the experience server. This section documents the team's decision and how to use Paul's work constructively.
+
+### The Proposal
+
+Paul's branch deletes ~14,500 lines and redefines the three-part Amplifier install as:
+
+| Component | Role |
+|-----------|------|
+| `amplifier` CLI | The tool (commands, doctor, init, sessions) |
+| `amplifier-start` | The opinions (conventions, context, agents, hooks) |
+| `amplifier-distro` | The experiences (web chat, Slack, voice, etc.) |
+
+Specifically deleted: the Bridge (`bridge.py`), `distro.yaml` and its config/schema system, the feature catalog and bundle composer, doctor, preflight, settings UI, install wizard, and most CLI commands.
+
+### The Decision: Keep Vision A (the distro as a registry + coordination layer)
+
+The distro is a distro -- a coordination mechanism for distributing and configuring a series of tools and components, akin to a Linux distribution. Deleting the coordination layer creates a fragility: with no single source of truth (`distro.yaml`), the CLI, `amplifier-start`, and the experience server can silently disagree about paths, identity, and configuration. That's the exact friction the distro was designed to eliminate.
+
+### What Paul Correctly Identified (use as simplification guide)
+
+Paul's branch is a valuable inventory of what's over-engineered. The following action items are derived from his analysis:
+
+**Action 1: Simplify `distro.yaml` schema.** The current schema carries 13 sections including app-specific config (Slack, Voice, Kepler, Watchdog). Consider a pattern where apps register their own config sections rather than core carrying all of them. Reduce the core schema to the decisions that are truly common: workspace root, identity, memory, bundle, cache, preflight, interfaces, server location.
+
+**Action 2: Simplify the Bridge.** The Bridge wraps 8 steps around 2 foundation calls. That's justified. But `create_session` and `resume_session` share ~60% duplicated code and `SessionHandle` is a leaky facade. Refactor the shared logic and decide whether `SessionHandle` is a real abstraction or a convenience type.
+
+**Action 3: Let `amplifier-start` own in-session behavior.** This is already in our plan (Contract 3). The distro generates bundles that include `amplifier-start`. The distro MUST NOT independently implement handoff hooks, friction detection, or conventions-as-context. Paul's bundle handles that layer.
+
+**Action 4: Let the CLI own its health commands.** The distro's `doctor.py` (529 lines) and `preflight.py` overlap with what the `amplifier` CLI can provide. Consider whether preflight and doctor should migrate to the CLI (where they'd serve all users, not just distro users) or remain in the distro as distro-specific health checks. Either way, avoid maintaining parallel implementations.
+
+**Action 5: Keep the registry as the single source of truth.** This is the core architectural decision. `distro.yaml` is what makes distributed components behave as one system. Without it, every app is its own system integrator. The schema should be simplified (Action 1) but not eliminated.
+
+### What NOT to Merge
+
+- Do not merge the `FoundationBackend` replacement for `BridgeBackend` as-is. It raises `NotImplementedError` on session resume, which is a production regression for the Slack and Voice bridges.
+- Do not delete the settings UI or install wizard. They're part of the distro's user experience (the friendly install flow). They may need refactoring but not removal.
+- Do not delete `distro.yaml`. See Action 5.
+
+---
+
+## Section 7: Pre-Handoff Refactor (Big Bang)
+
+Before handing off components to their owners, Sam will do a focused refactor to clean up boundaries. This ensures each owner starts with a clean codebase rather than spending their first month on structural cleanup.
+
+### Why a Big Bang
+
+- Sam knows the codebase best (wrote most of it). Structural moves that take Sam hours would take new owners days of context-building.
+- Handing off clean is 10x better than handing off messy with instructions to clean up.
+- The test suite (1,158 tests, 99.65% passing, 17 seconds) provides a strong safety net for aggressive refactoring.
+- It removes the "coordinate the extraction" problem -- Marc and Samuel start with clean repos.
+
+### Scope
+
+The entanglement is narrow but deep: 9 core modules, concentrated in 3 server files (`app.py`, `cli.py`, `session_backend.py`). It's a star topology centered on `config`, `conventions`, `bridge`, and `schema`. Estimated effort: 1-2 focused sessions with AI.
+
+**Current numbers:**
+
+| Area | Files | Lines |
+|------|------:|------:|
+| Core distro | 21 | 6,084 |
+| Server | 32 | 9,681 |
+| Tests | 36 | 15,318 |
+| Total | 89 | 31,083 |
+
+24 of 32 server files import from core distro modules (75% coupling). But the coupling runs through only 9 core modules: `config`, `conventions`, `schema`, `bridge`, `features`, `docs_config`, `fileutil`, `preflight`, `backup`.
+
+### Refactor Tasks
+
+1. **Define the public API surface for core distro.** Create clean `__init__.py` re-exports that define what server (and future external consumers) are allowed to import. Replace the 24 entangled import paths in server/ with imports from this surface.
+
+2. **Refactor Bridge.** Extract shared logic between `create_session` and `resume_session` into a `_prepare_session()` method. Clean up `SessionHandle` -- decide if it's a real abstraction boundary (remove coordinator reach-through) or a thin convenience type (stop pretending it hides internals).
+
+3. **Slim the schema.** Move app-specific config sections (Slack, Voice, Kepler, Watchdog) to a pattern where apps can register config sections with the distro, rather than core hardcoding every app's schema. Core keeps: workspace, identity, bundle, cache, preflight, interfaces, memory, server, backup.
+
+4. **Add `amplifier-start` include.** Update `bundle_composer.py` to include `amplifier-start` in generated bundles.
+
+5. **Prepare server for extraction.** Ensure all server imports go through the public API surface (Task 1). Verify that the server directory could be moved to a separate repo by only changing import paths. Don't actually extract yet -- that's Samuel's job -- but make it ready.
+
+### Sequencing After the Big Bang
+
+Once the refactor is complete, the handoff order is:
+
+1. **Marc** receives a clean `amplifier-distro` with clear boundaries and documented public API. Starts owning distro core + CLI immediately.
+2. **Samuel** receives a server directory that imports only through the public API surface. Extracts it into its own repo and formalizes the plugin contract.
+3. **Paul** receives `amplifier-tui` handoff from Sam. Begins `amplifier-start` reconciliation with distro conventions. Waits for Samuel's plugin contract before extracting Slack.
+4. **MJ** continues Kepler work independently, auditing distro integration.
+
+### Success Criteria
+
+- All 1,158 tests still pass (or a reasonable subset if tests are reorganized).
+- Server directory imports only through the distro's public API surface.
+- Bridge `create_session` and `resume_session` share a common `_prepare_session()` method.
+- `bundle_composer.py` includes `amplifier-start` in generated bundles.
+- Schema has a clear separation between core decisions and app-specific config.
