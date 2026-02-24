@@ -246,11 +246,33 @@ class BridgeBackend:
             def on_stream(event: str, data: dict) -> None:
                 _q.put_nowait((event, data))
 
+        # Wire display system to queue if provided
+        display = None
+        if event_queue is not None:
+            from amplifier_distro.bridge_protocols import BridgeDisplaySystem as _BDS
+
+            _q = event_queue
+
+            def _on_display_message(message: str, level: str, source: str) -> None:
+                _q.put_nowait(
+                    (
+                        "display_message",
+                        {
+                            "message": message,
+                            "level": level,
+                            "source": source,
+                        },
+                    )
+                )
+
+            display = _BDS(on_message=_on_display_message)
+
         config = BridgeConfig(
             working_dir=Path(working_dir).expanduser(),
             bundle_name=bundle_name,
             run_preflight=False,  # Server already validated
             on_stream=on_stream,
+            display=display,
         )
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
