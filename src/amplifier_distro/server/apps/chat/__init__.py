@@ -22,7 +22,7 @@ import re
 import types
 from pathlib import Path
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from amplifier_distro.conventions import (
@@ -31,6 +31,10 @@ from amplifier_distro.conventions import (
     TRANSCRIPT_FILENAME,
 )
 from amplifier_distro.server.app import AppManifest
+from amplifier_distro.server.apps.chat.preferences import (
+    load_preferences,
+    save_preferences,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +195,19 @@ async def get_transcript(session_id: str) -> JSONResponse:
             "transcript": messages,
         }
     )
+
+
+@router.get("/api/preferences")
+async def get_preferences() -> dict:
+    """Return current user preferences."""
+    return load_preferences()
+
+
+@router.put("/api/preferences")
+async def put_preferences(request: Request) -> dict:
+    """Apply partial preference updates."""
+    body = await request.json() if await request.body() else {}
+    return save_preferences(body)
 
 
 manifest = AppManifest(
