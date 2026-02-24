@@ -244,22 +244,9 @@ class TestWebChatEndSession:
 class TestAppDiscovery:
     """Verify the server discovers apps from the apps directory.
 
-    Antagonist note: web-chat and install-wizard must be
-    discoverable from the apps directory so the server can
-    auto-register them at startup.
+    Antagonist note: web-chat and voice must be discoverable from the
+    apps directory so the server can auto-register them at startup.
     """
-
-    def test_discover_finds_install_wizard(self):
-        apps_dir = (
-            Path(__file__).parent.parent
-            / "src"
-            / "amplifier_distro"
-            / "server"
-            / "apps"
-        )
-        server = DistroServer()
-        found = server.discover_apps(apps_dir)
-        assert "install-wizard" in found
 
     def test_discover_finds_web_chat(self):
         apps_dir = (
@@ -285,7 +272,7 @@ class TestAppDiscovery:
         found = server.discover_apps(apps_dir)
         assert "voice" in found
 
-    def test_both_apps_mount_at_expected_paths(self):
+    def test_apps_mount_at_expected_paths(self):
         apps_dir = (
             Path(__file__).parent.parent
             / "src"
@@ -295,7 +282,6 @@ class TestAppDiscovery:
         )
         server = DistroServer()
         server.discover_apps(apps_dir)
-        assert server.apps["install-wizard"].mount_path == "/apps/install-wizard"
         assert server.apps["web-chat"].mount_path == "/apps/web-chat"
         assert server.apps["voice"].mount_path == "/apps/voice"
 
@@ -310,10 +296,6 @@ class TestAppDiscovery:
         server = DistroServer()
         server.discover_apps(apps_dir)
         client = TestClient(server.app)
-
-        # install-wizard quickstart page
-        wiz = client.get("/apps/install-wizard/")
-        assert wiz.status_code == 200
 
         chat = client.get("/apps/web-chat/")
         assert chat.status_code == 200

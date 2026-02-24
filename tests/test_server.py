@@ -81,11 +81,11 @@ class TestCoreRoutes:
     def test_health_route_exists(self, server):
         assert "/api/health" in self._route_paths(server)
 
-    def test_config_route_exists(self, server):
-        assert "/api/config" in self._route_paths(server)
+    def test_sessions_route_exists(self, server):
+        assert "/api/sessions" in self._route_paths(server)
 
-    def test_status_route_exists(self, server):
-        assert "/api/status" in self._route_paths(server)
+    def test_integrations_route_exists(self, server):
+        assert "/api/integrations" in self._route_paths(server)
 
     def test_apps_route_exists(self, server):
         assert "/api/apps" in self._route_paths(server)
@@ -93,7 +93,7 @@ class TestCoreRoutes:
     def test_all_four_core_routes_present(self, server):
         """All four core routes must be present simultaneously."""
         paths = self._route_paths(server)
-        required = ["/api/health", "/api/config", "/api/status", "/api/apps"]
+        required = ["/api/health", "/api/sessions", "/api/integrations", "/api/apps"]
         for route in required:
             assert route in paths, f"Missing core route: {route}"
 
@@ -225,42 +225,6 @@ class TestDiscoverApps:
         assert sorted(found) == ["app_a", "app_b"]
 
 
-class TestExampleApp:
-    """Verify the example app has correct manifest structure.
-
-    Antagonist note: The example app is the reference implementation for
-    the plugin pattern. Its manifest must have all required fields with
-    correct values, and it must export a working router.
-    """
-
-    def test_manifest_has_correct_name(self):
-        from amplifier_distro.server.apps.example import manifest
-
-        assert manifest.name == "example"
-
-    def test_manifest_has_description(self):
-        from amplifier_distro.server.apps.example import manifest
-
-        assert isinstance(manifest.description, str)
-        assert len(manifest.description) > 0
-
-    def test_manifest_has_version(self):
-        from amplifier_distro.server.apps.example import manifest
-
-        assert manifest.version == "0.1.0"
-
-    def test_manifest_has_router(self):
-        from amplifier_distro.server.apps.example import manifest
-
-        assert manifest.router is not None
-        assert isinstance(manifest.router, APIRouter)
-
-    def test_manifest_is_app_manifest_type(self):
-        from amplifier_distro.server.apps.example import manifest
-
-        assert isinstance(manifest, AppManifest)
-
-
 class TestHealthEndpoint:
     """Verify the health endpoint returns the expected response.
 
@@ -376,25 +340,6 @@ class TestAppRoutesMounting:
         assert response.status_code == 200
         assert response.json() == {"items": [1, 2, 3]}
 
-    def test_example_app_routes_after_registration(self):
-        """The example app's routes must be reachable after registration."""
-        from amplifier_distro.server.apps.example import manifest
-
-        server = DistroServer()
-        server.register_app(manifest)
-        client = TestClient(server.app)
-
-        # Root route
-        response = client.get("/apps/example/")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["app"] == "example"
-
-        # Echo route (parameterized)
-        response = client.get("/apps/example/echo/hello")
-        assert response.status_code == 200
-        assert response.json() == {"echo": "hello"}
-
     def test_app_routes_isolated_from_core_routes(self):
         """App routes must not interfere with core /api/ routes."""
         server = DistroServer()
@@ -432,7 +377,6 @@ class TestApiKeyAuth:
     """
 
     MUTATION_ENDPOINTS = [
-        ("PUT", "/api/config"),
         ("POST", "/api/bridge/session"),
         ("POST", "/api/bridge/execute"),
         ("POST", "/api/memory/remember"),
@@ -470,10 +414,10 @@ class TestApiKeyAuth:
         We send minimal bodies; we expect non-401 responses (may be
         400/500 due to missing services, but NOT 401).
         """
-        resp = client.put("/api/config", json={})
+        resp = client.post("/api/test-provider", json={"provider": "unknown"})
         assert resp.status_code != 401
 
-        resp = client.post("/api/test-provider", json={"provider": "unknown"})
+        resp = client.post("/api/bridge/session", json={})
         assert resp.status_code != 401
 
     # --- API key configured: auth enforced on mutations ---
@@ -538,7 +482,7 @@ class TestApiKeyAuth:
             "amplifier_distro.server.app._get_configured_api_key",
             lambda: "test-secret-key",
         )
-        resp = client.put("/api/config", json={})
+        resp = client.post("/api/test-provider", json={})
         assert resp.status_code == 401
         body = resp.json()
         assert "detail" in body
