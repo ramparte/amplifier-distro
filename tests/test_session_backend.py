@@ -85,6 +85,90 @@ class TestFoundationBackendQueueInfrastructure:
             await worker
 
 
+class TestFoundationBackendCreateSession:
+    """Verify FoundationBackend.create_session calls foundation correctly."""
+
+    async def test_create_session_calls_load_bundle(self, bridge_backend):
+        """create_session must call _load_bundle and prepared.create_session."""
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-create-001"
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = MagicMock(return_value=mock_session)
+
+        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        info = await FoundationBackend.create_session(
+            bridge_backend,
+            working_dir="/home/user/project",
+            description="test session",
+        )
+
+        bridge_backend._load_bundle.assert_called_once()
+        mock_prepared.create_session.assert_called_once()
+        assert info.session_id == "sess-create-001"
+        assert info.working_dir == "/home/user/project"
+        assert info.description == "test session"
+        assert info.is_active is True
+
+        # Cleanup worker
+        if "sess-create-001" in bridge_backend._worker_tasks:
+            bridge_backend._worker_tasks["sess-create-001"].cancel()
+
+    async def test_create_session_with_custom_bundle(self, bridge_backend):
+        """create_session accepts an optional bundle_name override."""
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-custom-001"
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = MagicMock(return_value=mock_session)
+
+        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.create_session(
+            bridge_backend,
+            working_dir="/tmp",
+            bundle_name="custom-bundle",
+        )
+
+        bridge_backend._load_bundle.assert_called_once_with("custom-bundle")
+
+        # Cleanup worker
+        if "sess-custom-001" in bridge_backend._worker_tasks:
+            bridge_backend._worker_tasks["sess-custom-001"].cancel()
+
+    async def test_create_session_returns_session_info(self, bridge_backend):
+        """create_session returns a SessionInfo with correct fields."""
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-info-001"
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = MagicMock(return_value=mock_session)
+
+        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+
+        from amplifier_distro.server.session_backend import (
+            FoundationBackend,
+            SessionInfo,
+        )
+
+        info = await FoundationBackend.create_session(
+            bridge_backend,
+            working_dir="~",
+        )
+
+        assert isinstance(info, SessionInfo)
+        assert info.session_id == "sess-info-001"
+
+        # Cleanup worker
+        if "sess-info-001" in bridge_backend._worker_tasks:
+            bridge_backend._worker_tasks["sess-info-001"].cancel()
+
+
 class TestFoundationBackendSerialization:
     """Verify messages for the same session are serialized through a queue."""
 
