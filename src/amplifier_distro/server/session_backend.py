@@ -299,6 +299,22 @@ class BridgeBackend:
         # TODO(Task 27): pass images to handle.run() when image attachment is wired
         await handle.run(prompt)
 
+    async def cancel_session(
+        self,
+        session_id: str,
+        level: str = "graceful",
+    ) -> None:
+        """Request cancellation of an active session.
+
+        Safe to call on unknown session IDs (no-op).
+        level: "graceful" or "immediate".
+        """
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            logger.debug("cancel_session: unknown session %s (ignored)", session_id)
+            return
+        await handle.cancel(level)
+
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
 

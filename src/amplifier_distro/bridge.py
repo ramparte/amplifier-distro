@@ -197,6 +197,21 @@ class SessionHandle:
         result: str = await self._session.execute(prompt)
         return result
 
+    async def cancel(self, level: str = "graceful") -> None:
+        """Request cancellation of the running session.
+
+        Safe to call when _session is None or coordinator is unavailable.
+        level: "graceful" (finish current tool) or "immediate" (stop now).
+        """
+        if self._session is None:
+            return
+        coordinator = getattr(self._session, "coordinator", None)
+        if coordinator is None:
+            return
+        request_cancel = getattr(coordinator, "request_cancel", None)
+        if request_cancel is not None:
+            request_cancel(level)
+
     async def cleanup(self) -> None:
         """Clean up session resources."""
         if self._session is not None:
