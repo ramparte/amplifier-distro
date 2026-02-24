@@ -167,6 +167,39 @@ def export_keys(keys_file: Path | None = None) -> list[str]:
     return exported
 
 
+def check_foundation_available() -> bool:
+    """Verify amplifier-foundation is importable at server startup.
+
+    Returns True if foundation is available, False otherwise.
+    Logs a clear error message on failure so operators know what to fix.
+    """
+    try:
+        from amplifier_foundation import load_bundle  # noqa: F401
+
+        logger.info("amplifier-foundation: available")
+        return True
+    except ImportError:
+        logger.warning(
+            "amplifier-foundation is not installed. "
+            "The server will not be able to create sessions. "
+            "Install with: uv pip install amplifier-foundation"
+        )
+        return False
+
+
+def check_legacy_config() -> None:
+    """Log a notice if the old distro.yaml config file exists."""
+    legacy = Path(conventions.AMPLIFIER_HOME).expanduser() / "distro.yaml"
+    if legacy.exists():
+        logger.info(
+            "Found legacy distro.yaml at %s. "
+            "This file is no longer used -- configuration is now via "
+            "environment variables and foundation's settings.yaml. "
+            "You can safely delete it.",
+            legacy,
+        )
+
+
 def log_startup_info(
     *,
     host: str,
@@ -192,3 +225,6 @@ def log_startup_info(
         logger.info("Loaded apps: %s", ", ".join(apps))
     else:
         logger.info("No apps loaded")
+
+    check_foundation_available()
+    check_legacy_config()
