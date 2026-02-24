@@ -173,8 +173,10 @@ class BridgeConfig:
     # Streaming callback
     on_stream: Callable[[str, dict[str, Any]], Any] | None = None
     # Behaviors to activate in the session (e.g., ["web-search", "file-ops"])
+    # TODO: pass behaviors to bridge.create_session() when session config API is wired
     behaviors: list[str] | None = None
     # Whether to expose thinking blocks to the UI
+    # TODO: pass show_thinking to provider config when thinking toggle is wired
     show_thinking: bool = False
 
 
