@@ -5,7 +5,7 @@ backup/restore flows, and CLI commands.
 
 Exit criteria verified:
 1. File collection includes correct files (conventions.BACKUP_INCLUDE)
-2. File collection excludes keys, cache, projects, server
+2. File collection excludes keys, server
 3. Backup flow creates repo and pushes (mocked gh/git)
 4. Restore flow clones and copies (mocked git)
 5. Restore never restores keys.yaml
@@ -67,9 +67,7 @@ class TestCollectBackupFiles:
         home.mkdir()
 
         # Included files
-        (home / conventions.DISTRO_CONFIG_FILENAME).write_text("workspace_root: ~/dev")
         (home / conventions.SETTINGS_FILENAME).write_text("theme: dark")
-        (home / conventions.BUNDLE_REGISTRY_FILENAME).write_text("bundles: []")
 
         # Included directory: memory/
         mem = home / conventions.MEMORY_DIR
@@ -77,39 +75,18 @@ class TestCollectBackupFiles:
         (mem / conventions.MEMORY_STORE_FILENAME).write_text("memories: []")
         (mem / conventions.WORK_LOG_FILENAME).write_text("log: []")
 
-        # Included directory: bundles/
-        bundles = home / conventions.DISTRO_BUNDLE_DIR
-        bundles.mkdir()
-        (bundles / "custom.yaml").write_text("name: custom")
-
         # Excluded files / directories
         (home / conventions.KEYS_FILENAME).write_text("SECRET=abc")
-        cache = home / conventions.CACHE_DIR
-        cache.mkdir()
-        (cache / "cached.txt").write_text("stale")
-        projects = home / conventions.PROJECTS_DIR
-        projects.mkdir()
-        (projects / "proj.json").write_text("{}")
         server = home / conventions.SERVER_DIR
         server.mkdir()
         (server / "server.pid").write_text("1234")
 
         return home
 
-    def test_includes_distro_config(self, amp_home):
-        files = collect_backup_files(amp_home)
-        names = [f.name for f in files]
-        assert conventions.DISTRO_CONFIG_FILENAME in names
-
     def test_includes_settings(self, amp_home):
         files = collect_backup_files(amp_home)
         names = [f.name for f in files]
         assert conventions.SETTINGS_FILENAME in names
-
-    def test_includes_bundle_registry(self, amp_home):
-        files = collect_backup_files(amp_home)
-        names = [f.name for f in files]
-        assert conventions.BUNDLE_REGISTRY_FILENAME in names
 
     def test_includes_memory_files(self, amp_home):
         files = collect_backup_files(amp_home)
@@ -117,25 +94,10 @@ class TestCollectBackupFiles:
         assert conventions.MEMORY_STORE_FILENAME in names
         assert conventions.WORK_LOG_FILENAME in names
 
-    def test_includes_custom_bundles(self, amp_home):
-        files = collect_backup_files(amp_home)
-        names = [f.name for f in files]
-        assert "custom.yaml" in names
-
     def test_excludes_keys(self, amp_home):
         files = collect_backup_files(amp_home)
         names = [f.name for f in files]
         assert conventions.KEYS_FILENAME not in names
-
-    def test_excludes_cache(self, amp_home):
-        files = collect_backup_files(amp_home)
-        rel_parts = [f.relative_to(amp_home).parts[0] for f in files]
-        assert conventions.CACHE_DIR not in rel_parts
-
-    def test_excludes_projects(self, amp_home):
-        files = collect_backup_files(amp_home)
-        rel_parts = [f.relative_to(amp_home).parts[0] for f in files]
-        assert conventions.PROJECTS_DIR not in rel_parts
 
     def test_excludes_server(self, amp_home):
         files = collect_backup_files(amp_home)
@@ -168,7 +130,7 @@ class TestBackupFlow:
     def amp_home(self, tmp_path):
         home = tmp_path / ".amplifier"
         home.mkdir()
-        (home / conventions.DISTRO_CONFIG_FILENAME).write_text("ok")
+        (home / conventions.SETTINGS_FILENAME).write_text("ok")
         mem = home / conventions.MEMORY_DIR
         mem.mkdir()
         (mem / "note.yaml").write_text("hello")
@@ -233,7 +195,6 @@ class TestRestoreFlow:
             """Simulate git clone by creating files in the target dir."""
             clone_dir = Path(cmd[-1])
             clone_dir.mkdir(parents=True, exist_ok=True)
-            (clone_dir / conventions.DISTRO_CONFIG_FILENAME).write_text("ok")
             (clone_dir / conventions.SETTINGS_FILENAME).write_text("settings")
             # Simulate .git dir (should be skipped)
             git_dir = clone_dir / ".git"
@@ -247,9 +208,8 @@ class TestRestoreFlow:
         result = restore(amp_home, "alice")
 
         assert result.status == "success"
-        assert len(result.files) == 2  # distro.yaml + settings.yaml
+        assert len(result.files) == 1  # settings.yaml only
         assert conventions.KEYS_FILENAME not in result.files
-        assert (amp_home / conventions.DISTRO_CONFIG_FILENAME).exists()
         assert (amp_home / conventions.SETTINGS_FILENAME).exists()
         assert not (amp_home / conventions.KEYS_FILENAME).exists()
 

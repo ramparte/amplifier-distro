@@ -18,6 +18,7 @@ def _make_mock_handle(session_id: str = "test-session-0001") -> MagicMock:
     handle.project_id = "test-project"
     handle.working_dir = "/tmp/test"
     handle.run = AsyncMock(return_value=f"[response from {session_id}]")
+    handle.cleanup = AsyncMock()
     return handle
 
 
@@ -31,7 +32,7 @@ def bridge_backend():
         from amplifier_distro.server.session_backend import FoundationBackend
 
         backend = FoundationBackend.__new__(FoundationBackend)
-        backend._bridge = AsyncMock()
+        backend._bundle_name = "test-bundle"
         backend._sessions = {}
         backend._reconnect_locks = {}
         backend._session_queues = {}
@@ -57,8 +58,15 @@ class TestFoundationBackendQueueInfrastructure:
 
     async def test_create_session_starts_worker_task(self, bridge_backend):
         """create_session() must pre-start a session worker."""
-        handle = _make_mock_handle("sess-0001")
-        bridge_backend._bridge.create_session = AsyncMock(return_value=handle)
+        # Mock the foundation bundle loading chain:
+        # _load_bundle() -> prepared -> prepared.create_session() -> session
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-0001"
+        mock_session.project_id = "test-project"
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = MagicMock(return_value=mock_session)
+        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
 
         from amplifier_distro.server.session_backend import FoundationBackend
 
@@ -223,7 +231,6 @@ class TestFoundationBackendEndSession:
         session_id = "sess-end-001"
         handle = _make_mock_handle(session_id)
         bridge_backend._sessions[session_id] = handle
-        bridge_backend._bridge.end_session = AsyncMock()
 
         from amplifier_distro.server.session_backend import FoundationBackend
 
@@ -236,7 +243,6 @@ class TestFoundationBackendEndSession:
         session_id = "sess-end-002"
         handle = _make_mock_handle(session_id)
         bridge_backend._sessions[session_id] = handle
-        bridge_backend._bridge.end_session = AsyncMock()
 
         completed = []
 

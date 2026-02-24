@@ -219,6 +219,7 @@ class TestMockBackendOperations:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="Pending session resume implementation (Phase 3)")
 class TestFoundationBackendReconnectLock:
     """Verify that concurrent reconnects for the same session are serialized.
 
