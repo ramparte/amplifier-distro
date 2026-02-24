@@ -193,3 +193,58 @@ class TestChatTranscriptAPI:
         assert data["session_id"] == session_id
         assert len(data["transcript"]) == 2
         assert data["transcript"][0]["role"] == "user"
+
+    def test_transcript_400_for_invalid_session_id(self, chat_client):
+        """Returns 400 when session_id contains characters outside the allowed set.
+
+        Dots, percent signs, and similar chars are rejected to prevent
+        path-traversal payloads from reaching the filesystem.
+        """
+        # Dots are not in [a-zA-Z0-9_-] so this reaches the handler but fails
+        # the regex guard (Starlette cannot normalize dots-in-segment away).
+        r = chat_client.get("/apps/chat/api/sessions/bad.session.id/transcript")
+        assert r.status_code == 400
+        assert r.json()["error"] == "Invalid session ID format"
+
+    def test_transcript_500_on_unreadable_file(
+        self, chat_client, tmp_path, monkeypatch
+    ):
+        """Returns 500 when transcript file cannot be read."""
+        session_id = "bad-perms-session"
+        session_dir = tmp_path / "projects" / "proj" / "sessions" / session_id
+        session_dir.mkdir(parents=True)
+        tf = session_dir / "transcript.jsonl"
+        tf.write_text('{"role": "user", "content": "hi"}')
+        tf.chmod(0o000)  # make unreadable
+
+        monkeypatch.setattr(
+            "amplifier_distro.server.apps.chat.AMPLIFIER_HOME", str(tmp_path)
+        )
+        try:
+            r = chat_client.get(f"/apps/chat/api/sessions/{session_id}/transcript")
+            assert r.status_code == 500
+        finally:
+            tf.chmod(0o644)  # restore for cleanup
+
+    def test_transcript_filters_non_role_entries(
+        self, chat_client, tmp_path, monkeypatch
+    ):
+        """Entries without 'role' key and corrupt JSON lines are filtered out."""
+        import json as _json
+
+        session_id = "filter-session"
+        session_dir = tmp_path / "projects" / "proj" / "sessions" / session_id
+        session_dir.mkdir(parents=True)
+        lines = [
+            _json.dumps({"role": "user", "content": "hello"}),
+            _json.dumps({"type": "system_event", "data": "no role key"}),
+            "not valid json at all",
+            _json.dumps({"role": "assistant", "content": "hi"}),
+        ]
+        (session_dir / "transcript.jsonl").write_text("\n".join(lines))
+        monkeypatch.setattr(
+            "amplifier_distro.server.apps.chat.AMPLIFIER_HOME", str(tmp_path)
+        )
+        r = chat_client.get(f"/apps/chat/api/sessions/{session_id}/transcript")
+        assert r.status_code == 200
+        assert len(r.json()["transcript"]) == 2  # only the two with role keys

@@ -16,7 +16,9 @@ Routes:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import types
 from pathlib import Path
 
@@ -35,6 +37,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _static_dir = Path(__file__).parent / "static"
+
+_VALID_SESSION_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -132,7 +136,11 @@ async def list_sessions() -> dict:
 @router.get("/api/sessions/{session_id}/transcript")
 async def get_transcript(session_id: str) -> JSONResponse:
     """Return the transcript for a session as a JSON array of messages."""
-    import json as _json
+    if not _VALID_SESSION_ID.match(session_id):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid session ID format"},
+        )
 
     projects_path = Path(AMPLIFIER_HOME).expanduser() / PROJECTS_DIR
 
@@ -163,15 +171,18 @@ async def get_transcript(session_id: str) -> JSONResponse:
                 if not line:
                     continue
                 try:
-                    entry = _json.loads(line)
+                    entry = json.loads(line)
                     if isinstance(entry, dict) and entry.get("role"):
                         messages.append(entry)
-                except _json.JSONDecodeError:
+                except json.JSONDecodeError:
                     continue
-    except OSError as exc:
+    except OSError:
+        logger.warning(
+            "Failed to read transcript for session %r", session_id, exc_info=True
+        )
         return JSONResponse(
             status_code=500,
-            content={"error": str(exc)},
+            content={"error": "Failed to read transcript. Check server logs."},
         )
 
     return JSONResponse(
