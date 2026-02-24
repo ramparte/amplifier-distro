@@ -104,7 +104,12 @@ async def list_sessions() -> dict:
     """List all active chat sessions with metadata."""
     from amplifier_distro.server.services import get_services
 
-    services = get_services()
+    try:
+        services = get_services()
+    except Exception:  # noqa: BLE001
+        logger.warning("Services unavailable — returning empty session list")
+        return {"sessions": []}
+
     sessions = services.backend.list_active_sessions()
     return {
         "sessions": [

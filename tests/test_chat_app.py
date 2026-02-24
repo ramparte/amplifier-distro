@@ -122,3 +122,41 @@ class TestChatSessionsAPI:
     def test_list_sessions_empty_when_none(self, chat_client):
         r = chat_client.get("/apps/chat/api/sessions")
         assert r.json()["sessions"] == []
+
+    def test_list_sessions_returns_session_shape(self, chat_client):
+        """Each session entry has the four required fields with correct types."""
+        from unittest.mock import patch
+
+        from amplifier_distro.server.session_backend import SessionInfo
+
+        fake = SessionInfo(
+            session_id="abc-123",
+            working_dir="/tmp/work",
+            description="test session",
+            is_active=True,
+        )
+        with patch(
+            "amplifier_distro.server.session_backend.MockBackend.list_active_sessions",
+            return_value=[fake],
+        ):
+            r = chat_client.get("/apps/chat/api/sessions")
+            sessions = r.json()["sessions"]
+            assert len(sessions) == 1
+            s = sessions[0]
+            assert s["session_id"] == "abc-123"
+            assert s["working_dir"] == "/tmp/work"
+            assert s["description"] == "test session"
+            assert s["is_active"] is True
+
+    def test_list_sessions_returns_empty_when_services_unavailable(self, chat_client):
+        """Returns empty list (not a 500) when get_services() raises."""
+        from unittest.mock import patch
+
+        # get_services is a lazy import inside the function, so patch at the source
+        with patch(
+            "amplifier_distro.server.services.get_services",
+            side_effect=RuntimeError("Services down"),
+        ):
+            r = chat_client.get("/apps/chat/api/sessions")
+            assert r.status_code == 200
+            assert r.json() == {"sessions": []}
