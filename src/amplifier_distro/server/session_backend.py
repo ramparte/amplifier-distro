@@ -218,6 +218,7 @@ class BridgeBackend:
         self._worker_tasks: dict[str, asyncio.Task] = {}
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
+        self._approval_systems: dict[str, Any] = {}  # session_id → BridgeApprovalSystem
 
     async def create_session(
         self,
@@ -328,6 +329,24 @@ class BridgeBackend:
             logger.debug("cancel_session: unknown session %s (ignored)", session_id)
             return
         await handle.cancel(level)
+
+    def resolve_approval(
+        self,
+        session_id: str,
+        request_id: str,
+        choice: str,
+    ) -> bool:
+        """Unblock a pending approval request for a session.
+
+        Returns True if the request was found and unblocked, False otherwise.
+        """
+        approval = self._approval_systems.get(session_id)
+        if approval is None:
+            logger.warning(
+                "resolve_approval: no approval system for session %s", session_id
+            )
+            return False
+        return approval.handle_response(request_id, choice)
 
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
