@@ -206,7 +206,21 @@ async def get_preferences() -> dict:
 @router.put("/api/preferences")
 async def put_preferences(request: Request) -> dict:
     """Apply partial preference updates."""
-    body = await request.json() if await request.body() else {}
+    from fastapi import HTTPException
+
+    raw = await request.body()
+    if not raw:
+        return save_preferences({})
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail="Request body must be valid JSON"
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=400, detail="Request body must be a JSON object"
+        )
     return save_preferences(body)
 
 

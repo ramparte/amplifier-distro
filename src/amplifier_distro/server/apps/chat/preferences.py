@@ -9,6 +9,7 @@ Schema:
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -39,7 +40,7 @@ _DEFAULTS: dict[str, Any] = {
 def load_preferences() -> dict[str, Any]:
     """Load preferences from disk, returning defaults if file missing."""
     path = _get_prefs_path()
-    prefs = dict(_DEFAULTS)
+    prefs = copy.deepcopy(_DEFAULTS)  # deep copy to prevent list mutation
     if path.exists():
         try:
             on_disk = json.loads(path.read_text(encoding="utf-8"))
