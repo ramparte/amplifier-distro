@@ -172,6 +172,10 @@ class BridgeConfig:
     display: BridgeDisplaySystem | None = None
     # Streaming callback
     on_stream: Callable[[str, dict[str, Any]], Any] | None = None
+    # Behaviors to activate in the session (e.g., ["web-search", "file-ops"])
+    behaviors: list[str] | None = None
+    # Whether to expose thinking blocks to the UI
+    show_thinking: bool = False
 
 
 @dataclass
