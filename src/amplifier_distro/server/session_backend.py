@@ -74,6 +74,10 @@ class SessionBackend(Protocol):
         """List all active sessions managed by this backend."""
         ...
 
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """Request cancellation of an active session. No-op for unknown IDs."""
+        ...
+
 
 class MockBackend:
     """Mock backend for testing and simulation.
@@ -171,6 +175,16 @@ class MockBackend:
         images: list[str] | None = None,
     ) -> None:
         """MockBackend execute: no-op (MockBackend doesn't stream events)."""
+
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """No-op cancel for mock — records the call."""
+        self.calls.append(
+            {
+                "method": "cancel_session",
+                "session_id": session_id,
+                "level": level,
+            }
+        )
 
     async def resume_session(self, session_id: str, working_dir: str) -> None:
         """No-op resume for testing. Records the call for assertion."""

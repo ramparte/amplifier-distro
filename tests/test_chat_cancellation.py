@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,7 +21,7 @@ class TestSessionHandleCancel:
         handle = SessionHandle(
             session_id="s001",
             project_id="p001",
-            working_dir=__import__("pathlib").Path("/tmp"),
+            working_dir=Path("/tmp"),
             _session=mock_session,
         )
 
@@ -33,7 +34,7 @@ class TestSessionHandleCancel:
         handle = SessionHandle(
             session_id="s002",
             project_id="p002",
-            working_dir=__import__("pathlib").Path("/tmp"),
+            working_dir=Path("/tmp"),
             _session=None,
         )
         await handle.cancel("graceful")  # Should not raise
@@ -45,7 +46,7 @@ class TestSessionHandleCancel:
         handle = SessionHandle(
             session_id="s003",
             project_id="p003",
-            working_dir=__import__("pathlib").Path("/tmp"),
+            working_dir=Path("/tmp"),
             _session=mock_session,
         )
         await handle.cancel("graceful")  # Should not raise

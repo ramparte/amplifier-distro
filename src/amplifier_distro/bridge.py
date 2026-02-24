@@ -200,6 +200,8 @@ class SessionHandle:
     async def cancel(self, level: str = "graceful") -> None:
         """Request cancellation of the running session.
 
+        Declared async for interface consistency with run() and cleanup(),
+        though the underlying request_cancel() call is synchronous.
         Safe to call when _session is None or coordinator is unavailable.
         level: "graceful" (finish current tool) or "immediate" (stop now).
         """
