@@ -123,13 +123,20 @@ class BridgeApprovalSystem:
             self._responses.pop(request_id, None)  # defensive cleanup
 
     def handle_response(self, request_id: str, choice: str) -> bool:
-        """Unblock a waiting request_approval(). Returns True if found."""
+        """Unblock a waiting request_approval().
+
+        Returns True if found and not already resolved.
+        """
         event = self._pending.get(request_id)
-        if event is not None:
-            self._responses[request_id] = choice
-            event.set()
-            return True
-        return False
+        if event is None:
+            return False
+        if event.is_set():
+            # Already resolved (either by a prior handle_response call, or
+            # timeout has fired and the event was set by the timeout path).
+            return False
+        self._responses[request_id] = choice
+        event.set()
+        return True
 
 
 class BridgeStreamingHook:

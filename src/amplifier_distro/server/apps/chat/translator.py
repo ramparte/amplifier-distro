@@ -162,5 +162,15 @@ class SessionEventTranslator:
                     "source": data.get("source", "system"),
                 }
 
+            case "approval_request":
+                return {
+                    "type": "approval_request",
+                    "id": data.get("request_id", ""),
+                    "prompt": data.get("prompt", ""),
+                    "options": data.get("options", []),
+                    "timeout": data.get("timeout", 300),
+                    "default": data.get("default", "deny"),
+                }
+
             case _:
                 return None

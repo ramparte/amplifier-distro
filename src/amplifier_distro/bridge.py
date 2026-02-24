@@ -218,7 +218,12 @@ class SessionHandle:
             return
         request_cancel = getattr(coordinator, "request_cancel", None)
         if request_cancel is not None:
-            request_cancel(level)
+            try:
+                request_cancel(level)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Error requesting cancel (level=%s)", level, exc_info=True
+                )
 
     async def cleanup(self) -> None:
         """Clean up session resources."""
@@ -732,7 +737,7 @@ class LocalBridge:
                                 "Injected %d messages from previous transcript",
                                 len(messages),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             logger.warning(
                                 "Failed to inject transcript messages into context",
                                 exc_info=True,

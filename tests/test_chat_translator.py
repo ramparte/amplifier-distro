@@ -245,6 +245,26 @@ class TestDelegatePropagation:
         )
         assert msg["parent_tool_call_id"] == "tc-task-001"
 
+    def test_approval_request(self):
+        msg = self.t.translate(
+            "approval_request",
+            {
+                "request_id": "req-001",
+                "prompt": "Allow tool?",
+                "options": ["allow", "deny"],
+                "timeout": 30.0,
+                "default": "deny",
+            },
+        )
+        assert msg == {
+            "type": "approval_request",
+            "id": "req-001",
+            "prompt": "Allow tool?",
+            "options": ["allow", "deny"],
+            "timeout": 30.0,
+            "default": "deny",
+        }
+
     def test_fifo_order_for_parallel_delegates(self):
         self.t.translate(
             "tool:pre",

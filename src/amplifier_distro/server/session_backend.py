@@ -276,7 +276,32 @@ class BridgeBackend:
         # Wire the approval system for this session
         from amplifier_distro.bridge_protocols import BridgeApprovalSystem as _BAS
 
-        _approval = _BAS(auto_approve=False)
+        # Wire on_approval_request to notify the client via event queue
+        def _on_approval_request(
+            request_id: str,
+            prompt: str,
+            options: list,
+            timeout: float,
+            default: str,
+        ) -> None:
+            if event_queue is not None:
+                event_queue.put_nowait(
+                    (
+                        "approval_request",
+                        {
+                            "request_id": request_id,
+                            "prompt": prompt,
+                            "options": options,
+                            "timeout": timeout,
+                            "default": default,
+                        },
+                    )
+                )
+
+        _approval = _BAS(
+            on_approval_request=_on_approval_request,
+            auto_approve=False,
+        )
         self._approval_systems[handle.session_id] = _approval
         if hasattr(handle, "set_approval_system"):
             handle.set_approval_system(_approval)
@@ -398,6 +423,17 @@ class BridgeBackend:
         try:
             handle = await self._bridge.resume_session(session_id)
             self._sessions[session_id] = handle
+
+            # Re-wire approval system (mirrors create_session() wiring)
+            from amplifier_distro.bridge_protocols import BridgeApprovalSystem as _BAS
+
+            _approval = _BAS(auto_approve=False)
+            approval_systems = getattr(self, "_approval_systems", None)
+            if approval_systems is not None:
+                approval_systems[session_id] = _approval
+                if hasattr(handle, "set_approval_system"):
+                    handle.set_approval_system(_approval)
+
             logger.info(f"Reconnected session {session_id}")
             return handle
         except (FileNotFoundError, ValueError, RuntimeError, OSError) as err:
@@ -526,6 +562,7 @@ class BridgeBackend:
 
         self._session_queues.clear()
         self._worker_tasks.clear()
+        self._approval_systems.clear()  # prevent memory leak on server shutdown
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         handle = self._sessions.get(session_id)
