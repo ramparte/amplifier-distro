@@ -45,6 +45,14 @@ from amplifier_distro.fileutil import atomic_write
 
 logger = logging.getLogger(__name__)
 
+# Delegate events that may not appear in ALL_EVENTS but must always be registered
+_DELEGATE_EVENTS = [
+    "delegate:agent_spawned",
+    "delegate:agent_resumed",
+    "delegate:agent_completed",
+    "delegate:error",
+]
+
 
 def _encode_cwd(working_dir: Path) -> str:
     """Encode working directory to project directory name.
@@ -436,12 +444,6 @@ class LocalBridge:
                 )
 
             # Explicitly register delegate events — they may not be in ALL_EVENTS
-            _DELEGATE_EVENTS = [
-                "delegate:agent_spawned",
-                "delegate:agent_resumed",
-                "delegate:agent_completed",
-                "delegate:error",
-            ]
             for _event in _DELEGATE_EVENTS:
                 if _event not in ALL_EVENTS:
                     session.coordinator.hooks.register(
@@ -635,12 +637,6 @@ class LocalBridge:
                 )
 
             # Explicitly register delegate events — they may not be in ALL_EVENTS
-            _DELEGATE_EVENTS = [
-                "delegate:agent_spawned",
-                "delegate:agent_resumed",
-                "delegate:agent_completed",
-                "delegate:error",
-            ]
             for _event in _DELEGATE_EVENTS:
                 if _event not in ALL_EVENTS:
                     session.coordinator.hooks.register(
