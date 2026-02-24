@@ -240,18 +240,14 @@ class BridgeBackend:
         from amplifier_distro.bridge import BridgeConfig
 
         on_stream = None
-        if event_queue is not None:
-            _q = event_queue
-
-            def on_stream(event: str, data: dict) -> None:
-                _q.put_nowait((event, data))
-
-        # Wire display system to queue if provided
         display = None
         if event_queue is not None:
             from amplifier_distro.bridge_protocols import BridgeDisplaySystem as _BDS
 
-            _q = event_queue
+            _q = event_queue  # single assignment, shared by both closures
+
+            def on_stream(event: str, data: dict) -> None:
+                _q.put_nowait((event, data))
 
             def _on_display_message(message: str, level: str, source: str) -> None:
                 _q.put_nowait(
