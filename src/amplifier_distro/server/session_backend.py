@@ -100,6 +100,7 @@ class MockBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         self._session_counter += 1
         session_id = f"mock-session-{self._session_counter:04d}"
@@ -201,15 +202,24 @@ class BridgeBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         from pathlib import Path
 
         from amplifier_distro.bridge import BridgeConfig
 
+        on_stream = None
+        if event_queue is not None:
+            _q = event_queue
+
+            def on_stream(event: str, data: dict) -> None:
+                _q.put_nowait((event, data))
+
         config = BridgeConfig(
             working_dir=Path(working_dir).expanduser(),
             bundle_name=bundle_name,
             run_preflight=False,  # Server already validated
+            on_stream=on_stream,
         )
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
@@ -263,6 +273,23 @@ class BridgeBackend:
         future: asyncio.Future[str] = loop.create_future()
         await self._session_queues[session_id].put((message, future))
         return await future
+
+    async def execute(
+        self,
+        session_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+    ) -> None:
+        """Execute a prompt, streaming events into the queue wired at create_session().
+
+        Unlike send_message() which blocks for a return value, execute() awaits
+        handle.run() and streams all events through on_stream.
+        Raises ValueError if session not found.
+        """
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            raise ValueError(f"Unknown session: {session_id}")
+        await handle.run(prompt)
 
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
