@@ -83,3 +83,26 @@ class TestChatVendorEndpoint:
     def test_vendor_js_content_type(self, chat_client):
         r = chat_client.get("/apps/chat/vendor.js")
         assert "javascript" in r.headers["content-type"]
+
+
+class TestChatWebSocketEndpoint:
+    def test_websocket_accepts_connection(self, chat_client):
+        """WebSocket at /apps/chat/ws accepts connections."""
+        with chat_client.websocket_connect("/apps/chat/ws") as ws:
+            ws.send_json({"type": "ping"})
+            msg = ws.receive_json()
+            assert msg["type"] == "pong"
+
+    def test_websocket_create_session(self, chat_client):
+        """create_session message returns session_created."""
+        with chat_client.websocket_connect("/apps/chat/ws") as ws:
+            ws.send_json(
+                {
+                    "type": "create_session",
+                    "cwd": "~",
+                    "bundle": None,
+                }
+            )
+            msg = ws.receive_json()
+            assert msg["type"] == "session_created"
+            assert "session_id" in msg

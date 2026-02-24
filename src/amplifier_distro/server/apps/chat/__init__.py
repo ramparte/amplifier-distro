@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket
 from fastapi.responses import HTMLResponse, Response
 
 from amplifier_distro.server.app import AppManifest
@@ -68,6 +68,24 @@ async def vendor_js() -> Response:
 async def health() -> dict:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket) -> None:
+    """WebSocket endpoint — one connection per Amplifier session."""
+    from amplifier_distro.server.apps.chat.connection import ChatConnection
+    from amplifier_distro.server.services import get_services
+
+    try:
+        from amplifier_distro.config import get_config as _get_config
+
+        config = _get_config()
+    except Exception:  # noqa: BLE001
+        config = type("Config", (), {"server": type("S", (), {"api_key": None})()})()
+
+    services = get_services()
+    conn = ChatConnection(ws, services.backend, config)
+    await conn.run()
 
 
 manifest = AppManifest(
