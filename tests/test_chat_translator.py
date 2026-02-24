@@ -158,22 +158,24 @@ class TestCycleAndIndexRemapping:
         msg = self.t.translate(
             "content_block:start", {"block_type": "text", "index": 0}
         )
-        assert msg["index"] != 0 or msg.get("cycle_key") is not None
+        # After one block (index 0) and one tool:post, counter is at 1.
+        # Next cycle's server_index=0 must remap to local index 1.
+        assert msg["index"] == 1
 
     def test_cycle_count_increments_on_tool_post(self):
         result = type("R", (), {"output": "ok", "error": None})()
-        assert self.t.cycle_count == 0
+        assert self.t._cycle_count == 0
         self.t.translate("tool:post", {"tool_call_id": "tc-001", "result": result})
-        assert self.t.cycle_count == 1
+        assert self.t._cycle_count == 1
         self.t.translate("tool:post", {"tool_call_id": "tc-002", "result": result})
-        assert self.t.cycle_count == 2
+        assert self.t._cycle_count == 2
 
     def test_block_map_cleared_on_prompt_complete(self):
         self.t.translate("content_block:start", {"block_type": "text", "index": 0})
-        assert len(self.t.block_map) > 0
+        assert len(self.t._block_map) > 0
         self.t.translate("orchestrator:complete", {"turn_count": 1})
-        assert len(self.t.block_map) == 0
-        assert self.t.cycle_count == 0
+        assert len(self.t._block_map) == 0
+        assert self.t._cycle_count == 0
 
     def test_local_index_stable_across_cycles(self):
         """Each block in each cycle gets a unique, monotonically increasing index."""

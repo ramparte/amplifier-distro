@@ -4,8 +4,8 @@ Kernel events arrive as (event_name, data) tuples from the asyncio.Queue.
 Translator maps them to wire protocol dicts for the WebSocket client.
 
 State maintained across a turn:
-  - cycle_count: increments on each tool:post (handles server index resets)
-  - block_map: {f"{cycle}-{server_index}" -> local_index} for stable DOM ids
+  - _cycle_count: increments on each tool:post (handles server index resets)
+  - _block_map: {f"{cycle}-{server_index}" -> local_index} for stable DOM ids
   - local_index_counter: monotonically increasing across the full turn
   - _pending_delegates: deque of tool_call_ids for delegate/task correlations
 
@@ -22,8 +22,8 @@ class SessionEventTranslator:
     """Translates raw kernel events to wire protocol messages."""
 
     def __init__(self) -> None:
-        self.cycle_count: int = 0
-        self.block_map: dict[str, int] = {}
+        self._cycle_count: int = 0
+        self._block_map: dict[str, int] = {}
         self._local_index_counter: int = 0
         self._pending_delegates: deque[str] = deque()
 
@@ -34,17 +34,17 @@ class SessionEventTranslator:
         unchanged (local == server), while post-cycle blocks always get indices
         beyond any previously assigned ones.
         """
-        key = f"{self.cycle_count}-{server_index}"
-        if key not in self.block_map:
+        key = f"{self._cycle_count}-{server_index}"
+        if key not in self._block_map:
             local = max(server_index, self._local_index_counter)
-            self.block_map[key] = local
+            self._block_map[key] = local
             self._local_index_counter = local + 1
-        return self.block_map[key]
+        return self._block_map[key]
 
     def _reset(self) -> None:
         """Clear per-turn state on prompt_complete."""
-        self.cycle_count = 0
-        self.block_map = {}
+        self._cycle_count = 0
+        self._block_map = {}
         self._local_index_counter = 0
         self._pending_delegates.clear()
 
@@ -102,12 +102,14 @@ class SessionEventTranslator:
                 result = data.get("result")
                 output = None
                 error = None
+                # result is None when the kernel fires tool:post before result
+                # is available (not expected in normal flow; treat as success)
                 success = True
                 if result is not None:
                     output = str(result.output) if result.output is not None else None
                     error = result.error if hasattr(result, "error") else None
                     success = error is None
-                self.cycle_count += 1
+                self._cycle_count += 1
                 return {
                     "type": "tool_result",
                     "tool_call_id": data.get("tool_call_id", ""),
