@@ -17,6 +17,7 @@ Routes:
 from __future__ import annotations
 
 import logging
+import types
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket
@@ -81,9 +82,19 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
         config = _get_config()
     except Exception:  # noqa: BLE001
-        config = type("Config", (), {"server": type("S", (), {"api_key": None})()})()
+        logger.debug(
+            "amplifier_distro.config unavailable — running without API key auth"
+        )
+        config = types.SimpleNamespace(server=types.SimpleNamespace(api_key=None))
 
-    services = get_services()
+    try:
+        services = get_services()
+    except Exception:
+        logger.exception("Services unavailable — closing WebSocket with 1011")
+        await ws.accept()
+        await ws.close(1011, "Internal server error")
+        return
+
     conn = ChatConnection(ws, services.backend, config)
     await conn.run()
 

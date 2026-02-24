@@ -105,4 +105,4 @@ class TestChatWebSocketEndpoint:
             )
             msg = ws.receive_json()
             assert msg["type"] == "session_created"
-            assert "session_id" in msg
+            assert isinstance(msg["session_id"], str) and msg["session_id"]
