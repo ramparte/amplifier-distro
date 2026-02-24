@@ -174,3 +174,35 @@ class TestEventFanout:
 
         # Unknown event produces None from translator — nothing sent
         ws.send_json.assert_not_awaited()
+
+
+class TestSyntheticStreaming:
+    @pytest.mark.asyncio
+    async def test_synthetic_deltas_sent_for_non_streaming_blocks(self):
+        """When content_end arrives with no prior deltas, synthesize chunked deltas."""
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws([])
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+
+        # Simulate: content_start then content_end (no deltas) with text
+        await conn.event_queue.put(
+            ("content_block:start", {"block_type": "text", "index": 0})
+        )
+        await conn.event_queue.put(
+            ("content_block:end", {"index": 0, "text": "Hello world synthetic"})
+        )
+        await conn.event_queue.put(_STOP)
+
+        await conn._event_fanout_loop()
+
+        sent = [call.args[0] for call in ws.send_json.await_args_list]
+        delta_messages = [m for m in sent if m.get("type") == "content_delta"]
+        # Should have multiple delta messages (chunked at 12 chars)
+        assert len(delta_messages) > 1
+        # Concatenated deltas should reconstruct the text
+        full = "".join(m["delta"] for m in delta_messages)
+        assert full == "Hello world synthetic"

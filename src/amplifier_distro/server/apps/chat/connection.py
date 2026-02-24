@@ -50,6 +50,8 @@ class ChatConnection:
         # keeps strong refs to fire-and-forget tasks so GC can't collect them
         self._tasks: set[asyncio.Task] = set()
         self._active_execution: asyncio.Task | None = None
+        # tracks which local block indices received at least one delta
+        self._seen_deltas: set[int] = set()
 
     async def run(self) -> None:
         """Full connection lifecycle: auth then concurrent receive + fanout."""
@@ -290,7 +292,8 @@ class ChatConnection:
     async def _event_fanout_loop(self) -> None:
         """Drain event_queue and forward translated events to WebSocket.
 
-        Stops on _STOP sentinel or WebSocketDisconnect.
+        Stops on _STOP sentinel. Synthesizes streaming deltas for non-streaming
+        providers that deliver full text in content_end with no prior deltas.
         """
         while True:
             raw = await self.event_queue.get()
@@ -298,9 +301,38 @@ class ChatConnection:
                 break
             event_name, data = raw
             try:
+                # Track which local indices received deltas
+                if event_name == "content_block:delta":
+                    local_idx = self._translator._get_local_index(data.get("index", 0))
+                    self._seen_deltas.add(local_idx)
+
+                # Synthetic streaming: if content_end has text but no deltas were seen,
+                # synthesize chunked deltas to animate the response
+                if event_name == "content_block:end":
+                    local_idx = self._translator._get_local_index(data.get("index", 0))
+                    text = data.get("text", "")
+                    if text and local_idx not in self._seen_deltas:
+                        # Synthesize: send chunked deltas before the end event
+                        chunk_size = 12
+                        server_index = data.get("index", 0)
+                        for i in range(0, len(text), chunk_size):
+                            chunk = text[i : i + chunk_size]
+                            delta_msg = self._translator.translate(
+                                "content_block:delta",
+                                {"delta": chunk, "index": server_index},
+                            )
+                            if delta_msg is not None:
+                                await self._ws.send_json(delta_msg)
+                    self._seen_deltas.discard(local_idx)
+
                 msg = self._translator.translate(event_name, data)
                 if msg is not None:
                     await self._ws.send_json(msg)
+
+                # Reset seen_deltas on prompt_complete
+                if event_name == "orchestrator:complete":
+                    self._seen_deltas.clear()
+
             except WebSocketDisconnect:
                 logger.debug("WebSocket disconnected during event fanout")
                 break
