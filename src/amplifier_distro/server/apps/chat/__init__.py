@@ -36,7 +36,7 @@ async def index() -> HTMLResponse:
     """Serve the chat interface."""
     html_file = _static_dir / "index.html"
     if html_file.exists():
-        return HTMLResponse(content=html_file.read_text())
+        return HTMLResponse(content=html_file.read_text(encoding="utf-8"))
     return HTMLResponse(
         content=(
             "<html><body>"
@@ -54,7 +54,7 @@ async def vendor_js() -> Response:
     vendor_file = _static_dir / "vendor.js"
     if vendor_file.exists():
         return Response(
-            content=vendor_file.read_text(),
+            content=vendor_file.read_text(encoding="utf-8"),
             media_type="application/javascript",
         )
     return Response(

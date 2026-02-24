@@ -66,6 +66,14 @@ class TestChatHealthEndpoint:
 
 
 class TestChatVendorEndpoint:
+    def test_vendor_js_returns_404_when_absent(self, chat_client):
+        r = chat_client.get("/apps/chat/vendor.js")
+        assert r.status_code == 404
+
+    def test_vendor_js_is_javascript_when_absent(self, chat_client):
+        r = chat_client.get("/apps/chat/vendor.js")
+        assert "javascript" in r.headers["content-type"]
+
     @pytest.mark.skip(reason="vendor.js built in Task 14")
     def test_vendor_js_returns_200(self, chat_client):
         r = chat_client.get("/apps/chat/vendor.js")
