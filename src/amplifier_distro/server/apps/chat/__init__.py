@@ -16,13 +16,14 @@ Routes:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
 import types
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from amplifier_distro.conventions import (
@@ -37,6 +38,24 @@ from amplifier_distro.server.apps.chat.preferences import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _require_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
+) -> None:
+    """Verify api_key if configured. No-op when api_key is None."""
+    try:
+        from amplifier_distro.config import get_config as _get_config
+
+        config = _get_config()
+        api_key = getattr(config.server, "api_key", None)
+    except ImportError:
+        return  # no auth configured
+    if api_key is None:
+        return  # auth not enabled
+    if not x_api_key or not hmac.compare_digest(str(x_api_key), str(api_key)):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 router = APIRouter()
 
@@ -115,7 +134,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 # TODO: sessions list only shows in-memory active sessions (current process).
 # Sessions from previous server runs are on disk but not listed here.
 # Future: union active sessions with disk-discovered session directories.
-@router.get("/api/sessions")
+@router.get("/api/sessions", dependencies=[Depends(_require_api_key)])
 async def list_sessions() -> dict:
     """List all active chat sessions with metadata."""
     from amplifier_distro.server.services import get_services
@@ -140,10 +159,13 @@ async def list_sessions() -> dict:
     }
 
 
-@router.get("/api/sessions/{session_id}/transcript")
+@router.get(
+    "/api/sessions/{session_id}/transcript",
+    dependencies=[Depends(_require_api_key)],
+)
 async def get_transcript(session_id: str) -> JSONResponse:
     """Return the transcript for a session as a JSON array of messages."""
-    if not _VALID_SESSION_ID.match(session_id):
+    if not _VALID_SESSION_ID.fullmatch(session_id):
         return JSONResponse(
             status_code=400,
             content={"error": "Invalid session ID format"},
@@ -206,7 +228,7 @@ async def get_preferences() -> dict:
     return load_preferences()
 
 
-@router.put("/api/preferences")
+@router.put("/api/preferences", dependencies=[Depends(_require_api_key)])
 async def put_preferences(request: Request) -> dict:
     """Apply partial preference updates."""
     raw = await request.body()

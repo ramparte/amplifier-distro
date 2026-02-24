@@ -89,10 +89,25 @@ class ChatConnection:
     async def _auth_handshake(self) -> None:
         """Validate auth token if api_key is configured.
 
-        Closes with code 4001 if wrong token.
-        No-op if api_key is None.
-        Times out after _AUTH_TIMEOUT_S seconds (DoS prevention).
+        Also validates WebSocket Origin header to prevent CSRF attacks —
+        any browser page can open a WebSocket connection, bypassing SOP.
+        Only allows connections from localhost origins.
         """
+        # Origin check — prevents CSRF from evil.com → localhost:PORT
+        origin = self._ws.headers.get("origin", "")
+        if origin:  # skip for non-browser clients (no Origin header)
+            allowed = {"http://localhost", "http://127.0.0.1", "https://localhost"}
+            # Allow any localhost:PORT variant
+            is_localhost = any(
+                origin.startswith(allowed_prefix) for allowed_prefix in allowed
+            )
+            if not is_localhost:
+                logger.warning(
+                    "Rejected WebSocket from non-localhost origin: %s", origin
+                )
+                await self._ws.close(4003, "Forbidden origin")
+                raise WebSocketDisconnect(code=4003)
+
         api_key = getattr(self._config.server, "api_key", None)
         if api_key is None:
             return
@@ -198,7 +213,7 @@ class ChatConnection:
                 event_queue=self.event_queue,
             )
             self._session_id = info.session_id
-            self._translator._reset()
+            self._translator.reset()
             await self._ws.send_json(
                 {
                     "type": "session_created",
@@ -268,23 +283,27 @@ class ChatConnection:
                 new_bundle = args[0]
                 if self._session_id:
                     await self._backend.cancel_session(self._session_id, "graceful")
+                    with contextlib.suppress(Exception):
+                        await self._backend.end_session(self._session_id)
                 info = await self._backend.create_session(
                     bundle_name=new_bundle,
                     event_queue=self.event_queue,
                 )
                 self._session_id = info.session_id
-                self._translator._reset()
+                self._translator.reset()
                 return {"bundle": new_bundle, "session_id": info.session_id}
             case "cwd" if args:
                 new_cwd = args[0]
                 if self._session_id:
                     await self._backend.cancel_session(self._session_id, "graceful")
+                    with contextlib.suppress(Exception):
+                        await self._backend.end_session(self._session_id)
                 info = await self._backend.create_session(
                     working_dir=new_cwd,
                     event_queue=self.event_queue,
                 )
                 self._session_id = info.session_id
-                self._translator._reset()
+                self._translator.reset()
                 return {"cwd": new_cwd, "session_id": info.session_id}
             case _:
                 return {"error": f"Unknown command: {name}"}
@@ -303,13 +322,13 @@ class ChatConnection:
             try:
                 # Track which local indices received deltas
                 if event_name == "content_block:delta":
-                    local_idx = self._translator._get_local_index(data.get("index", 0))
+                    local_idx = self._translator.get_local_index(data.get("index", 0))
                     self._seen_deltas.add(local_idx)
 
                 # Synthetic streaming: if content_end has text but no deltas were seen,
                 # synthesize chunked deltas to animate the response
                 if event_name == "content_block:end":
-                    local_idx = self._translator._get_local_index(data.get("index", 0))
+                    local_idx = self._translator.get_local_index(data.get("index", 0))
                     text = data.get("text", "")
                     if text and local_idx not in self._seen_deltas:
                         # Synthesize: send chunked deltas before the end event

@@ -27,7 +27,7 @@ class SessionEventTranslator:
         self._local_index_counter: int = 0
         self._pending_delegates: deque[str] = deque()
 
-    def _get_local_index(self, server_index: int) -> int:
+    def get_local_index(self, server_index: int) -> int:
         """Map (cycle, server_index) composite key to a stable local index.
 
         Uses max(server_index, counter) so that cycle-0 blocks pass through
@@ -41,7 +41,7 @@ class SessionEventTranslator:
             self._local_index_counter = local + 1
         return self._block_map[key]
 
-    def _reset(self) -> None:
+    def reset(self) -> None:
         """Clear per-turn state on prompt_complete."""
         self._cycle_count = 0
         self._block_map = {}
@@ -58,20 +58,20 @@ class SessionEventTranslator:
                 return {
                     "type": "content_start",
                     "block_type": data.get("block_type", "text"),
-                    "index": self._get_local_index(data.get("index", 0)),
+                    "index": self.get_local_index(data.get("index", 0)),
                 }
 
             case "content_block:delta":
                 return {
                     "type": "content_delta",
                     "delta": data.get("delta", ""),
-                    "index": self._get_local_index(data.get("index", 0)),
+                    "index": self.get_local_index(data.get("index", 0)),
                 }
 
             case "content_block:end":
                 return {
                     "type": "content_end",
-                    "index": self._get_local_index(data.get("index", 0)),
+                    "index": self.get_local_index(data.get("index", 0)),
                 }
 
             case "thinking:delta":
@@ -142,7 +142,7 @@ class SessionEventTranslator:
                 }
 
             case "orchestrator:complete":
-                self._reset()
+                self.reset()
                 return {
                     "type": "prompt_complete",
                     "turn_count": data.get("turn_count", 0),

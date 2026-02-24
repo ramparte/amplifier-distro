@@ -534,19 +534,22 @@
     return s.length > n ? s.slice(0, n) + '…' : s;
   }
 
-  // Simple HTML sanitizer — strips event handlers and dangerous tags
-  // For a production app, use DOMPurify in vendor.js instead
+  // Simple HTML sanitizer — strips dangerous tags and event handlers
+  // TODO: Replace with DOMPurify in vendor.js for production use
   function sanitizeHtml(html) {
     const div = document.createElement('div');
     div.innerHTML = html;
-    // Remove all event handlers and dangerous attributes
-    const dangerous = div.querySelectorAll('script,iframe,object,embed,link');
+    // Remove dangerous tags including style, base, meta, form
+    const dangerous = div.querySelectorAll('script,iframe,object,embed,link,style,meta,base,form');
     dangerous.forEach(el => el.remove());
-    // Remove event handler attributes
+    // Remove dangerous attributes (event handlers, unsafe URLs)
+    const UNSAFE_ATTRS = ['src', 'href', 'action', 'formaction', 'data', 'xlink:href'];
+    const UNSAFE_PROTO = /^\s*(javascript|data|vbscript):/i;  // \s* handles whitespace bypass
     const allEls = div.querySelectorAll('*');
     allEls.forEach(el => {
       Array.from(el.attributes).forEach(attr => {
-        if (attr.name.startsWith('on') || attr.name === 'href' && attr.value.startsWith('javascript:')) {
+        if (attr.name.startsWith('on') ||
+            (UNSAFE_ATTRS.includes(attr.name) && UNSAFE_PROTO.test(attr.value))) {
           el.removeAttribute(attr.name);
         }
       });
@@ -1027,6 +1030,16 @@
           setChronoItems(prev => [...prev, {
             id: makeId(), type: 'text', role: 'system',
             content: JSON.stringify(msg.result, null, 2),
+            streaming: false, order: orderCounterRef.current++,
+          }]);
+          break;
+
+        case 'cancel_acknowledged':
+          // Server received the cancel request; awaiting full stop
+          // Show brief indicator that cancel is in progress
+          setChronoItems(prev => [...prev, {
+            id: makeId(), type: 'text', role: 'system',
+            content: 'Cancellation requested…',
             streaming: false, order: orderCounterRef.current++,
           }]);
           break;
