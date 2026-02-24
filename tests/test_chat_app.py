@@ -106,3 +106,19 @@ class TestChatWebSocketEndpoint:
             msg = ws.receive_json()
             assert msg["type"] == "session_created"
             assert isinstance(msg["session_id"], str) and msg["session_id"]
+
+
+class TestChatSessionsAPI:
+    def test_list_sessions_returns_200(self, chat_client):
+        r = chat_client.get("/apps/chat/api/sessions")
+        assert r.status_code == 200
+
+    def test_list_sessions_returns_list(self, chat_client):
+        r = chat_client.get("/apps/chat/api/sessions")
+        data = r.json()
+        assert "sessions" in data
+        assert isinstance(data["sessions"], list)
+
+    def test_list_sessions_empty_when_none(self, chat_client):
+        r = chat_client.get("/apps/chat/api/sessions")
+        assert r.json()["sessions"] == []

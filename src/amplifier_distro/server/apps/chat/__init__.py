@@ -99,6 +99,26 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await conn.run()
 
 
+@router.get("/api/sessions")
+async def list_sessions() -> dict:
+    """List all active chat sessions with metadata."""
+    from amplifier_distro.server.services import get_services
+
+    services = get_services()
+    sessions = services.backend.list_active_sessions()
+    return {
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "working_dir": str(s.working_dir) if s.working_dir else None,
+                "description": s.description,
+                "is_active": s.is_active,
+            }
+            for s in sessions
+        ]
+    }
+
+
 manifest = AppManifest(
     name="chat",
     description="Amplifier rich web chat interface with WebSocket streaming",
