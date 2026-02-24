@@ -443,6 +443,89 @@ class TestStopServicesShutdown:
         await stop_services()  # should silently do nothing
 
 
+class TestFoundationBackendReconnect:
+    """Verify the _reconnect and resume_session methods."""
+
+    async def test_reconnect_raises_for_ended_session(self, bridge_backend):
+        """Tombstoned sessions raise ValueError on reconnect."""
+        bridge_backend._ended_sessions.add("sess-ended-001")
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        with pytest.raises(ValueError, match="intentionally ended"):
+            await FoundationBackend._reconnect(bridge_backend, "sess-ended-001")
+
+    async def test_reconnect_raises_when_no_transcript(self, bridge_backend):
+        """Missing transcript raises ValueError."""
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        def no_transcript(session_id):
+            raise FileNotFoundError(f"No transcript found for session {session_id}")
+
+        bridge_backend._find_transcript = no_transcript
+
+        with pytest.raises(ValueError, match="Unknown session"):
+            await FoundationBackend._reconnect(bridge_backend, "sess-missing-001")
+
+    async def test_resume_session_delegates_to_reconnect(self, bridge_backend):
+        """resume_session passes working_dir through to _reconnect."""
+        mock_reconnect = AsyncMock()
+        bridge_backend._reconnect = mock_reconnect
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.resume_session(
+            bridge_backend, "sess-resume-001", working_dir="/custom/path"
+        )
+
+        mock_reconnect.assert_awaited_once_with(
+            "sess-resume-001", working_dir="/custom/path"
+        )
+
+    async def test_resume_session_skips_if_already_cached(self, bridge_backend):
+        """resume_session is a no-op if handle already exists."""
+        from unittest.mock import MagicMock
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        mock_handle = MagicMock()
+        bridge_backend._sessions["sess-cached-001"] = mock_handle
+
+        mock_reconnect = AsyncMock()
+        bridge_backend._reconnect = mock_reconnect
+
+        await FoundationBackend.resume_session(
+            bridge_backend, "sess-cached-001", working_dir="~"
+        )
+
+        mock_reconnect.assert_not_awaited()
+
+    def test_find_transcript_reads_jsonl(self, bridge_backend, tmp_path, monkeypatch):
+        """_find_transcript loads transcript.jsonl from the correct directory."""
+        session_id = "test-sess-transcript"
+        project_dir = tmp_path / ".amplifier" / "projects" / "test-project"
+        transcript_dir = project_dir / "sessions" / session_id
+        transcript_dir.mkdir(parents=True)
+
+        transcript_path = transcript_dir / "transcript.jsonl"
+        transcript_path.write_text(
+            '{"role": "user", "content": "hello"}\n'
+            '{"role": "assistant", "content": "hi there"}\n'
+        )
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        messages = FoundationBackend._find_transcript(bridge_backend, session_id)
+
+        assert len(messages) == 2
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "hello"
+        assert messages[1]["role"] == "assistant"
+        assert messages[1]["content"] == "hi there"
+
+
 class TestSessionBackendProtocol:
     def test_protocol_declares_resume_session(self):
         from amplifier_distro.server.session_backend import SessionBackend
