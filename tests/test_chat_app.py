@@ -160,3 +160,36 @@ class TestChatSessionsAPI:
             r = chat_client.get("/apps/chat/api/sessions")
             assert r.status_code == 200
             assert r.json() == {"sessions": []}
+
+
+class TestChatTranscriptAPI:
+    def test_transcript_404_for_unknown_session(self, chat_client):
+        r = chat_client.get("/apps/chat/api/sessions/no-such-session/transcript")
+        assert r.status_code == 404
+
+    def test_transcript_returns_messages(self, chat_client, tmp_path, monkeypatch):
+        """Transcript JSONL is parsed and returned as array."""
+        import json
+
+        session_id = "test-transcript-session"
+        session_dir = tmp_path / "projects" / "test-proj" / "sessions" / session_id
+        session_dir.mkdir(parents=True)
+        transcript = session_dir / "transcript.jsonl"
+        lines = [
+            json.dumps({"role": "user", "content": "hello"}),
+            json.dumps({"role": "assistant", "content": "hi there"}),
+        ]
+        transcript.write_text("\n".join(lines))
+
+        # Patch AMPLIFIER_HOME to point at tmp_path
+        monkeypatch.setattr(
+            "amplifier_distro.server.apps.chat.AMPLIFIER_HOME",
+            str(tmp_path),
+        )
+
+        r = chat_client.get(f"/apps/chat/api/sessions/{session_id}/transcript")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["session_id"] == session_id
+        assert len(data["transcript"]) == 2
+        assert data["transcript"][0]["role"] == "user"

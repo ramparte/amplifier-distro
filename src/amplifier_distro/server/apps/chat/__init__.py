@@ -21,8 +21,13 @@ import types
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from amplifier_distro.conventions import (
+    AMPLIFIER_HOME,
+    PROJECTS_DIR,
+    TRANSCRIPT_FILENAME,
+)
 from amplifier_distro.server.app import AppManifest
 
 logger = logging.getLogger(__name__)
@@ -122,6 +127,59 @@ async def list_sessions() -> dict:
             for s in sessions
         ]
     }
+
+
+@router.get("/api/sessions/{session_id}/transcript")
+async def get_transcript(session_id: str) -> JSONResponse:
+    """Return the transcript for a session as a JSON array of messages."""
+    import json as _json
+
+    projects_path = Path(AMPLIFIER_HOME).expanduser() / PROJECTS_DIR
+
+    # Search all project directories for this session
+    transcript_file: Path | None = None
+    if projects_path.exists():
+        for project_dir in projects_path.iterdir():
+            if not project_dir.is_dir():
+                continue
+            sessions_subdir = project_dir / "sessions"
+            candidate_dir = sessions_subdir if sessions_subdir.is_dir() else project_dir
+            candidate = candidate_dir / session_id / TRANSCRIPT_FILENAME
+            if candidate.exists():
+                transcript_file = candidate
+                break
+
+    if transcript_file is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Session {session_id!r} not found"},
+        )
+
+    messages = []
+    try:
+        with transcript_file.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _json.loads(line)
+                    if isinstance(entry, dict) and entry.get("role"):
+                        messages.append(entry)
+                except _json.JSONDecodeError:
+                    continue
+    except OSError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc)},
+        )
+
+    return JSONResponse(
+        content={
+            "session_id": session_id,
+            "transcript": messages,
+        }
+    )
 
 
 manifest = AppManifest(
