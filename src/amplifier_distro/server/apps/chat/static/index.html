@@ -534,6 +534,26 @@
     return s.length > n ? s.slice(0, n) + '…' : s;
   }
 
+  // Simple HTML sanitizer — strips event handlers and dangerous tags
+  // For a production app, use DOMPurify in vendor.js instead
+  function sanitizeHtml(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    // Remove all event handlers and dangerous attributes
+    const dangerous = div.querySelectorAll('script,iframe,object,embed,link');
+    dangerous.forEach(el => el.remove());
+    // Remove event handler attributes
+    const allEls = div.querySelectorAll('*');
+    allEls.forEach(el => {
+      Array.from(el.attributes).forEach(attr => {
+        if (attr.name.startsWith('on') || attr.name === 'href' && attr.value.startsWith('javascript:')) {
+          el.removeAttribute(attr.name);
+        }
+      });
+    });
+    return div.innerHTML;
+  }
+
   // —— Components ——————————————————————————————————————————————————————
 
   function StatusDot({ status }) {
@@ -600,8 +620,15 @@
 
   function ChronoItem({ item, isActivity }) {
     if (item.type === 'text') {
-      const cls = 'text-block' + (item.role === 'user' ? ' user-message' : item.role === 'system' ? ' system-message' : '');
-      return html`<div class=${cls} id=${item.id} data-streaming=${item.streaming ? 'true' : 'false'}>${item.content}</div>`;
+      const cls = 'text-block'
+        + (item.role === 'user' ? ' user-message' : '')
+        + (item.role === 'system' ? ' system-message' : '');
+      if (item.htmlContent) {
+        return html`<div class=${cls} id=${item.id}
+          dangerouslySetInnerHTML=${{ __html: item.htmlContent }}></div>`;
+      }
+      return html`<div class=${cls} id=${item.id}
+        data-streaming=${item.streaming ? 'true' : 'false'}>${item.content}</div>`;
     }
     if (item.type === 'thinking') {
       return html`<${ThinkingBlock} item=${item} />`;
@@ -615,16 +642,26 @@
   function MessageList({ items, filterFn }) {
     const filtered = filterFn ? items.filter(filterFn) : items;
     const sorted = [...filtered].sort((a, b) => a.order - b.order);
+    const bottomRef = useRef(null);
+
+    // Scroll to bottom when new items are added
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [items.length]);
+
     return html`
       <div id="message-list">
         ${sorted.map(item => html`<${ChronoItem} key=${item.id} item=${item} />`)}
+        <div ref=${bottomRef}></div>
       </div>
     `;
   }
 
   function ApprovalModal({ approval, onRespond }) {
     if (!approval) return null;
-    const timeout = approval.timeout || 300;
+    // Validate: must be a number between 5 and 600 seconds
+    const rawTimeout = Number(approval.timeout);
+    const timeout = isFinite(rawTimeout) ? Math.max(5, Math.min(600, rawTimeout)) : 300;
     return html`
       <div class="modal-backdrop">
         <div class="modal-box">
@@ -699,6 +736,7 @@
     }, [addImages]);
 
     const doSend = useCallback(() => {
+      if (executing) return;  // Guard against double-send
       const ta = textareaRef.current;
       if (!ta) return;
       const content = ta.value.trim();
@@ -711,7 +749,7 @@
       ta.style.height = 'auto';
       setPendingImages([]);
       setSlashOpen(false);
-    }, [onSend, pendingImages]);
+    }, [onSend, pendingImages, executing]);
 
     const handleKeyDown = useCallback((e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -766,8 +804,10 @@
           <textarea
             id="message-input"
             ref=${textareaRef}
-            placeholder="Message… (/ for commands)"
+            placeholder=${executing ? "Processing…" : "Message… (/ for commands)"}
             rows="1"
+            disabled=${executing}
+            style=${{ opacity: executing ? 0.6 : 1 }}
             onInput=${handleInput}
             onKeyDown=${handleKeyDown}
             onPaste=${handlePaste}
@@ -877,26 +917,25 @@
         case 'content_end': {
           const localIdx = getLocalIndex(msg.index);
           const itemId = blockMapRef.current['id-' + localIdx];
+          const el = itemId ? document.getElementById(itemId) : null;
+          const rawText = el?.textContent || '';
+          const parsedHtml = sanitizeHtml(marked.parse(rawText));
           setChronoItems(prev => prev.map(item =>
             item.id === itemId
-              ? { ...item, streaming: false, content: document.getElementById(itemId)?.textContent || item.content }
+              ? { ...item, streaming: false, content: rawText, htmlContent: parsedHtml }
               : item
           ));
-          if (itemId) {
-            const el = document.getElementById(itemId);
-            if (el) el.innerHTML = marked.parse(el.textContent || '');
-          }
+          // REMOVED: el.innerHTML — Preact owns the DOM now
           break;
         }
 
         case 'thinking_delta': {
-          setChronoItems(prev => {
-            const last = [...prev].reverse().find(i => i.type === 'thinking' && i.streaming);
-            if (!last) return prev;
-            const el = document.getElementById(last.id);
-            if (el) el.textContent += msg.delta;
-            return prev;
-          });
+          // Use state update so content accumulates even when collapsed
+          setChronoItems(prev => prev.map(item =>
+            item.type === 'thinking' && item.streaming
+              ? { ...item, content: item.content + msg.delta }
+              : item
+          ));
           break;
         }
 
@@ -1041,7 +1080,15 @@
 
     // —— Send ————————————————————————————————————————————————————————
     const sendMessage = useCallback((content, images) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        // Visible feedback instead of silent return
+        setChronoItems(prev => [...prev, {
+          id: makeId(), type: 'text', role: 'system',
+          content: '⚠ Not connected. Message not sent. Reconnecting…',
+          streaming: false, order: orderCounterRef.current++,
+        }]);
+        return;
+      }
 
       // Client-side slash commands
       if (content.startsWith('/')) {
@@ -1109,6 +1156,7 @@
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'create_session', cwd: '~', bundle: null }));
+        wsRef.current = ws;  // Point active WS to new session
         setSessions(prev => {
           const next = new Map(prev);
           next.set(key, { ws, status: 'idle', turnCount: 0, cwd: '~' });
@@ -1136,6 +1184,31 @@
         });
       };
     }, [handleWsMessage]);
+
+    const switchSession = useCallback((key) => {
+      if (key === activeKey) return;
+
+      // Save current session's messages
+      setSessions(prev => {
+        const next = new Map(prev);
+        const cur = next.get(activeKey) || {};
+        next.set(activeKey, { ...cur, savedItems: chronoItems, savedTurnCount: turnCount });
+        return next;
+      });
+
+      // Load target session
+      const target = sessions.get(key) || {};
+      setChronoItems(target.savedItems || []);
+      setTurnCount(target.savedTurnCount || 0);
+      if (target.ws && target.ws.readyState === WebSocket.OPEN) {
+        wsRef.current = target.ws;
+      }
+      setActiveKey(key);
+      setMobileSidebarOpen(false);
+      blockMapRef.current = {};
+      cycleRef.current = 0;
+      localIndexRef.current = 0;
+    }, [activeKey, chronoItems, turnCount, sessions]);
 
     // —— CWD editor ————————————————————————————————————————————————
     const handleCwdEdit = useCallback((newCwd) => {
@@ -1197,7 +1270,7 @@
                 key=${key}
                 session=${sess}
                 isActive=${key === activeKey}
-                onClick=${() => { setActiveKey(key); setMobileSidebarOpen(false); }}
+                onClick=${() => switchSession(key)}
               />
             `)}
           </div>
