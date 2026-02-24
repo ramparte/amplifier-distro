@@ -77,6 +77,8 @@ class TestAuthHandshake:
 
     @pytest.mark.asyncio
     async def test_wrong_token_closes_4001(self):
+        from starlette.websockets import WebSocketDisconnect
+
         from amplifier_distro.server.apps.chat.connection import ChatConnection
 
         ws = make_ws([{"type": "auth", "token": "wrong"}])
@@ -84,7 +86,8 @@ class TestAuthHandshake:
         config = make_config(api_key="secret")
 
         conn = ChatConnection(ws, backend, config)
-        await conn.auth_handshake()
+        with pytest.raises(WebSocketDisconnect):
+            await conn.auth_handshake()
 
         ws.close.assert_awaited_once_with(4001, "Unauthorized")
 
@@ -110,14 +113,12 @@ class TestReceiveLoop:
         config = make_config()
 
         conn = ChatConnection(ws, backend, config)
-        with pytest.raises((WebSocketDisconnect, StopAsyncIteration, Exception)):
+        with pytest.raises(WebSocketDisconnect):
             await conn._receive_loop()
 
         backend.create_session.assert_awaited_once()
         call_kwargs = backend.create_session.call_args.kwargs
-        assert (
-            call_kwargs.get("working_dir") == "/tmp" or call_kwargs.get("cwd") == "/tmp"
-        )
+        assert call_kwargs.get("working_dir") == "/tmp"
 
     @pytest.mark.asyncio
     async def test_ping_sends_pong(self):
@@ -130,7 +131,7 @@ class TestReceiveLoop:
         config = make_config()
 
         conn = ChatConnection(ws, backend, config)
-        with pytest.raises((WebSocketDisconnect, StopAsyncIteration, Exception)):
+        with pytest.raises(WebSocketDisconnect):
             await conn._receive_loop()
 
         sent = [call.args[0] for call in ws.send_json.await_args_list]

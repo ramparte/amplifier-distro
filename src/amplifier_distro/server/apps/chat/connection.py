@@ -10,6 +10,7 @@ One instance per WebSocket connection. Owns:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -64,6 +65,8 @@ class ChatConnection:
         except Exception:  # noqa: BLE001
             logger.warning("ChatConnection error", exc_info=True)
         finally:
+            for task in list(self._tasks):
+                task.cancel()
             await self.event_queue.put(_STOP)
 
     async def auth_handshake(self) -> None:
@@ -80,7 +83,7 @@ class ChatConnection:
 
         if msg.get("type") != "auth" or msg.get("token") != api_key:
             await self._ws.close(4001, "Unauthorized")
-            return
+            raise WebSocketDisconnect(code=4001)  # signal run() to exit immediately
 
         await self._ws.send_json({"type": "auth_ok"})
 
@@ -181,7 +184,8 @@ class ChatConnection:
             await self._backend.execute(self._session_id, content, images)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Execution error", exc_info=True)
-            await self._ws.send_json({"type": "execution_error", "error": str(exc)})
+            with contextlib.suppress(Exception):
+                await self._ws.send_json({"type": "execution_error", "error": str(exc)})
 
     async def _handle_command(self, name: str, args: list[str]) -> None:
         """Handle a slash command from the client."""
@@ -209,6 +213,8 @@ class ChatConnection:
                 }
             case "bundle" if args:
                 new_bundle = args[0]
+                if self._session_id:
+                    await self._backend.cancel_session(self._session_id, "graceful")
                 info = await self._backend.create_session(
                     bundle_name=new_bundle,
                     event_queue=self.event_queue,
@@ -217,6 +223,8 @@ class ChatConnection:
                 return {"bundle": new_bundle, "session_id": info.session_id}
             case "cwd" if args:
                 new_cwd = args[0]
+                if self._session_id:
+                    await self._backend.cancel_session(self._session_id, "graceful")
                 info = await self._backend.create_session(
                     working_dir=new_cwd,
                     event_queue=self.event_queue,
