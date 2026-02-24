@@ -289,6 +289,7 @@ class BridgeBackend:
         handle = self._sessions.get(session_id)
         if handle is None:
             raise ValueError(f"Unknown session: {session_id}")
+        # TODO(Task 27): pass images to handle.run() when image attachment is wired
         await handle.run(prompt)
 
     async def _reconnect(self, session_id: str) -> Any:
