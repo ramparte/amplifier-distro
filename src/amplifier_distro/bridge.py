@@ -345,8 +345,7 @@ class LocalBridge:
         )
         if path.exists():
             logger.info(
-                "No bundle.active configured; "
-                "falling back to convention bundle at %s",
+                "No bundle.active configured; falling back to convention bundle at %s",
                 path,
             )
             return str(path)
@@ -435,6 +434,22 @@ class LocalBridge:
                     priority=100,
                     name=f"bridge-streaming:{event}",
                 )
+
+            # Explicitly register delegate events — they may not be in ALL_EVENTS
+            _DELEGATE_EVENTS = [
+                "delegate:agent_spawned",
+                "delegate:agent_resumed",
+                "delegate:agent_completed",
+                "delegate:error",
+            ]
+            for _event in _DELEGATE_EVENTS:
+                if _event not in ALL_EVENTS:
+                    session.coordinator.hooks.register(
+                        event=_event,
+                        handler=streaming,
+                        priority=100,
+                        name=f"bridge-streaming:{_event}",
+                    )
         except (ImportError, AttributeError):
             logger.debug(
                 "Could not register streaming hooks"
@@ -618,6 +633,22 @@ class LocalBridge:
                     priority=100,
                     name=f"bridge-streaming:{event}",
                 )
+
+            # Explicitly register delegate events — they may not be in ALL_EVENTS
+            _DELEGATE_EVENTS = [
+                "delegate:agent_spawned",
+                "delegate:agent_resumed",
+                "delegate:agent_completed",
+                "delegate:error",
+            ]
+            for _event in _DELEGATE_EVENTS:
+                if _event not in ALL_EVENTS:
+                    session.coordinator.hooks.register(
+                        event=_event,
+                        handler=streaming,
+                        priority=100,
+                        name=f"bridge-streaming:{_event}",
+                    )
         except (ImportError, AttributeError):
             logger.debug(
                 "Could not register streaming hooks"
