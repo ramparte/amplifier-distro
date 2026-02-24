@@ -164,6 +164,14 @@ class MockBackend:
         """Get the full message history for a session (testing helper)."""
         return self._message_history.get(session_id, [])
 
+    async def execute(
+        self,
+        session_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+    ) -> None:
+        """MockBackend execute: no-op (MockBackend doesn't stream events)."""
+
     async def resume_session(self, session_id: str, working_dir: str) -> None:
         """No-op resume for testing. Records the call for assertion."""
         self.calls.append(
@@ -269,8 +277,7 @@ class BridgeBackend:
                 self._session_worker(session_id)
             )
 
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         await self._session_queues[session_id].put((message, future))
         return await future
 

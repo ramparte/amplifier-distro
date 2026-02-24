@@ -81,9 +81,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         from amplifier_distro.config import get_config as _get_config
 
         config = _get_config()
-    except Exception:  # noqa: BLE001
-        logger.debug(
-            "amplifier_distro.config unavailable — running without API key auth"
+    except ImportError:
+        logger.warning(
+            "amplifier_distro.config not installed — running without API key auth"
         )
         config = types.SimpleNamespace(server=types.SimpleNamespace(api_key=None))
 

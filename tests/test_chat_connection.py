@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from amplifier_distro.server.apps.chat.connection import _STOP
+
 
 def make_ws(messages: list[dict]):
     """Create a mock WebSocket that replays messages then raises disconnect."""
@@ -58,7 +60,7 @@ class TestAuthHandshake:
         config = make_config(api_key=None)
 
         conn = ChatConnection(ws, backend, config)
-        await conn.auth_handshake()
+        await conn._auth_handshake()
         ws.close.assert_not_called()
 
     @pytest.mark.asyncio
@@ -70,7 +72,7 @@ class TestAuthHandshake:
         config = make_config(api_key="secret")
 
         conn = ChatConnection(ws, backend, config)
-        await conn.auth_handshake()
+        await conn._auth_handshake()
 
         ws.send_json.assert_awaited_once_with({"type": "auth_ok"})
         ws.close.assert_not_called()
@@ -87,7 +89,7 @@ class TestAuthHandshake:
 
         conn = ChatConnection(ws, backend, config)
         with pytest.raises(WebSocketDisconnect):
-            await conn.auth_handshake()
+            await conn._auth_handshake()
 
         ws.close.assert_awaited_once_with(4001, "Unauthorized")
 
@@ -149,7 +151,7 @@ class TestEventFanout:
 
         conn = ChatConnection(ws, backend, config)
         await conn.event_queue.put(("orchestrator:complete", {"turn_count": 1}))
-        await conn.event_queue.put(None)  # sentinel to stop the loop
+        await conn.event_queue.put(_STOP)  # sentinel to stop the loop
 
         await conn._event_fanout_loop()
 
@@ -166,7 +168,7 @@ class TestEventFanout:
 
         conn = ChatConnection(ws, backend, config)
         await conn.event_queue.put(("some:unknown:event", {}))
-        await conn.event_queue.put(None)
+        await conn.event_queue.put(_STOP)
 
         await conn._event_fanout_loop()
 

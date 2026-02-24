@@ -1,7 +1,7 @@
 """ChatConnection — manages one WebSocket session lifecycle.
 
 One instance per WebSocket connection. Owns:
-  - auth_handshake(): validate token if api_key is configured
+  - _auth_handshake(): validate token if api_key is configured
   - _receive_loop(): read client messages, dispatch to backend
   - _event_fanout_loop(): drain asyncio.Queue, translate, send to WS
   - event_queue: asyncio.Queue wired to BridgeBackend.on_stream
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -25,8 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_AUTH_TIMEOUT_S = 30.0
+
 # Sentinel: put into event_queue to stop _event_fanout_loop
-_STOP = None
+_STOP: object = object()
 
 
 class ChatConnection:
@@ -46,42 +49,65 @@ class ChatConnection:
         self._session_id: str | None = None
         # keeps strong refs to fire-and-forget tasks so GC can't collect them
         self._tasks: set[asyncio.Task] = set()
+        self._active_execution: asyncio.Task | None = None
 
     async def run(self) -> None:
         """Full connection lifecycle: auth then concurrent receive + fanout."""
         await self._ws.accept()
         try:
-            await self.auth_handshake()
+            await self._auth_handshake()
         except WebSocketDisconnect:
             return
 
+        fanout_task = asyncio.create_task(
+            self._event_fanout_loop(), name="event_fanout_loop"
+        )
         try:
-            await asyncio.gather(
-                self._receive_loop(),
-                self._event_fanout_loop(),
-            )
+            await self._receive_loop()
         except WebSocketDisconnect:
             pass
         except Exception:  # noqa: BLE001
-            logger.warning("ChatConnection error", exc_info=True)
+            logger.warning("ChatConnection receive error", exc_info=True)
         finally:
+            # Cancel in-flight execute tasks
             for task in list(self._tasks):
                 task.cancel()
+            if self._tasks:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+            # Stop the fanout loop and wait for it to finish
+            fanout_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await fanout_task
+            # End the session if one was created
+            if self._session_id:
+                with contextlib.suppress(Exception):
+                    await self._backend.end_session(self._session_id)
             await self.event_queue.put(_STOP)
 
-    async def auth_handshake(self) -> None:
+    async def _auth_handshake(self) -> None:
         """Validate auth token if api_key is configured.
 
         Closes with code 4001 if wrong token.
         No-op if api_key is None.
+        Times out after _AUTH_TIMEOUT_S seconds (DoS prevention).
         """
         api_key = getattr(self._config.server, "api_key", None)
-        if not api_key:
+        if api_key is None:
             return
 
-        msg = await self._ws.receive_json()  # propagates WebSocketDisconnect
+        try:
+            msg = await asyncio.wait_for(
+                self._ws.receive_json(), timeout=_AUTH_TIMEOUT_S
+            )
+        except TimeoutError:
+            logger.warning("Auth handshake timed out — closing connection")
+            await self._ws.close(4008, "Auth timeout")
+            raise WebSocketDisconnect(code=4008) from None
 
-        if msg.get("type") != "auth" or msg.get("token") != api_key:
+        token = msg.get("token", "")
+        if msg.get("type") != "auth" or not hmac.compare_digest(
+            str(token), str(api_key)
+        ):
             await self._ws.close(4001, "Unauthorized")
             raise WebSocketDisconnect(code=4001)  # signal run() to exit immediately
 
@@ -119,7 +145,18 @@ class ChatConnection:
             case "prompt":
                 content = msg.get("content", "")
                 images = msg.get("images")
-                task = asyncio.create_task(self._execute(content, images))
+                if self._active_execution and not self._active_execution.done():
+                    await self._ws.send_json(
+                        {
+                            "type": "execution_error",
+                            "error": "Execution in progress. Send cancel first.",
+                        }
+                    )
+                    return
+                task = asyncio.create_task(
+                    self._execute(content, images), name=f"execute-{self._session_id}"
+                )
+                self._active_execution = task
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
 
@@ -157,6 +194,7 @@ class ChatConnection:
                 event_queue=self.event_queue,
             )
             self._session_id = info.session_id
+            self._translator._reset()
             await self._ws.send_json(
                 {
                     "type": "session_created",
@@ -165,9 +203,14 @@ class ChatConnection:
                     "bundle": bundle,
                 }
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.warning("Session creation failed", exc_info=True)
-            await self._ws.send_json({"type": "execution_error", "error": str(exc)})
+            await self._ws.send_json(
+                {
+                    "type": "execution_error",
+                    "error": "Session creation failed. Check server logs.",
+                }
+            )
 
     async def _execute(self, content: str, images: list[str] | None = None) -> None:
         """Execute a prompt — events stream via event_queue."""
@@ -182,10 +225,15 @@ class ChatConnection:
 
         try:
             await self._backend.execute(self._session_id, content, images)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.warning("Execution error", exc_info=True)
             with contextlib.suppress(Exception):
-                await self._ws.send_json({"type": "execution_error", "error": str(exc)})
+                await self._ws.send_json(
+                    {
+                        "type": "execution_error",
+                        "error": "Execution failed. Check server logs.",
+                    }
+                )
 
     async def _handle_command(self, name: str, args: list[str]) -> None:
         """Handle a slash command from the client."""
@@ -194,12 +242,13 @@ class ChatConnection:
             await self._ws.send_json(
                 {"type": "command_result", "command": name, "result": result}
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            logger.warning("Command '%s' failed", name, exc_info=True)
             await self._ws.send_json(
                 {
                     "type": "command_result",
                     "command": name,
-                    "result": {"error": str(exc)},
+                    "result": {"error": f"Command '{name}' failed. Check server logs."},
                 }
             )
 
@@ -220,6 +269,7 @@ class ChatConnection:
                     event_queue=self.event_queue,
                 )
                 self._session_id = info.session_id
+                self._translator._reset()
                 return {"bundle": new_bundle, "session_id": info.session_id}
             case "cwd" if args:
                 new_cwd = args[0]
@@ -230,6 +280,7 @@ class ChatConnection:
                     event_queue=self.event_queue,
                 )
                 self._session_id = info.session_id
+                self._translator._reset()
                 return {"cwd": new_cwd, "session_id": info.session_id}
             case _:
                 return {"error": f"Unknown command: {name}"}
@@ -237,7 +288,7 @@ class ChatConnection:
     async def _event_fanout_loop(self) -> None:
         """Drain event_queue and forward translated events to WebSocket.
 
-        Stops on None sentinel.
+        Stops on _STOP sentinel or WebSocketDisconnect.
         """
         while True:
             raw = await self.event_queue.get()
@@ -248,7 +299,13 @@ class ChatConnection:
                 msg = self._translator.translate(event_name, data)
                 if msg is not None:
                     await self._ws.send_json(msg)
+            except WebSocketDisconnect:
+                logger.debug("WebSocket disconnected during event fanout")
+                break
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "Error translating/sending event %s", event_name, exc_info=True
+                    "Error translating/sending event %s session=%s",
+                    event_name,
+                    self._session_id,
+                    exc_info=True,
                 )
