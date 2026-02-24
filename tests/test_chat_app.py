@@ -216,6 +216,22 @@ class TestChatTranscriptAPI:
         finally:
             tf.chmod(0o644)  # restore for cleanup
 
+    def test_transcript_empty_file_returns_empty_list(
+        self, chat_client, tmp_path, monkeypatch
+    ):
+        """Empty transcript.jsonl returns empty transcript array, not 500."""
+        session_id = "empty-transcript"
+        session_dir = tmp_path / "projects" / "proj" / "sessions" / session_id
+        session_dir.mkdir(parents=True)
+        (session_dir / "transcript.jsonl").write_text("")  # empty file
+
+        monkeypatch.setattr(
+            "amplifier_distro.server.apps.chat.AMPLIFIER_HOME", str(tmp_path)
+        )
+        r = chat_client.get(f"/apps/chat/api/sessions/{session_id}/transcript")
+        assert r.status_code == 200
+        assert r.json()["transcript"] == []
+
     def test_transcript_filters_non_role_entries(
         self, chat_client, tmp_path, monkeypatch
     ):

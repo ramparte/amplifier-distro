@@ -184,6 +184,8 @@ class ChatConnection:
 
     async def _handle_create_session(self, msg: dict[str, Any]) -> None:
         """Create or resume an Amplifier session."""
+        # TODO: load saved preferences as fallback defaults for cwd, bundle, behaviors
+        # from amplifier_distro.server.apps.chat.preferences import load_preferences
         cwd = msg.get("cwd", "~")
         bundle = msg.get("bundle")
 

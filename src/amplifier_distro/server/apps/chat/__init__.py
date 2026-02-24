@@ -22,7 +22,7 @@ import re
 import types
 from pathlib import Path
 
-from fastapi import APIRouter, Request, WebSocket
+from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from amplifier_distro.conventions import (
@@ -112,6 +112,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await conn.run()
 
 
+# TODO: sessions list only shows in-memory active sessions (current process).
+# Sessions from previous server runs are on disk but not listed here.
+# Future: union active sessions with disk-discovered session directories.
 @router.get("/api/sessions")
 async def list_sessions() -> dict:
     """List all active chat sessions with metadata."""
@@ -206,8 +209,6 @@ async def get_preferences() -> dict:
 @router.put("/api/preferences")
 async def put_preferences(request: Request) -> dict:
     """Apply partial preference updates."""
-    from fastapi import HTTPException
-
     raw = await request.body()
     if not raw:
         return save_preferences({})
@@ -221,7 +222,14 @@ async def put_preferences(request: Request) -> dict:
         raise HTTPException(
             status_code=400, detail="Request body must be a JSON object"
         )
-    return save_preferences(body)
+    try:
+        return save_preferences(body)
+    except OSError as exc:
+        logger.warning("Failed to persist preferences", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Preferences could not be saved. Check disk/permissions.",
+        ) from exc
 
 
 manifest = AppManifest(

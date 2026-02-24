@@ -36,6 +36,13 @@ _DEFAULTS: dict[str, Any] = {
     "default_cwd": "~",
 }
 
+_SCHEMA: dict[str, type | tuple[type, ...]] = {
+    "default_bundle": str,
+    "default_behaviors": list,
+    "show_thinking": bool,
+    "default_cwd": str,
+}
+
 
 def load_preferences() -> dict[str, Any]:
     """Load preferences from disk, returning defaults if file missing."""
@@ -54,12 +61,23 @@ def save_preferences(updates: dict[str, Any]) -> dict[str, Any]:
     """Apply partial updates and write to disk. Returns updated preferences."""
     current = load_preferences()
     for key, value in updates.items():
-        if key in _DEFAULTS and value is not None:
-            current[key] = value
+        if key not in _DEFAULTS or value is None:
+            continue
+        expected_type = _SCHEMA.get(key)
+        if expected_type and not isinstance(value, expected_type):
+            logger.warning(
+                "Ignoring invalid type for preference %r: expected %s, got %s",
+                key,
+                expected_type.__name__,
+                type(value).__name__,
+            )
+            continue
+        current[key] = value
     path = _get_prefs_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(current, indent=2), encoding="utf-8")
     except OSError:
         logger.warning("Could not write preferences to %s", path, exc_info=True)
+        raise  # Let caller handle the failure
     return current

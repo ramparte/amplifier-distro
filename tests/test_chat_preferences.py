@@ -98,3 +98,37 @@ class TestPutPreferences:
         data = r.json()
         assert "not_a_real_pref" not in data
         assert data["show_thinking"] is False  # unchanged default
+
+    def test_put_returns_503_when_disk_write_fails(self, chat_client, monkeypatch):
+        """Returns 503 (not 200) when preferences cannot be written to disk."""
+        import amplifier_distro.server.apps.chat as chat_mod
+
+        def failing_save(updates):
+            raise OSError("Disk full")
+
+        # Patch in the chat module namespace — where put_preferences calls it from.
+        monkeypatch.setattr(chat_mod, "save_preferences", failing_save)
+        r = chat_client.put("/apps/chat/api/preferences", json={"show_thinking": True})
+        assert r.status_code == 503
+
+    def test_put_ignores_invalid_type_values(self, chat_client):
+        """Values with wrong types are silently ignored."""
+        chat_client.put(
+            "/apps/chat/api/preferences", json={"show_thinking": "yes please"}
+        )
+        data = chat_client.get("/apps/chat/api/preferences").json()
+        assert (
+            data["show_thinking"] is False
+        )  # invalid string was ignored, default kept
+
+    def test_put_empty_body_returns_defaults(self, chat_client):
+        """PUT with no body returns current preferences (no error)."""
+        r = chat_client.put(
+            "/apps/chat/api/preferences",
+            content=b"",
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert "show_thinking" in data
+        assert "default_bundle" in data
