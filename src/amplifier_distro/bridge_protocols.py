@@ -11,6 +11,7 @@ BridgeConfig.display and BridgeConfig.on_stream.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any, Literal
@@ -41,7 +42,7 @@ class BridgeDisplaySystem:
     ) -> None:
         if self._on_message:
             result = self._on_message(message, level, source)
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 await result
         else:
             log_level = {
@@ -106,20 +107,20 @@ class BridgeApprovalSystem:
         event = asyncio.Event()
         self._pending[request_id] = event
 
-        if self._on_approval_request:
-            result = self._on_approval_request(
-                request_id, prompt, options, timeout, default
-            )
-            if asyncio.iscoroutine(result):
-                await result
-
         try:
+            if self._on_approval_request:
+                result = self._on_approval_request(
+                    request_id, prompt, options, timeout, default
+                )
+                if inspect.isawaitable(result):
+                    await result
             await asyncio.wait_for(event.wait(), timeout=timeout)
             return self._responses.pop(request_id, default)
         except TimeoutError:
             return default
         finally:
             self._pending.pop(request_id, None)
+            self._responses.pop(request_id, None)  # defensive cleanup
 
     def handle_response(self, request_id: str, choice: str) -> bool:
         """Unblock a waiting request_approval(). Returns True if found."""
@@ -150,7 +151,7 @@ class BridgeStreamingHook:
     async def __call__(self, event: str, data: dict[str, Any]) -> Any:
         if self._on_event:
             result = self._on_event(event, data)
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 await result
 
         # Import here to avoid hard dependency at module level

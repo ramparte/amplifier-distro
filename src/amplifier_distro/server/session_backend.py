@@ -78,6 +78,10 @@ class SessionBackend(Protocol):
         """Request cancellation of an active session. No-op for unknown IDs."""
         ...
 
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """Resolve a pending approval gate. Returns True if found and unblocked."""
+        ...
+
 
 class MockBackend:
     """Mock backend for testing and simulation.
@@ -186,6 +190,10 @@ class MockBackend:
             }
         )
 
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """No-op approval resolution for mock — always returns False."""
+        return False
+
     async def resume_session(self, session_id: str, working_dir: str) -> None:
         """No-op resume for testing. Records the call for assertion."""
         self.calls.append(
@@ -246,6 +254,14 @@ class BridgeBackend:
         )
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
+
+        # Wire the approval system for this session
+        from amplifier_distro.bridge_protocols import BridgeApprovalSystem as _BAS
+
+        _approval = _BAS(auto_approve=False)
+        self._approval_systems[handle.session_id] = _approval
+        if hasattr(handle, "set_approval_system"):
+            handle.set_approval_system(_approval)
 
         # Pre-start the session worker so the first message doesn't pay
         # the task-creation overhead, and so the worker is available for
@@ -424,6 +440,9 @@ class BridgeBackend:
                 queue.task_done()  # exactly one call per item, all exit paths
 
     async def end_session(self, session_id: str) -> None:
+        # Clean up approval system before ending
+        self._approval_systems.pop(session_id, None)
+
         # Tombstone first — prevents _reconnect() from reviving this session
         self._ended_sessions.add(session_id)
 

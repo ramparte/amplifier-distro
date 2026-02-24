@@ -34,6 +34,7 @@ class TestBridgeBackendQueueWiring:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._approval_systems = {}
         return backend
 
     @pytest.mark.asyncio

@@ -127,3 +127,36 @@ class TestBridgeBackendResolveApproval:
 
         result = backend.resolve_approval("no-session", "req-001", "allow")
         assert result is False
+
+
+@pytest.mark.asyncio
+async def test_create_session_populates_approval_systems():
+    """create_session() must wire _approval_systems so resolve_approval works."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from amplifier_distro.server.session_backend import BridgeBackend
+
+    async def fake_bridge_create(config):
+        handle = MagicMock()
+        handle.session_id = "approval-wire-001"
+        handle.project_id = "p"
+        handle.working_dir = "/tmp"
+        handle.set_approval_system = MagicMock()
+        return handle
+
+    backend = BridgeBackend.__new__(BridgeBackend)
+    backend._bridge = MagicMock()
+    backend._bridge.create_session = AsyncMock(side_effect=fake_bridge_create)
+    backend._sessions = {}
+    backend._reconnect_locks = {}
+    backend._session_queues = {}
+    backend._worker_tasks = {}
+    backend._ended_sessions = set()
+    backend._approval_systems = {}
+
+    with patch("asyncio.create_task"):
+        await backend.create_session(working_dir="~")
+
+    assert "approval-wire-001" in backend._approval_systems
+    approval = backend._approval_systems["approval-wire-001"]
+    assert approval is not None
