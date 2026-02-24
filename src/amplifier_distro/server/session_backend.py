@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -247,7 +248,7 @@ class FoundationBackend:
         wd = Path(working_dir).expanduser()
 
         prepared = self._load_bundle(bundle_name)
-        session = prepared.create_session(working_dir=str(wd))
+        session = await prepared.create_session(session_cwd=wd)
 
         session_id = session.session_id
         handle = _SessionHandle(
@@ -307,28 +308,121 @@ class FoundationBackend:
         await self._session_queues[session_id].put((message, future))
         return await future
 
-    async def _reconnect(self, session_id: str) -> _SessionHandle:
-        """Attempt to resume a session whose handle was lost (e.g. after restart).
+    def _find_transcript(self, session_id: str) -> list[dict[str, Any]]:
+        """Find and load a session transcript from disk.
 
+        Scans all project directories under ``~/.amplifier/projects/`` for
+        a transcript matching *session_id*.  Returns the parsed message list.
+        Raises :class:`FileNotFoundError` if no transcript is found.
+        """
+        projects_dir = Path("~/.amplifier/projects").expanduser()
+        if not projects_dir.exists():
+            raise FileNotFoundError(f"Projects directory not found: {projects_dir}")
+
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+            transcript_path = (
+                project_dir / "sessions" / session_id / "transcript.jsonl"
+            )
+            if transcript_path.exists():
+                messages: list[dict[str, Any]] = []
+                for line in transcript_path.read_text().splitlines():
+                    line = line.strip()
+                    if line:
+                        messages.append(json.loads(line))
+                return messages
+
+        raise FileNotFoundError(f"No transcript found for session {session_id}")
+
+    async def _reconnect(
+        self, session_id: str, *, working_dir: str = "~"
+    ) -> _SessionHandle:
+        """Resume a session whose handle was lost (e.g. after server restart).
+
+        Loads the transcript from disk, adds synthetic results for any
+        orphaned tool calls, creates a fresh session with
+        ``is_resumed=True``, and injects the transcript into the context.
         On success the handle is cached so subsequent messages don't pay
-        the resume cost again.  On failure the original ValueError is raised
-        so callers see the same error they would have before.
+        the resume cost again.
         """
         if session_id in self._ended_sessions:
             raise ValueError(
                 f"Session {session_id} was intentionally ended"
                 " and cannot be reconnected"
             )
-        logger.info("Attempting to reconnect lost session %s", session_id)
+        logger.info("Attempting to reconnect session %s", session_id)
         try:
-            # TODO: implement session resume via foundation
-            # This requires loading the transcript from disk and restoring
-            # the session context.  For now, reconnection is not supported.
-            raise NotImplementedError(
-                "Session reconnection not yet implemented for FoundationBackend"
+            # 1. Load transcript from disk
+            transcript = self._find_transcript(session_id)
+
+            # 2. Handle orphaned tool calls (tool_use without matching result)
+            from amplifier_foundation.session import (
+                add_synthetic_tool_results,
+                find_orphaned_tool_calls,
             )
-        except (FileNotFoundError, ValueError, RuntimeError, OSError) as err:
-            logger.warning("Failed to reconnect session %s", session_id, exc_info=True)
+
+            orphan_ids = find_orphaned_tool_calls(transcript)
+            if orphan_ids:
+                transcript = add_synthetic_tool_results(transcript, orphan_ids)
+                logger.info(
+                    "Added synthetic results for %d orphaned tool calls in %s",
+                    len(orphan_ids),
+                    session_id,
+                )
+
+            # 3. Create a fresh session with the same bundle
+            wd = Path(working_dir).expanduser()
+            prepared = self._load_bundle()
+            session = await prepared.create_session(
+                session_id=session_id,
+                session_cwd=wd,
+                is_resumed=True,
+            )
+
+            # 4. Inject transcript (preserve fresh system prompt from create)
+            context = session.coordinator.get("context")
+            if context and hasattr(context, "set_messages"):
+                current_msgs = await context.get_messages()
+                system_msgs = [
+                    m for m in current_msgs if m.get("role") == "system"
+                ]
+
+                await context.set_messages(transcript)
+
+                # Re-inject system prompt if transcript lacks one
+                restored = await context.get_messages()
+                if system_msgs and not any(
+                    m.get("role") == "system" for m in restored
+                ):
+                    await context.set_messages(system_msgs + restored)
+
+            # 5. Build handle and worker infrastructure
+            handle = _SessionHandle(
+                session_id=session_id,
+                project_id=getattr(session, "project_id", ""),
+                working_dir=wd,
+                session=session,
+            )
+            self._sessions[session_id] = handle
+
+            queue: asyncio.Queue = asyncio.Queue()
+            self._session_queues[session_id] = queue
+            self._worker_tasks[session_id] = asyncio.create_task(
+                self._session_worker(session_id)
+            )
+
+            logger.info(
+                "Session %s reconnected (%d messages restored)",
+                session_id,
+                len(transcript),
+            )
+            return handle
+
+        except Exception as err:
+            logger.warning(
+                "Failed to reconnect session %s", session_id, exc_info=True
+            )
             raise ValueError(f"Unknown session: {session_id}") from err
 
     async def _session_worker(self, session_id: str) -> None:
@@ -472,4 +566,4 @@ class FoundationBackend:
     async def resume_session(self, session_id: str, working_dir: str) -> None:
         """Restore the LLM context for a session after a server restart."""
         if self._sessions.get(session_id) is None:
-            await self._reconnect(session_id)
+            await self._reconnect(session_id, working_dir=working_dir)
