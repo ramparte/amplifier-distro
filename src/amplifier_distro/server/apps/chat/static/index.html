@@ -191,11 +191,42 @@
       border-color: var(--accent-blue);
       color: var(--accent-blue);
     }
+    .new-session-header-btn.active {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+      background: rgba(37, 99, 235, 0.08);
+    }
     .new-session-header-btn:disabled {
       opacity: 0.65;
       cursor: default;
       border-color: var(--border);
       color: var(--text-muted);
+    }
+    .session-filter-wrap {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+    }
+    .session-filter-input {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      outline: none;
+    }
+    .session-filter-input:focus {
+      border-color: var(--accent-blue);
+      color: var(--text-primary);
+    }
+    .session-filter-hint {
+      margin-top: 5px;
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
 
     .session-list { flex: 1; overflow-y: auto; padding: 8px 0; }
@@ -886,6 +917,36 @@
     return keyA.localeCompare(keyB);
   }
 
+  function sessionMatchesFilter(sessionKey, session, rawQuery) {
+    const query = String(rawQuery || '').trim().toLowerCase();
+    if (!query) return true;
+
+    const s = session && typeof session === 'object' ? session : {};
+    const sessionId = String(s.sessionId || '').toLowerCase();
+
+    if (query.startsWith('sid:')) {
+      const needle = query.slice(4).trim();
+      if (!needle) return true;
+      return sessionId.includes(needle);
+    }
+
+    const haystack = [
+      sessionKey,
+      s.sessionId,
+      s.cwd,
+      s.bundle,
+      s.lastUserMessage,
+      s.source,
+      s.status,
+      s.turnCount,
+      s.messageCount,
+    ]
+      .filter(v => v !== null && v !== undefined && v !== '')
+      .map(v => String(v).toLowerCase())
+      .join(' ');
+    return haystack.includes(query);
+  }
+
   // Simple HTML sanitizer — strips dangerous tags and event handlers
   // TODO: Replace with DOMPurify in vendor.js for production use
   function sanitizeHtml(html) {
@@ -1549,6 +1610,8 @@
     const [historyListLoading, setHistoryListLoading] = useState(true);
     const [pendingHistorySyncCount, setPendingHistorySyncCount] = useState(0);
     const [sessionSortMode, setSessionSortMode] = useState('recent');
+    const [sessionFilterQuery, setSessionFilterQuery] = useState('');
+    const [showSessionFilter, setShowSessionFilter] = useState(false);
     const [collapsedDirGroups, setCollapsedDirGroups] = useState({});
     const [sessionPanelWidth, setSessionPanelWidth] = useState(260);
     const [activityPanelWidth, setActivityPanelWidth] = useState(460);
@@ -3108,10 +3171,13 @@
 
     // —— Render ——————————————————————————————————————————————————————
     const sessionEntries = Array.from(sessions.entries());
-    const sessionList = sessionEntries.slice().sort(compareSessionEntriesByRecent);
+    const filteredSessionEntries = sessionEntries.filter(([key, session]) =>
+      sessionMatchesFilter(key, session, sessionFilterQuery)
+    );
+    const sessionList = filteredSessionEntries.slice().sort(compareSessionEntriesByRecent);
     const directoryGroups = (() => {
       const groupsByDir = new Map();
-      for (const entry of sessionEntries) {
+      for (const entry of filteredSessionEntries) {
         const [sessionKey, session] = entry;
         const cwd = normalizeCwd(session && session.cwd);
         let group = groupsByDir.get(cwd);
@@ -3134,6 +3200,9 @@
       });
       return groups;
     })();
+    const hasSessionFilter = !!sessionFilterQuery.trim();
+    const hasSessionResults = filteredSessionEntries.length > 0;
+    const isSessionFilterOpen = showSessionFilter || hasSessionFilter;
     const activeSession = activeKey ? sessions.get(activeKey) : null;
     const activeSessionId = (activeSession && activeSession.sessionId) || sessionId || null;
     const showDraftCwdEditor =
@@ -3200,6 +3269,18 @@
                   : 'Sorting by working directory'}
                 onClick=${() => setSessionSortMode(mode => mode === 'recent' ? 'directory' : 'recent')}
               >${sessionSortMode === 'recent' ? 'Sort: Time' : 'Sort: Dir'}</button>
+              <button
+                class=${'new-session-header-btn' + (isSessionFilterOpen ? ' active' : '')}
+                title="Show or hide session filter"
+                onClick=${() => {
+                  if (isSessionFilterOpen) {
+                    setShowSessionFilter(false);
+                    setSessionFilterQuery('');
+                  } else {
+                    setShowSessionFilter(true);
+                  }
+                }}
+              >Filter</button>
               ${(syncingHistory || pendingHistorySyncCount > 0) && html`
                 <button
                   class="new-session-header-btn"
@@ -3213,11 +3294,34 @@
               <button class="new-session-header-btn" onClick=${newSession}>+ New</button>
             </div>
           </div>
+          ${isSessionFilterOpen && html`
+            <div class="session-filter-wrap">
+              <input
+                class="session-filter-input"
+                value=${sessionFilterQuery}
+                placeholder="Filter text or sid:abc123"
+                spellcheck="false"
+                onInput=${e => setSessionFilterQuery(e.target.value)}
+              />
+              ${hasSessionFilter && html`
+                <div class="session-filter-hint">
+                  ${hasSessionResults
+                    ? (filteredSessionEntries.length + ' match' + (filteredSessionEntries.length === 1 ? '' : 'es'))
+                    : 'No matches'}
+                </div>
+              `}
+            </div>
+          `}
           <div class="session-list">
             ${historyListLoading && html`
               <div class="session-list-loading">
                 <span class="history-loading-dot"></span>
                 <span>Loading past sessions…</span>
+              </div>
+            `}
+            ${!historyListLoading && !hasSessionResults && html`
+              <div class="session-list-loading">
+                <span>${hasSessionFilter ? 'No sessions match this filter.' : 'No sessions yet.'}</span>
               </div>
             `}
             ${sessionSortMode === 'directory'
