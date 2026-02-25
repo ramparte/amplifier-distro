@@ -2195,10 +2195,12 @@
               if (!existingKey) {
                 const historyKey = 'history-' + sessionId;
                 if (next.has(historyKey)) continue;
-                // New session never seen by this client — badge if it has content
-                // (was created or used on another surface). knownRevision is null
-                // so the revision poll will detect any future changes too.
-                const isNewWithContent = messageCount > 0;
+                // New session never seen by this client.
+                // Only badge on explicit user-initiated sync (!silent) — not on
+                // initial page load or background refresh, which would flag every
+                // historical session as "New" after a server restart.
+                const hasContent = messageCount > 0;
+                const badgeNew = !silent && hasContent;
                 next.set(historyKey, {
                   source: 'history',
                   status: 'history',
@@ -2209,10 +2211,10 @@
                   messageCount,
                   lastUserMessage: s.last_user_message || null,
                   lastUpdated: s.last_updated || null,
-                  knownRevision: isNewWithContent ? null : revision,
+                  knownRevision: badgeNew ? null : revision,
                   remoteRevision: revision,
-                  hasExternalUpdate: isNewWithContent,
-                  isNewSession: isNewWithContent,
+                  hasExternalUpdate: badgeNew,
+                  isNewSession: badgeNew,
                 });
                 sessionKeyById.set(sessionId, historyKey);
                 changed = true;

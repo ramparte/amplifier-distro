@@ -408,7 +408,7 @@ class FoundationBackend:
             try:
                 hooks.register(evt, on_stream)
                 registered += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 failed_evts.append((evt, exc))
 
         # Delegate events are not in ALL_EVENTS — register explicitly
@@ -421,7 +421,7 @@ class FoundationBackend:
             try:
                 hooks.register(evt, on_stream)
                 registered += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 failed_evts.append((evt, exc))
 
         logger.info(
@@ -484,9 +484,13 @@ class FoundationBackend:
         session = await prepared.create_session(session_cwd=wd)
 
         session_id = session.session_id
+        # Foundation derives project_id by replacing path separators with "-"
+        # (e.g. /Users/sam/repo -> -Users-sam-repo).  AmplifierSession does not
+        # expose project_id directly, so we derive it the same way.
+        project_id = str(wd).replace("/", "-")
         handle = _SessionHandle(
             session_id=session_id,
-            project_id=getattr(session, "project_id", ""),
+            project_id=project_id,
             working_dir=wd,
             session=session,
         )
@@ -671,9 +675,11 @@ class FoundationBackend:
                     await context.set_messages(system_msgs + restored)
 
             # 5. Build handle and worker infrastructure
+            # Derive project_id the same way foundation does (path separators → "-")
+            project_id = str(wd).replace("/", "-")
             handle = _SessionHandle(
                 session_id=session_id,
-                project_id=getattr(session, "project_id", ""),
+                project_id=project_id,
                 working_dir=wd,
                 session=session,
             )
