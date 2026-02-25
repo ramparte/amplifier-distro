@@ -523,7 +523,22 @@ class DistroServer:
     def _setup_root(self) -> None:
         """Phase-aware root: landing page when ready, redirect to wizard when not."""
 
-        _landing_page = Path(__file__).parent / "static" / "index.html"
+        _static_dir = Path(__file__).parent / "static"
+        _landing_page = _static_dir / "index.html"
+
+        @self._app.get("/favicon.svg", response_model=None, include_in_schema=False)
+        async def favicon():
+            """Serve the SVG favicon from the static directory."""
+            from fastapi.responses import Response
+
+            svg_path = _static_dir / "favicon.svg"
+            if svg_path.exists():
+                return Response(
+                    content=svg_path.read_bytes(),
+                    media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+            return Response(status_code=404)
 
         @self._app.get("/", response_model=None)
         async def root():
