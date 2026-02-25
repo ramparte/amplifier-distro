@@ -37,8 +37,10 @@ from amplifier_distro import distro_settings, overlay
 from amplifier_distro.features import (
     FEATURES,
     PROVIDERS,
+    check_provider_status,
     detect_provider,
     register_provider,
+    sync_providers,
 )
 from amplifier_distro.server.app import AppManifest
 from amplifier_distro.server.apps.settings import (
@@ -279,18 +281,27 @@ async def get_modules() -> dict[str, Any]:
 
 @router.get("/providers")
 async def get_providers() -> dict[str, Any]:
-    """Return all supported providers with their current configuration status."""
-    providers = [
-        {
-            "id": pid,
-            "name": p.name,
-            "description": p.description,
-            "console_url": p.console_url,
-            "key_prefix": p.key_prefix,
-            "configured": bool(os.environ.get(p.env_var)),
-        }
-        for pid, p in PROVIDERS.items()
-    ]
+    """Return all supported providers with their current configuration status.
+
+    A provider is ``configured`` only when all three sources are set:
+    keys.env, settings.yaml, and the overlay bundle.
+    """
+    providers = []
+    for pid, p in PROVIDERS.items():
+        status = check_provider_status(pid)
+        providers.append(
+            {
+                "id": pid,
+                "name": p.name,
+                "description": p.description,
+                "console_url": p.console_url,
+                "key_prefix": p.key_prefix,
+                "has_key": status["has_key"],
+                "in_settings": status["in_settings"],
+                "in_overlay": status["in_overlay"],
+                "configured": status["configured"],
+            }
+        )
     return {"providers": providers}
 
 
@@ -391,27 +402,47 @@ async def step_network(request: Request) -> dict[str, Any]:
 
 @steps_router.post("/provider")
 async def step_provider(req: ProviderData) -> dict[str, Any]:
-    """Save API key and provider configuration."""
-    if not req.api_key.strip():
-        return {"status": "skipped"}
+    """Save API key and provider configuration.
 
-    provider_id = detect_provider(req.api_key) or req.provider
-    if not provider_id or provider_id not in PROVIDERS:
-        return {"status": "error", "detail": "Unknown provider or key format"}
+    Two modes:
+    - **Explicit**: ``api_key`` provided - register that single provider.
+    - **Sync**: ``api_key`` empty - auto-register every provider that has
+      a key in ``os.environ`` or ``keys.env`` but isn't fully configured.
+    """
+    if req.api_key.strip():
+        # Explicit key entry (from "Add Key" button)
+        provider_id = detect_provider(req.api_key) or req.provider
+        if not provider_id or provider_id not in PROVIDERS:
+            return {"status": "error", "detail": "Unknown provider or key format"}
 
-    reg = register_provider(provider_id, req.api_key)
+        reg = register_provider(provider_id, req.api_key)
 
-    result: dict[str, Any] = {
+        result: dict[str, Any] = {
+            "status": "ok",
+            "verified": True,
+            "provider": reg.provider_id,
+            "provider_name": reg.provider_name,
+            "model": reg.default_model,
+            "overlay_updated": reg.overlay_updated,
+        }
+        if reg.overlay_error:
+            result["overlay_error"] = reg.overlay_error
+        return result
+
+    # Sync mode (from "Next" button) - auto-register incomplete providers
+    synced = sync_providers()
+    return {
         "status": "ok",
-        "verified": True,
-        "provider": reg.provider_id,
-        "provider_name": reg.provider_name,
-        "model": reg.default_model,
-        "overlay_updated": reg.overlay_updated,
+        "synced": [
+            {
+                "provider": r.provider_id,
+                "provider_name": r.provider_name,
+                "ok": r.ok,
+                "overlay_error": r.overlay_error,
+            }
+            for r in synced
+        ],
     }
-    if reg.overlay_error:
-        result["overlay_error"] = reg.overlay_error
-    return result
 
 
 @steps_router.post("/verify")

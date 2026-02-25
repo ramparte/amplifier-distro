@@ -365,6 +365,8 @@ input:focus, select:focus {
 .provider-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.08); }
 .provider-card.configured { border-color: var(--success); }
 .provider-card.configured.selected { border-color: var(--accent); }
+.provider-card.detected { border-color: var(--warning, #f59e0b); border-style: dashed; }
+.provider-card.detected.selected { border-color: var(--accent); border-style: solid; }
 
 .provider-card-header {
   display: flex;
@@ -383,6 +385,10 @@ input:focus, select:focus {
 .provider-badge.configured {
   background: rgba(34,197,94,0.15);
   color: var(--success);
+}
+.provider-badge.detected {
+  background: rgba(245,158,11,0.15);
+  color: var(--warning, #f59e0b);
 }
 
 .provider-card p { font-size: 13px; color: var(--text-secondary); margin: 0 0 6px; }
@@ -679,7 +685,7 @@ function detectCompletedSteps() {
   // Step 2 (config): has non-default cache TTL
   state.completedSteps.config = state.cacheTTL != null && state.cacheTTL !== 168;
   
-  // Step 3 (provider): at least one provider is configured
+  // Step 3 (provider): at least one provider is fully configured (key + settings + overlay)
   state.completedSteps.provider = (state.providers || []).some(p => p.configured);
   
   // Step 4 (modules): has selected modules beyond just defaults
@@ -738,7 +744,9 @@ async function submitStep() {
       };
       break;
     case 'provider':
-      // Keys are saved individually via "Add Key" buttons; just advance.
+      // Sync mode: auto-register any providers that have keys but aren't
+      // fully configured (settings.yaml + overlay bundle).
+      body = {};
       break;
     case 'verify':
       return;
@@ -815,7 +823,7 @@ function renderWelcome() {
     </div>
     <div class="nav-row">
       <div></div>
-      <button class="btn-primary" onclick="submitStep()">Get Started</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
     </div>`;
 }
 
@@ -966,10 +974,18 @@ function renderNetwork() {
 function renderProvider() {
   const providers = state.providers || [];
   const configuredNames = providers.filter(p => p.configured).map(p => p.name);
+  const detectedNames = providers.filter(p => p.has_key && !p.configured).map(p => p.name);
 
-  const summaryHtml = configuredNames.length > 0
-    ? `<div class="configured-summary">Configured: <strong>${configuredNames.map(esc).join('</strong>, <strong>')}</strong></div>`
-    : `<div class="configured-summary">No providers configured yet. Add at least one API key to continue.</div>`;
+  let summaryHtml = '';
+  if (configuredNames.length > 0) {
+    summaryHtml += `<div class="configured-summary">Configured: <strong>${configuredNames.map(esc).join('</strong>, <strong>')}</strong></div>`;
+  }
+  if (detectedNames.length > 0) {
+    summaryHtml += `<div class="configured-summary">Key detected (needs setup): <strong>${detectedNames.map(esc).join('</strong>, <strong>')}</strong> &mdash; click Next to complete setup.</div>`;
+  }
+  if (configuredNames.length === 0 && detectedNames.length === 0) {
+    summaryHtml = `<div class="configured-summary">No providers configured yet. Add at least one API key to continue.</div>`;
+  }
 
   return `
     <h1>Set Up Your AI Providers</h1>
@@ -981,7 +997,7 @@ function renderProvider() {
           const isSelected = state.selectedProvider === p.id;
           const cls = [
             'provider-card',
-            p.configured ? 'configured' : '',
+            p.configured ? 'configured' : p.has_key ? 'detected' : '',
             isSelected ? 'selected' : '',
           ].filter(Boolean).join(' ');
 
@@ -994,7 +1010,8 @@ function renderProvider() {
             <div class="${cls}" data-provider="${esc(p.id)}">
               <div class="provider-card-header">
                 <h3>${esc(p.name)}</h3>
-                ${p.configured ? '<span class="provider-badge configured">Configured</span>' : ''}
+                ${p.configured ? '<span class="provider-badge configured">Configured</span>'
+                  : p.has_key ? '<span class="provider-badge detected">Key Detected</span>' : ''}
               </div>
               <p>${esc(p.description)}</p>
               <a class="provider-link" href="${esc(p.console_url)}" target="_blank" rel="noopener">Get an API key</a>
@@ -1018,7 +1035,7 @@ function renderProvider() {
     </div>
     <div class="nav-row">
       <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
-      <button class="btn-primary" onclick="goTo(${state.step + 1})">Next</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
     </div>`;
 }
 

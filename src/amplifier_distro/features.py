@@ -272,6 +272,82 @@ class ProviderRegistrationResult:
         return self.key_saved and self.settings_updated and self.overlay_updated
 
 
+def check_provider_status(provider_id: str) -> dict[str, bool]:
+    """Check whether a provider is fully configured across all three sources.
+
+    Returns a dict with:
+        has_key      - API key exists in ``os.environ`` or ``keys.env``
+        in_settings  - provider module listed in ``settings.yaml``
+        in_overlay   - provider include URI present in overlay ``bundle.yaml``
+        configured   - all three are ``True``
+    """
+    import os
+
+    import yaml
+
+    from amplifier_distro import overlay
+    from amplifier_distro.server.apps.settings import _settings_path, load_keys
+
+    provider = PROVIDERS[provider_id]
+
+    # 1. Key in env or keys.env file
+    keys = load_keys()
+    has_key = bool(os.environ.get(provider.env_var) or keys.get(provider.env_var))
+
+    # 2. Provider module listed in settings.yaml
+    in_settings = False
+    settings_path = _settings_path()
+    if settings_path.exists():
+        try:
+            settings = yaml.safe_load(settings_path.read_text()) or {}
+            providers_list = settings.get("config", {}).get("providers", [])
+            in_settings = any(
+                e.get("module") == provider.module_id for e in providers_list
+            )
+        except (yaml.YAMLError, OSError):
+            pass
+
+    # 3. Provider include URI in overlay bundle.yaml
+    current_uris = set(overlay.get_includes())
+    in_overlay = provider_bundle_uri(provider) in current_uris
+
+    return {
+        "has_key": has_key,
+        "in_settings": in_settings,
+        "in_overlay": in_overlay,
+        "configured": has_key and in_settings and in_overlay,
+    }
+
+
+def sync_providers() -> list[ProviderRegistrationResult]:
+    """Auto-register all providers that have keys but aren't fully configured.
+
+    Scans ``os.environ`` and ``keys.env`` for known provider keys.
+    For each provider that has a key but is missing its ``settings.yaml``
+    entry or overlay include, calls :func:`register_provider` to complete
+    the setup.
+
+    Returns a list of registration results (one per provider that was synced).
+    """
+    import os
+
+    from amplifier_distro.server.apps.settings import load_keys
+
+    keys = load_keys()
+    results: list[ProviderRegistrationResult] = []
+
+    for pid, provider in PROVIDERS.items():
+        key = os.environ.get(provider.env_var) or keys.get(provider.env_var)
+        if not key:
+            continue
+        status = check_provider_status(pid)
+        if not status["configured"]:
+            reg = register_provider(pid, key)
+            results.append(reg)
+
+    return results
+
+
 def register_provider(provider_id: str, api_key: str) -> ProviderRegistrationResult:
     """Register a provider: persist API key, update settings, update overlay.
 
