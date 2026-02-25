@@ -36,6 +36,8 @@ WORK_LOG_FILENAME = "work-log.yaml"
 
 # --- Sessions ---
 TRANSCRIPT_FILENAME = "transcript.jsonl"
+SESSION_INFO_FILENAME = "session-info.json"
+PROJECTS_DIR = "projects"  # relative to AMPLIFIER_HOME
 
 # --- Server ---
 SERVER_DIR = "server"  # relative to AMPLIFIER_HOME

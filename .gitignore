@@ -32,3 +32,4 @@ oauth_setup.py
 SCRATCH-*.md
 
 .amplifier/settings.local.yaml
+.worktrees/
