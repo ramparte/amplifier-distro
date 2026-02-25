@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import hmac
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from starlette.websockets import WebSocketDisconnect
@@ -30,6 +31,9 @@ _AUTH_TIMEOUT_S = 30.0
 
 # Sentinel: put into event_queue to stop _event_fanout_loop
 _STOP: object = object()
+
+# Session IDs: alphanumeric, hyphens, underscores only (path traversal prevention)
+_VALID_SESSION_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 class ChatConnection:
@@ -200,6 +204,10 @@ class ChatConnection:
             case _:
                 logger.debug("Unknown message type: %s", msg_type)
 
+    async def _send_json(self, data: dict[str, Any]) -> None:
+        """Send a JSON message to the WebSocket client."""
+        await self._ws.send_json(data)
+
     async def _handle_create_session(self, msg: dict[str, Any]) -> None:
         """Create or resume an Amplifier session."""
         # TODO: load saved preferences as fallback defaults for cwd, bundle, behaviors
@@ -207,6 +215,19 @@ class ChatConnection:
         cwd = msg.get("cwd", "~")
         bundle = msg.get("bundle")
         resume_session_id = msg.get("resume_session_id")
+
+        # --- Input validation (path traversal / injection prevention) ---
+        if resume_session_id and not _VALID_SESSION_ID.match(str(resume_session_id)):
+            await self._send_json(
+                {"type": "error", "error": "Invalid session ID format"}
+            )
+            return
+
+        if "\x00" in cwd:
+            await self._send_json(
+                {"type": "error", "error": "Invalid working directory"}
+            )
+            return
 
         try:
             if resume_session_id:

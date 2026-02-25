@@ -100,6 +100,7 @@ class SessionBackend(Protocol):
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         """Create a new Amplifier session. Returns session info."""
         ...
@@ -112,8 +113,27 @@ class SessionBackend(Protocol):
         """End a session and clean up."""
         ...
 
-    async def resume_session(self, session_id: str, working_dir: str) -> None:
+    async def resume_session(
+        self,
+        session_id: str,
+        working_dir: str,
+        event_queue: asyncio.Queue | None = None,
+    ) -> None:
         """Restore LLM transcript context for a previously created session."""
+        ...
+
+    async def execute(
+        self, session_id: str, prompt: str, images: list[str] | None = None
+    ) -> None:
+        """Execute a prompt in a session. Events stream via event_queue."""
+        ...
+
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """Request cancellation of a running session."""
+        ...
+
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """Resolve a pending approval request. Returns True if resolved."""
         ...
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:

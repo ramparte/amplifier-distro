@@ -212,6 +212,122 @@ class TestEventFanout:
         ws.send_json.assert_not_awaited()
 
 
+class TestInputValidation:
+    """Validate that untrusted WebSocket inputs are sanitized."""
+
+    @pytest.mark.asyncio
+    async def test_resume_rejects_path_traversal_session_id(self):
+        """A session ID with path traversal characters should be rejected."""
+        from starlette.websockets import WebSocketDisconnect
+
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws(
+            [
+                {
+                    "type": "create_session",
+                    "cwd": "/tmp",
+                    "resume_session_id": "../../../etc/passwd",
+                },
+            ]
+        )
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        with pytest.raises(WebSocketDisconnect):
+            await conn._receive_loop()
+
+        # Backend should NOT have been called
+        backend.resume_session.assert_not_awaited()
+        backend.create_session.assert_not_awaited()
+
+        sent = [call.args[0] for call in ws.send_json.await_args_list]
+        errors = [m for m in sent if m.get("type") == "error"]
+        assert len(errors) == 1
+        assert "Invalid session ID" in errors[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_resume_rejects_session_id_with_spaces(self):
+        """Session IDs with spaces should be rejected."""
+        from starlette.websockets import WebSocketDisconnect
+
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws(
+            [
+                {
+                    "type": "create_session",
+                    "cwd": "/tmp",
+                    "resume_session_id": "bad session id",
+                },
+            ]
+        )
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        with pytest.raises(WebSocketDisconnect):
+            await conn._receive_loop()
+
+        backend.resume_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resume_accepts_valid_session_id(self):
+        """Valid session IDs (alphanumeric, hyphens, underscores) should pass."""
+        from starlette.websockets import WebSocketDisconnect
+
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws(
+            [
+                {
+                    "type": "create_session",
+                    "cwd": "/tmp",
+                    "resume_session_id": "sess_abc-123_DEF",
+                },
+            ]
+        )
+        backend = make_backend("sess_abc-123_DEF")
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        with pytest.raises(WebSocketDisconnect):
+            await conn._receive_loop()
+
+        # Valid ID should reach the backend
+        backend.resume_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cwd_rejects_null_bytes(self):
+        """Working directory with null bytes should be rejected."""
+        from starlette.websockets import WebSocketDisconnect
+
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws(
+            [
+                {
+                    "type": "create_session",
+                    "cwd": "/tmp/\x00evil",
+                },
+            ]
+        )
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        with pytest.raises(WebSocketDisconnect):
+            await conn._receive_loop()
+
+        backend.create_session.assert_not_awaited()
+
+        sent = [call.args[0] for call in ws.send_json.await_args_list]
+        errors = [m for m in sent if m.get("type") == "error"]
+        assert len(errors) == 1
+        assert "Invalid working directory" in errors[0]["error"]
+
+
 class TestSyntheticStreaming:
     @pytest.mark.asyncio
     async def test_synthetic_deltas_sent_for_non_streaming_blocks(self):
