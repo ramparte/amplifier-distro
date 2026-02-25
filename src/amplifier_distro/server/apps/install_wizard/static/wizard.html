@@ -860,11 +860,11 @@ function renderModules() {
       ${fallbackModules}
       <div class="module-grid">
         ${mods.map(m => {
-          const sel = state.selectedModules.has(m.name);
+          const sel = state.selectedModules.has(m.id);
           const badgeCls = m.category === 'provider' ? 'badge-provider'
                          : m.category === 'tool' ? 'badge-tool' : 'badge-bundle';
           return `
-            <div class="module-card ${sel ? 'selected' : ''}" data-module="${esc(m.name)}">
+            <div class="module-card ${sel ? 'selected' : ''}" data-module="${esc(m.id)}">
               <div class="module-header">
                 <span class="module-name">${esc(m.name)}</span>
                 <span class="checkbox-icon"></span>
