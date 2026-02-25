@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from amplifier_distro.features import AMPLIFIER_START_URI
+from amplifier_distro.features import AMPLIFIER_START_URI, PROVIDERS
+from amplifier_distro.overlay import ensure_overlay, overlay_dir, overlay_exists
 
 logger = logging.getLogger(__name__)
 
@@ -312,13 +313,25 @@ class FoundationBackend:
         """Load and prepare a bundle via foundation.
 
         If a local overlay bundle exists (created by the install wizard),
-        loads it by path.  The overlay includes amplifier-start and any
-        user-selected features, so everything composes automatically.
-        Falls back to loading the bundle by name if no overlay exists.
+        loads it by path.  When no overlay exists but provider API keys
+        are found in the environment, auto-creates an overlay so the
+        session gets a working provider.  Falls back to loading the
+        bundle by name if no overlay can be created.
         """
+        import os
+
         from amplifier_foundation import load_bundle
 
-        from amplifier_distro.overlay import overlay_dir, overlay_exists
+        # Auto-create overlay if keys are present but overlay missing
+        if not overlay_exists():
+            for provider in PROVIDERS.values():
+                if os.environ.get(provider.env_var):
+                    logger.info(
+                        "Auto-creating overlay (env var %s found)",
+                        provider.env_var,
+                    )
+                    ensure_overlay(provider)
+                    break
 
         if overlay_exists():
             bundle = await load_bundle(str(overlay_dir()))

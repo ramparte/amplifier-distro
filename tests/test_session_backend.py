@@ -882,3 +882,105 @@ class TestMockBackendNewMethods:
         q: asyncio.Queue = asyncio.Queue()
         await backend.resume_session("s", "~", event_queue=q)
         assert any(c["method"] == "resume_session" for c in backend.calls)
+
+
+# ── Auto-overlay creation ────────────────────────────────────────────
+
+
+class TestFoundationBackendAutoOverlay:
+    """_load_bundle() should auto-create overlay when API keys are in env."""
+
+    async def test_auto_creates_overlay_when_key_present(self, bridge_backend):
+        """When no overlay but ANTHROPIC_API_KEY is in env, auto-create."""
+        from amplifier_distro.server.session_backend import (
+            FoundationBackend,
+        )
+
+        mock_prepared = MagicMock()
+
+        with (
+            patch(
+                "amplifier_distro.server.session_backend.overlay_exists",
+                side_effect=[False, True],
+            ),
+            patch(
+                "amplifier_distro.server.session_backend.overlay_dir",
+                return_value=Path("/fake/overlay"),
+            ),
+            patch(
+                "amplifier_distro.server.session_backend.ensure_overlay",
+            ) as mock_ensure,
+            patch(
+                "amplifier_foundation.load_bundle",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    prepare=AsyncMock(return_value=mock_prepared),
+                ),
+            ),
+            patch.dict(
+                "os.environ",
+                {"ANTHROPIC_API_KEY": "sk-ant-test123"},
+                clear=False,
+            ),
+        ):
+            await FoundationBackend._load_bundle(bridge_backend)
+            mock_ensure.assert_called_once()
+
+    async def test_no_auto_create_when_overlay_exists(self, bridge_backend):
+        """When overlay already exists, don't try to auto-create."""
+        from amplifier_distro.server.session_backend import (
+            FoundationBackend,
+        )
+
+        mock_prepared = MagicMock()
+
+        with (
+            patch(
+                "amplifier_distro.server.session_backend.overlay_exists",
+                return_value=True,
+            ),
+            patch(
+                "amplifier_distro.server.session_backend.overlay_dir",
+                return_value=Path("/fake/overlay"),
+            ),
+            patch(
+                "amplifier_distro.server.session_backend.ensure_overlay",
+            ) as mock_ensure,
+            patch(
+                "amplifier_foundation.load_bundle",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    prepare=AsyncMock(return_value=mock_prepared),
+                ),
+            ),
+        ):
+            await FoundationBackend._load_bundle(bridge_backend)
+            mock_ensure.assert_not_called()
+
+    async def test_no_auto_create_when_no_keys(self, bridge_backend):
+        """When no API keys in env, fall back to bare bundle."""
+        from amplifier_distro.server.session_backend import (
+            FoundationBackend,
+        )
+
+        mock_prepared = MagicMock()
+
+        with (
+            patch(
+                "amplifier_distro.server.session_backend.overlay_exists",
+                return_value=False,
+            ),
+            patch(
+                "amplifier_distro.server.session_backend.ensure_overlay",
+            ) as mock_ensure,
+            patch(
+                "amplifier_foundation.load_bundle",
+                new_callable=AsyncMock,
+                return_value=MagicMock(
+                    prepare=AsyncMock(return_value=mock_prepared),
+                ),
+            ),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            await FoundationBackend._load_bundle(bridge_backend)
+            mock_ensure.assert_not_called()
