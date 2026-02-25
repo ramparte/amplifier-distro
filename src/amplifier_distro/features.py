@@ -248,3 +248,75 @@ def features_for_tier(tier: int) -> list[str]:
     for t in range(1, tier + 1):
         result.extend(TIERS.get(t, []))
     return result
+
+
+# ---------------------------------------------------------------------------
+#  Shared provider registration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProviderRegistrationResult:
+    """Outcome of a provider registration attempt."""
+
+    provider_id: str
+    provider_name: str
+    default_model: str
+    key_saved: bool = False
+    settings_updated: bool = False
+    overlay_updated: bool = False
+    overlay_error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.key_saved and self.settings_updated and self.overlay_updated
+
+
+def register_provider(provider_id: str, api_key: str) -> ProviderRegistrationResult:
+    """Register a provider: persist API key, update settings, update overlay.
+
+    This is the single entry point for adding a provider to the distro.
+    All three writes are performed in order, with individual error handling
+    so partial success is reported clearly.
+
+    Args:
+        provider_id: Canonical provider key (e.g. ``"anthropic"``).
+        api_key: The raw API key or connection string.
+
+    Returns:
+        A ``ProviderRegistrationResult`` describing what succeeded.
+
+    Raises:
+        KeyError: If *provider_id* is not in ``PROVIDERS``.
+    """
+    # Lazy imports to avoid circular dependency
+    # (settings imports features; features must not import settings at module level)
+    from amplifier_distro import overlay
+    from amplifier_distro.server.apps.settings import (
+        add_provider_config,
+        persist_api_key,
+    )
+
+    provider = PROVIDERS[provider_id]
+    result = ProviderRegistrationResult(
+        provider_id=provider_id,
+        provider_name=provider.name,
+        default_model=provider.default_model,
+    )
+
+    # 1. Write key to keys.env and set in current process env
+    persist_api_key(provider_id, api_key)
+    result.key_saved = True
+
+    # 2. Add provider module config to settings.yaml
+    add_provider_config(provider_id)
+    result.settings_updated = True
+
+    # 3. Add provider include to overlay bundle
+    try:
+        overlay.ensure_overlay(provider)
+        result.overlay_updated = True
+    except OSError as exc:
+        result.overlay_error = str(exc)
+
+    return result

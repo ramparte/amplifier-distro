@@ -34,13 +34,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from amplifier_distro import distro_settings, overlay
-from amplifier_distro.features import FEATURES, PROVIDERS, detect_provider
+from amplifier_distro.features import (
+    FEATURES,
+    PROVIDERS,
+    detect_provider,
+    register_provider,
+)
 from amplifier_distro.server.app import AppManifest
 from amplifier_distro.server.apps.settings import (
     _get_enabled_features,
-    add_provider_config,
     detect_bridges,
-    persist_api_key,
 )
 
 router = APIRouter()
@@ -313,18 +316,9 @@ async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
             ),
         )
 
-    provider = PROVIDERS[provider_id]
+    reg = register_provider(provider_id, req.api_key)
 
-    # Step 1-2: Write key to disk and environment
-    persist_api_key(provider_id, req.api_key)
-
-    # Step 3: Add provider config to settings.yaml
-    add_provider_config(provider_id)
-
-    # Step 4: Create overlay bundle (includes amplifier-start + provider)
-    overlay.ensure_overlay(provider)
-
-    # Step 5: Persist identity and workspace to distro settings
+    # Persist identity and workspace to distro settings
     if req.github_handle:
         distro_settings.update("identity", github_handle=req.github_handle)
     if req.workspace_root:
@@ -332,8 +326,8 @@ async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
 
     return {
         "status": "ready",
-        "provider": provider_id,
-        "model": provider.default_model,
+        "provider": reg.provider_id,
+        "model": reg.default_model,
     }
 
 
@@ -397,16 +391,7 @@ async def step_network(request: Request) -> dict[str, Any]:
 
 @steps_router.post("/provider")
 async def step_provider(req: ProviderData) -> dict[str, Any]:
-    """Save API key and provider configuration.
-
-    Performs three writes in order:
-    1. keys.env   - persist the raw API key (chmod 600)
-    2. settings.yaml - add provider module config
-    3. bundle.yaml   - add provider include to overlay bundle
-
-    Each step is wrapped individually so partial success is reported
-    clearly instead of returning an opaque 500.
-    """
+    """Save API key and provider configuration."""
     if not req.api_key.strip():
         return {"status": "skipped"}
 
@@ -414,33 +399,18 @@ async def step_provider(req: ProviderData) -> dict[str, Any]:
     if not provider_id or provider_id not in PROVIDERS:
         return {"status": "error", "detail": "Unknown provider or key format"}
 
-    provider = PROVIDERS[provider_id]
-
-    # 1. Write key to keys.env and set in env
-    persist_api_key(provider_id, req.api_key)
-
-    # 2. Add provider config to settings.yaml
-    add_provider_config(provider_id)
-
-    # 3. Ensure overlay bundle includes this provider
-    overlay_ok = True
-    overlay_error = ""
-    try:
-        overlay.ensure_overlay(provider)
-    except OSError as exc:
-        overlay_ok = False
-        overlay_error = f"Failed to update overlay bundle: {exc}"
+    reg = register_provider(provider_id, req.api_key)
 
     result: dict[str, Any] = {
         "status": "ok",
         "verified": True,
-        "provider": provider_id,
-        "provider_name": provider.name,
-        "model": provider.default_model,
-        "overlay_updated": overlay_ok,
+        "provider": reg.provider_id,
+        "provider_name": reg.provider_name,
+        "model": reg.default_model,
+        "overlay_updated": reg.overlay_updated,
     }
-    if overlay_error:
-        result["overlay_error"] = overlay_error
+    if reg.overlay_error:
+        result["overlay_error"] = reg.overlay_error
     return result
 
 

@@ -35,6 +35,7 @@ from amplifier_distro.features import (
     PROVIDERS,
     detect_provider,
     provider_bundle_uri,
+    register_provider,
 )
 from amplifier_distro.server.app import AppManifest
 
@@ -376,22 +377,12 @@ async def change_provider(req: ProviderRequest) -> dict[str, Any]:
             ),
         )
 
-    provider = PROVIDERS[provider_id]
-
-    # Write key to keys.env and set in env
-    persist_api_key(provider_id, req.api_key)
-
-    # Add provider config to settings.yaml (additive)
-    add_provider_config(provider_id)
-
-    # Add provider include to overlay bundle (if overlay exists)
-    prov_uri = provider_bundle_uri(provider)
-    overlay.add_include(prov_uri)
+    reg = register_provider(provider_id, req.api_key)
 
     return {
         "status": "ok",
-        "provider": provider_id,
-        "model": provider.default_model,
+        "provider": reg.provider_id,
+        "model": reg.default_model,
     }
 
 
