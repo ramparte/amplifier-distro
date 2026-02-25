@@ -654,6 +654,84 @@ class TestFoundationBackendResolveApproval:
         assert result is False
 
 
+# ── Event Queue Wiring ─────────────────────────────────────────────────
+
+
+class TestFoundationBackendEventQueueWiring:
+    async def test_create_session_with_queue_stores_approval_system(
+        self, bridge_backend
+    ):
+        """When event_queue is provided, an ApprovalSystem is stored."""
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-eq-001"
+        mock_session.project_id = "test-project"
+        mock_session.coordinator = MagicMock()
+        mock_session.coordinator.hooks = MagicMock()
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = AsyncMock(return_value=mock_session)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        event_queue: asyncio.Queue = asyncio.Queue()
+        await FoundationBackend.create_session(
+            bridge_backend, working_dir="/tmp", event_queue=event_queue
+        )
+
+        assert "sess-eq-001" in bridge_backend._approval_systems
+        # Cleanup
+        if "sess-eq-001" in bridge_backend._worker_tasks:
+            bridge_backend._worker_tasks["sess-eq-001"].cancel()
+
+    async def test_create_session_without_queue_no_approval_system(
+        self, bridge_backend
+    ):
+        """Without event_queue, no ApprovalSystem is created."""
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-eq-002"
+        mock_session.project_id = "test-project"
+
+        mock_prepared = MagicMock()
+        mock_prepared.create_session = AsyncMock(return_value=mock_session)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.create_session(bridge_backend, working_dir="/tmp")
+
+        assert "sess-eq-002" not in bridge_backend._approval_systems
+        if "sess-eq-002" in bridge_backend._worker_tasks:
+            bridge_backend._worker_tasks["sess-eq-002"].cancel()
+
+    async def test_end_session_cleans_up_approval_system(self, bridge_backend):
+        """end_session() removes the approval system for that session."""
+        from amplifier_distro.server.protocol_adapters import ApprovalSystem
+
+        bridge_backend._approval_systems["sess-cleanup"] = ApprovalSystem()
+        handle = _make_mock_handle("sess-cleanup")
+        bridge_backend._sessions["sess-cleanup"] = handle
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.end_session(bridge_backend, "sess-cleanup")
+
+        assert "sess-cleanup" not in bridge_backend._approval_systems
+
+    async def test_stop_clears_all_approval_systems(self, bridge_backend):
+        """stop() clears the entire _approval_systems dict."""
+        from amplifier_distro.server.protocol_adapters import ApprovalSystem
+
+        bridge_backend._approval_systems["a"] = ApprovalSystem()
+        bridge_backend._approval_systems["b"] = ApprovalSystem()
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.stop(bridge_backend)
+
+        assert len(bridge_backend._approval_systems) == 0
+
+
 class TestSessionBackendProtocol:
     def test_protocol_declares_resume_session(self):
         from amplifier_distro.server.session_backend import SessionBackend

@@ -264,11 +264,85 @@ class FoundationBackend:
             bundle = await load_bundle(name)
         return await bundle.prepare()
 
+    def _wire_event_queue(
+        self, session: Any, session_id: str, event_queue: asyncio.Queue
+    ) -> None:
+        """Wire streaming, display, and approval closures to an event queue.
+
+        Called from create_session() and resume_session() when event_queue
+        is provided. All three closures push (event_name, data) tuples
+        to the same queue.
+        """
+        from amplifier_distro.server.protocol_adapters import (
+            ApprovalSystem,
+            QueueDisplaySystem,
+        )
+
+        _q = event_queue
+
+        # 1. Streaming hook — all coordinator events to queue
+        def on_stream(event: str, data: dict) -> None:
+            _q.put_nowait((event, data))
+
+        coordinator = session.coordinator
+        hooks = coordinator.hooks
+
+        # Register for all events via wildcard; fall back silently
+        try:
+            hooks.register("*", on_stream)
+        except Exception:  # noqa: BLE001
+            logger.debug("hooks.register('*', ...) failed, trying individual events")
+
+        # Delegate events may not be covered by "*" — register explicitly
+        for evt in [
+            "delegate:agent_spawned",
+            "delegate:agent_resumed",
+            "delegate:agent_completed",
+            "delegate:error",
+        ]:
+            with contextlib.suppress(Exception):
+                hooks.register(evt, on_stream)
+
+        # 2. Display system — display messages to queue
+        display = QueueDisplaySystem(event_queue)
+        if hasattr(coordinator, "set"):
+            coordinator.set("display", display)
+
+        # 3. Approval system — approval requests to queue
+        def _on_approval_request(
+            request_id: str,
+            prompt: str,
+            options: list[str],
+            timeout: float,
+            default: str,
+        ) -> None:
+            _q.put_nowait(
+                (
+                    "approval_request",
+                    {
+                        "request_id": request_id,
+                        "prompt": prompt,
+                        "options": options,
+                        "timeout": timeout,
+                        "default": default,
+                    },
+                )
+            )
+
+        approval = ApprovalSystem(
+            on_approval_request=_on_approval_request,
+            auto_approve=False,
+        )
+        if hasattr(coordinator, "set"):
+            coordinator.set("approval", approval)
+        self._approval_systems[session_id] = approval
+
     async def create_session(
         self,
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         wd = Path(working_dir).expanduser()
 
@@ -283,6 +357,10 @@ class FoundationBackend:
             session=session,
         )
         self._sessions[session_id] = handle
+
+        # Wire streaming/display/approval when event_queue provided
+        if event_queue is not None:
+            self._wire_event_queue(session, session_id, event_queue)
 
         # Pre-start the session worker so the first message doesn't pay
         # the task-creation overhead
@@ -528,6 +606,7 @@ class FoundationBackend:
     async def end_session(self, session_id: str) -> None:
         # Tombstone first -- prevents _reconnect() from reviving this session
         self._ended_sessions.add(session_id)
+        self._approval_systems.pop(session_id, None)
 
         # Pop handle before signalling the worker
         handle = self._sessions.pop(session_id, None)
@@ -590,6 +669,7 @@ class FoundationBackend:
 
         self._session_queues.clear()
         self._worker_tasks.clear()
+        self._approval_systems.clear()
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         handle = self._sessions.get(session_id)
@@ -611,7 +691,31 @@ class FoundationBackend:
             for h in self._sessions.values()
         ]
 
-    async def resume_session(self, session_id: str, working_dir: str) -> None:
+    async def resume_session(
+        self,
+        session_id: str,
+        working_dir: str,
+        event_queue: asyncio.Queue | None = None,
+    ) -> None:
         """Restore the LLM context for a session after a server restart."""
+        if event_queue is not None:
+            self._ended_sessions.discard(session_id)
+
         if self._sessions.get(session_id) is None:
             await self._reconnect(session_id, working_dir=working_dir)
+
+        if event_queue is not None:
+            handle = self._sessions.get(session_id)
+            if handle is not None:
+                self._wire_event_queue(handle.session, session_id, event_queue)
+
+            # Ensure worker queue + task exist after resume
+            if session_id not in self._session_queues:
+                self._session_queues[session_id] = asyncio.Queue()
+            if (
+                session_id not in self._worker_tasks
+                or self._worker_tasks[session_id].done()
+            ):
+                self._worker_tasks[session_id] = asyncio.create_task(
+                    self._session_worker(session_id)
+                )
