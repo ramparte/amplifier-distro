@@ -14,8 +14,7 @@ Routes:
     POST /steps/welcome   - Save identity + workspace
     POST /steps/config    - Save cache/preflight
     POST /steps/modules   - Toggle features in overlay
-    POST /steps/interfaces - CLI install status
-    POST /steps/network   - Save network config
+    POST /steps/interfaces - CLI/TUI install
     POST /steps/provider  - Save API key + provider
     POST /steps/verify    - Final verification
 """
@@ -23,10 +22,8 @@ Routes:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +108,7 @@ async def wizard_page() -> HTMLResponse:
 
 @router.get("/detect")
 async def detect_environment() -> dict[str, Any]:
-    """Auto-detect environment: GitHub, git, Tailscale, API keys, CLI, bundles.
+    """Auto-detect environment: GitHub, git, API keys, CLI/TUI, bundles.
 
     Returns both nested objects (backward compat) and flat convenience
     fields that the wizard JS reads directly.
@@ -164,38 +161,6 @@ async def detect_environment() -> dict[str, Any]:
         "installed": git_installed,
         "configured": git_configured,
         "email": git_email,
-    }
-
-    # Tailscale
-    ts_installed = shutil.which("tailscale") is not None
-    ts_ip: str | None = None
-    ts_hostname: str | None = None
-    if ts_installed:
-        try:
-            proc = subprocess.run(
-                ["tailscale", "status", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if proc.returncode == 0:
-                ts_data = json.loads(proc.stdout)
-                ts_self = ts_data.get("Self", {})
-                addrs = ts_self.get("TailscaleIPs", [])
-                ts_ip = addrs[0] if addrs else None
-                # Extract hostname - prefer DNSName, fall back to HostName
-                dns_name = ts_self.get("DNSName", "")
-                if dns_name:
-                    # DNSName has trailing dot, strip it
-                    ts_hostname = dns_name.rstrip(".")
-                else:
-                    ts_hostname = ts_self.get("HostName") or None
-        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
-            pass
-    result["tailscale"] = {
-        "installed": ts_installed,
-        "ip": ts_ip,
-        "hostname": ts_hostname,
     }
 
     # API keys (check env)
@@ -253,9 +218,6 @@ async def detect_environment() -> dict[str, Any]:
     # cli/tui installed flat aliases
     result["cli_installed"] = cli_installed
     result["tui_installed"] = shutil.which("amplifier-tui") is not None
-
-    # tailscale_hostname flat alias
-    result["tailscale_hostname"] = ts_hostname
 
     return result
 
@@ -441,12 +403,6 @@ async def step_interfaces(req: InterfacesData) -> dict[str, Any]:
     result["cli_installed"] = shutil.which("amplifier") is not None
     result["tui_installed"] = shutil.which("amplifier-tui") is not None
     return result
-
-
-@steps_router.post("/network")
-async def step_network(request: Request) -> dict[str, Any]:
-    """Acknowledge network step."""
-    return {"status": "ok"}
 
 
 @steps_router.post("/provider")

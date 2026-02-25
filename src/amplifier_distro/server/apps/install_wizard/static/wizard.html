@@ -592,7 +592,6 @@ const STEPS = [
   { id: 'provider',   title: 'Provider' },
   { id: 'modules',    title: 'Modules' },
   { id: 'interfaces', title: 'Interfaces' },
-  { id: 'network',    title: 'Network' },
   { id: 'verify',     title: 'Verify' },
 ];
 
@@ -621,10 +620,7 @@ const state = {
   tuiInstalled: false,
   tuiError: null,
   tuiInstalling: false,
-  // Step 6 - Network
-  tailscaleEnabled: false,
-  tailscaleHostname: '',
-  // Step 7 - Verify
+  // Step 6 - Verify
   checks: [],
   verifyRunning: false,
 };
@@ -663,7 +659,6 @@ async function autoDetect() {
     if (data.preflight_mode) state.preflightMode = data.preflight_mode;
     if (data.cli_installed != null)  state.cliInstalled = data.cli_installed;
     if (data.tui_installed != null)  state.tuiInstalled = data.tui_installed;
-    if (data.tailscale_hostname) state.tailscaleHostname = data.tailscale_hostname;
   }
   // Load provider catalog with configuration status
   const provData = await api('GET', '/providers');
@@ -714,10 +709,7 @@ function detectCompletedSteps() {
   // Step 5 (interfaces): CLI or TUI is installed
   state.completedSteps.interfaces = state.cliInstalled || state.tuiInstalled;
   
-  // Step 6 (network): tailscale hostname is set
-  state.completedSteps.network = !!state.tailscaleHostname;
-  
-  // Step 7 (verify): runs on demand
+  // Step 6 (verify): runs on demand
   state.completedSteps.verify = false;
 }
 
@@ -754,12 +746,6 @@ async function submitStep() {
       break;
     case 'interfaces':
       body = {};
-      break;
-    case 'network':
-      body = {
-        tailscale_enabled: state.tailscaleEnabled,
-        hostname: state.tailscaleHostname,
-      };
       break;
     case 'provider':
       // Sync mode: auto-register any providers that have keys but aren't
@@ -809,7 +795,6 @@ function render() {
     config: renderConfig,
     modules: renderModules,
     interfaces: renderInterfaces,
-    network: renderNetwork,
     provider: renderProvider,
     verify: renderVerify,
   };
@@ -954,43 +939,6 @@ function renderInterfaces() {
     <div class="nav-row">
       <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
       <button class="btn-primary" onclick="submitStep()">Next</button>
-    </div>`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Step 6: Network                                                    */
-/* ------------------------------------------------------------------ */
-function renderNetwork() {
-  const tsFields = state.tailscaleEnabled ? `
-    <div class="field-group" style="margin-top: 20px;">
-      <label for="tsHostname">Tailscale Hostname</label>
-      <input type="text" id="tsHostname" value="${esc(state.tailscaleHostname)}"
-             data-bind="tailscaleHostname" placeholder="my-amplifier-server">
-      <p class="field-hint">Hostname your Amplifier server will be reachable at on the tailnet</p>
-    </div>` : '';
-
-  return `
-    <h1>Network Setup</h1>
-    <p class="subtitle">Configure remote access to your Amplifier server</p>
-    <div class="card-body">
-      <div class="toggle-row">
-        <div class="toggle ${state.tailscaleEnabled ? 'on' : ''}" id="tsToggle">
-          <div class="toggle-knob"></div>
-        </div>
-        <span class="toggle-label">Enable Tailscale</span>
-      </div>
-      ${tsFields}
-      <div class="optional-note">
-        Tailscale allows secure remote access to your Amplifier server from other devices
-        on your private network. This step is optional -- you can set it up later.
-      </div>
-    </div>
-    <div class="nav-row">
-      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
-      <div style="display:flex; gap:12px;">
-        <button class="btn-secondary" onclick="goTo(${state.step + 1})">Skip</button>
-        <button class="btn-primary" onclick="submitStep()">Next</button>
-      </div>
     </div>`;
 }
 
@@ -1218,15 +1166,6 @@ function bindEvents() {
         if (res.tui_error) state.tuiError = res.tui_error;
       }
       detectCompletedSteps();
-      render();
-    });
-  }
-
-  // Tailscale toggle
-  const tsToggle = document.getElementById('tsToggle');
-  if (tsToggle) {
-    tsToggle.addEventListener('click', () => {
-      state.tailscaleEnabled = !state.tailscaleEnabled;
       render();
     });
   }
