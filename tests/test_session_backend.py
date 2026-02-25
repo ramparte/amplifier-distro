@@ -739,3 +739,45 @@ class TestSessionBackendProtocol:
         assert hasattr(SessionBackend, "resume_session"), (
             "SessionBackend Protocol must declare resume_session"
         )
+
+
+# ── MockBackend new method stubs ───────────────────────────────────────
+
+
+class TestMockBackendNewMethods:
+    async def test_create_session_accepts_event_queue(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        q: asyncio.Queue = asyncio.Queue()
+        info = await backend.create_session(working_dir="~", event_queue=q)
+        assert info.session_id is not None
+
+    async def test_execute_records_call(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        info = await backend.create_session()
+        await backend.execute(info.session_id, "hello")
+        assert any(c["method"] == "execute" for c in backend.calls)
+
+    async def test_cancel_session_records_call(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        await backend.cancel_session("any-id", "graceful")
+        assert any(c["method"] == "cancel_session" for c in backend.calls)
+
+    def test_resolve_approval_returns_false(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        assert backend.resolve_approval("s", "r", "allow") is False
+
+    async def test_resume_session_accepts_event_queue(self):
+        from amplifier_distro.server.session_backend import MockBackend
+
+        backend = MockBackend()
+        q: asyncio.Queue = asyncio.Queue()
+        await backend.resume_session("s", "~", event_queue=q)
+        assert any(c["method"] == "resume_session" for c in backend.calls)

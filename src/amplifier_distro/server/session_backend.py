@@ -150,6 +150,7 @@ class MockBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: Any = None,
     ) -> SessionInfo:
         self._session_counter += 1
         session_id = f"mock-session-{self._session_counter:04d}"
@@ -213,7 +214,9 @@ class MockBackend:
         """Get the full message history for a session (testing helper)."""
         return self._message_history.get(session_id, [])
 
-    async def resume_session(self, session_id: str, working_dir: str) -> None:
+    async def resume_session(
+        self, session_id: str, working_dir: str, event_queue: Any = None
+    ) -> None:
         """No-op resume for testing. Records the call for assertion."""
         self.calls.append(
             {
@@ -222,6 +225,41 @@ class MockBackend:
                 "working_dir": working_dir,
             }
         )
+
+    async def execute(
+        self, session_id: str, prompt: str, images: list[str] | None = None
+    ) -> None:
+        """No-op execute for testing. Records the call."""
+        self.calls.append(
+            {
+                "method": "execute",
+                "session_id": session_id,
+                "prompt": prompt,
+                "images": images,
+            }
+        )
+
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """No-op cancel for testing. Records the call."""
+        self.calls.append(
+            {
+                "method": "cancel_session",
+                "session_id": session_id,
+                "level": level,
+            }
+        )
+
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """No-op resolve for testing. Always returns False."""
+        self.calls.append(
+            {
+                "method": "resolve_approval",
+                "session_id": session_id,
+                "request_id": request_id,
+                "choice": choice,
+            }
+        )
+        return False
 
 
 class FoundationBackend:
