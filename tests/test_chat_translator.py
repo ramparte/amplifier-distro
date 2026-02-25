@@ -144,6 +144,34 @@ class TestBasicTranslations:
             "error": "File not found",
         }
 
+    def test_tool_pre_passes_lineage_fields(self):
+        msg = self.t.translate(
+            "tool:pre",
+            {
+                "tool_call_id": "tc-002",
+                "tool_name": "grep",
+                "tool_input": {"pattern": "TODO"},
+                "session_id": "sess-child",
+                "parent_id": "sess-parent",
+            },
+        )
+        assert msg["session_id"] == "sess-child"
+        assert msg["parent_id"] == "sess-parent"
+
+    def test_tool_post_passes_lineage_fields(self):
+        result = type("R", (), {"output": "ok", "error": None})()
+        msg = self.t.translate(
+            "tool:post",
+            {
+                "tool_call_id": "tc-003",
+                "result": result,
+                "session_id": "sess-child",
+                "parent_id": "sess-parent",
+            },
+        )
+        assert msg["session_id"] == "sess-child"
+        assert msg["parent_id"] == "sess-parent"
+
     def test_tool_error(self):
         msg = self.t.translate(
             "tool:error",

@@ -49,6 +49,21 @@ class SessionEventTranslator:
         self._pending_delegates.clear()
 
     @staticmethod
+    def lineage_fields(data: dict[str, Any]) -> dict[str, str]:
+        """Extract lineage metadata for UI provenance labels.
+
+        Returns session_id and parent_id when present and non-empty.
+        """
+        out: dict[str, str] = {}
+        session_id = data.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            out["session_id"] = session_id
+        parent_id = data.get("parent_id")
+        if isinstance(parent_id, str) and parent_id:
+            out["parent_id"] = parent_id
+        return out
+
+    @staticmethod
     def server_index(data: dict[str, Any]) -> int:
         """Extract block index from runtime payloads (new and legacy shapes)."""
         raw = data.get("block_index", data.get("index"))
@@ -144,6 +159,7 @@ class SessionEventTranslator:
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,
                     "arguments": data.get("tool_input", {}),
+                    **self.lineage_fields(data),
                 }
 
             case "tool:post":
@@ -164,6 +180,7 @@ class SessionEventTranslator:
                     "success": success,
                     "output": output,
                     "error": error,
+                    **self.lineage_fields(data),
                 }
 
             case "tool:error":
@@ -173,6 +190,7 @@ class SessionEventTranslator:
                     "success": False,
                     "output": None,
                     "error": data.get("error", "Unknown error"),
+                    **self.lineage_fields(data),
                 }
 
             case "delegate:agent_spawned":
