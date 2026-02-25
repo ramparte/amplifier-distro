@@ -302,6 +302,9 @@ class FoundationBackend:
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
         self._approval_systems: dict[str, Any] = {}
+        # Guard: sessions whose hooks have already been wired (prevents
+        # double-registration on page refresh / resume)
+        self._wired_sessions: set[str] = set()
 
     async def _load_bundle(self, bundle_name: str | None = None) -> Any:
         """Load and prepare a bundle via foundation.
@@ -330,6 +333,10 @@ class FoundationBackend:
         Called from create_session() and resume_session() when event_queue
         is provided. All three closures push (event_name, data) tuples
         to the same queue.
+
+        Guards against double hook registration on page refresh / resume:
+        hooks are only registered once per session; subsequent calls update
+        only the approval system (which needs the new queue).
         """
         from amplifier_distro.server.protocol_adapters import (
             ApprovalSystem,
@@ -337,12 +344,52 @@ class FoundationBackend:
         )
 
         _q = event_queue
+        coordinator = session.coordinator
+
+        if session_id in self._wired_sessions:
+            # Already wired — update approval system only (new queue connection).
+            # Don't re-register hooks.
+            def _on_approval_request_rewire(
+                request_id: str,
+                prompt: str,
+                options: list[str],
+                timeout: float,
+                default: str,
+            ) -> None:
+                try:
+                    _q.put_nowait(
+                        (
+                            "approval_request",
+                            {
+                                "request_id": request_id,
+                                "prompt": prompt,
+                                "options": options,
+                                "timeout": timeout,
+                                "default": default,
+                            },
+                        )
+                    )
+                except asyncio.QueueFull:
+                    logger.warning("Event queue full, dropping approval_request")
+
+            approval = ApprovalSystem(
+                on_approval_request=_on_approval_request_rewire,
+                auto_approve=False,
+            )
+            if hasattr(coordinator, "set"):
+                coordinator.set("approval", approval)
+            self._approval_systems[session_id] = approval
+            return
+
+        self._wired_sessions.add(session_id)
 
         # 1. Streaming hook — all coordinator events to queue
         def on_stream(event: str, data: dict) -> None:
-            _q.put_nowait((event, data))
+            try:
+                _q.put_nowait((event, data))
+            except asyncio.QueueFull:
+                logger.warning("Event queue full, dropping event: %s", event)
 
-        coordinator = session.coordinator
         hooks = coordinator.hooks
 
         # Register for all events via wildcard; fall back silently
@@ -374,18 +421,21 @@ class FoundationBackend:
             timeout: float,
             default: str,
         ) -> None:
-            _q.put_nowait(
-                (
-                    "approval_request",
-                    {
-                        "request_id": request_id,
-                        "prompt": prompt,
-                        "options": options,
-                        "timeout": timeout,
-                        "default": default,
-                    },
+            try:
+                _q.put_nowait(
+                    (
+                        "approval_request",
+                        {
+                            "request_id": request_id,
+                            "prompt": prompt,
+                            "options": options,
+                            "timeout": timeout,
+                            "default": default,
+                        },
+                    )
                 )
-            )
+            except asyncio.QueueFull:
+                logger.warning("Event queue full, dropping approval_request")
 
         approval = ApprovalSystem(
             on_approval_request=_on_approval_request,
@@ -481,6 +531,7 @@ class FoundationBackend:
         handle = self._sessions.get(session_id)
         if handle is None:
             raise ValueError(f"Unknown session: {session_id}")
+        # TODO: wire images to handle.run() when image attachment support is added
         await handle.run(prompt)
 
     async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
@@ -664,6 +715,7 @@ class FoundationBackend:
     async def end_session(self, session_id: str) -> None:
         # Tombstone first -- prevents _reconnect() from reviving this session
         self._ended_sessions.add(session_id)
+        self._wired_sessions.discard(session_id)
         self._approval_systems.pop(session_id, None)
 
         # Pop handle before signalling the worker
@@ -728,6 +780,7 @@ class FoundationBackend:
         self._session_queues.clear()
         self._worker_tasks.clear()
         self._approval_systems.clear()
+        self._wired_sessions.clear()
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         handle = self._sessions.get(session_id)

@@ -328,6 +328,34 @@ class TestInputValidation:
         assert "Invalid working directory" in errors[0]["error"]
 
 
+class TestEventQueueBounded:
+    def test_event_queue_has_maxsize(self):
+        """event_queue must be bounded to prevent unbounded memory growth."""
+        from amplifier_distro.server.apps.chat.connection import ChatConnection
+
+        ws = make_ws([])
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        assert conn.event_queue.maxsize > 0, "event_queue must have a maxsize"
+
+    def test_event_queue_maxsize_is_10000(self):
+        """event_queue maxsize should be 10000."""
+        from amplifier_distro.server.apps.chat.connection import (
+            _EVENT_QUEUE_MAX_SIZE,
+            ChatConnection,
+        )
+
+        ws = make_ws([])
+        backend = make_backend()
+        config = make_config()
+
+        conn = ChatConnection(ws, backend, config)
+        assert _EVENT_QUEUE_MAX_SIZE == 10000
+        assert conn.event_queue.maxsize == _EVENT_QUEUE_MAX_SIZE
+
+
 class TestSyntheticStreaming:
     @pytest.mark.asyncio
     async def test_synthetic_deltas_sent_for_non_streaming_blocks(self):

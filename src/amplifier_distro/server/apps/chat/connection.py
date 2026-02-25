@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 _AUTH_TIMEOUT_S = 30.0
 
+# Maximum event queue depth — bounds memory if the WebSocket consumer is slow
+_EVENT_QUEUE_MAX_SIZE = 10000
+
 # Sentinel: put into event_queue to stop _event_fanout_loop
 _STOP: object = object()
 
@@ -48,7 +51,7 @@ class ChatConnection:
         self._ws = ws
         self._backend = backend
         self._config = config
-        self.event_queue: asyncio.Queue = asyncio.Queue()
+        self.event_queue: asyncio.Queue = asyncio.Queue(maxsize=_EVENT_QUEUE_MAX_SIZE)
         self._translator = SessionEventTranslator()
         self._session_id: str | None = None
         # keeps strong refs to fire-and-forget tasks so GC can't collect them
@@ -357,40 +360,8 @@ class ChatConnection:
         providers that deliver full text in content_end with no prior deltas.
         """
 
-        def _server_index(payload: dict[str, Any]) -> int:
-            raw = payload.get("block_index", payload.get("index"))
-            if raw is None:
-                block = payload.get("block")
-                if isinstance(block, dict):
-                    raw = block.get("block_index", block.get("index"))
-                elif block is not None:
-                    raw = getattr(block, "block_index", getattr(block, "index", None))
-            if raw is None:
-                raw = 0
-            if isinstance(raw, int):
-                return raw
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                return 0
-
-        def _block_text(payload: dict[str, Any]) -> str:
-            block = payload.get("block")
-            if isinstance(block, dict):
-                for key in ("text", "thinking", "content", "delta"):
-                    value = block.get(key)
-                    if isinstance(value, str):
-                        return value
-            elif block is not None:
-                for attr in ("text", "thinking", "content"):
-                    value = getattr(block, attr, None)
-                    if isinstance(value, str):
-                        return value
-            text = payload.get("text", "")
-            if isinstance(text, str):
-                return text
-            content = payload.get("content")
-            return content if isinstance(content, str) else ""
+        _server_index = SessionEventTranslator.server_index
+        _block_text = SessionEventTranslator.block_text
 
         while True:
             raw = await self.event_queue.get()

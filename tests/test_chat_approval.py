@@ -147,6 +147,7 @@ class TestFoundationBackendResolveApproval:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         result = backend.resolve_approval("s001", "req-001", "allow")
         assert result is True
@@ -162,6 +163,7 @@ class TestFoundationBackendResolveApproval:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         result = backend.resolve_approval("no-session", "req-001", "allow")
         assert result is False
@@ -192,6 +194,7 @@ async def test_create_session_with_event_queue_pushes_approval_request():
     backend._session_queues = {}
     backend._worker_tasks = {}
     backend._ended_sessions = set()
+    backend._wired_sessions = set()
     backend._approval_systems = {}
 
     event_queue: asyncio.Queue = asyncio.Queue()
@@ -260,6 +263,7 @@ async def test_create_session_populates_approval_systems():
     backend._session_queues = {}
     backend._worker_tasks = {}
     backend._ended_sessions = set()
+    backend._wired_sessions = set()
     backend._approval_systems = {}
 
     event_queue: asyncio.Queue = asyncio.Queue()

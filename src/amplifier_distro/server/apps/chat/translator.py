@@ -49,7 +49,7 @@ class SessionEventTranslator:
         self._pending_delegates.clear()
 
     @staticmethod
-    def _server_index(data: dict[str, Any]) -> int:
+    def server_index(data: dict[str, Any]) -> int:
         """Extract block index from runtime payloads (new and legacy shapes)."""
         raw = data.get("block_index", data.get("index"))
         if raw is None:
@@ -68,7 +68,7 @@ class SessionEventTranslator:
             return 0
 
     @staticmethod
-    def _block_text(data: dict[str, Any]) -> str:
+    def block_text(data: dict[str, Any]) -> str:
         """Extract text from content block payloads (new and legacy shapes)."""
         block = data.get("block")
         if isinstance(block, dict):
@@ -97,7 +97,7 @@ class SessionEventTranslator:
                 return {
                     "type": "content_start",
                     "block_type": data.get("block_type", "text"),
-                    "index": self.get_local_index(self._server_index(data)),
+                    "index": self.get_local_index(self.server_index(data)),
                 }
 
             case "content_block:delta":
@@ -112,14 +112,14 @@ class SessionEventTranslator:
                 return {
                     "type": "content_delta",
                     "delta": delta,
-                    "index": self.get_local_index(self._server_index(data)),
+                    "index": self.get_local_index(self.server_index(data)),
                 }
 
             case "content_block:end":
                 return {
                     "type": "content_end",
-                    "index": self.get_local_index(self._server_index(data)),
-                    "text": self._block_text(data),
+                    "index": self.get_local_index(self.server_index(data)),
+                    "text": self.block_text(data),
                 }
 
             case "thinking:delta":

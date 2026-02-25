@@ -34,6 +34,7 @@ class TestFoundationBackendQueueWiring:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
         backend._approval_systems = {}
         return backend
 

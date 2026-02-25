@@ -63,6 +63,7 @@ class TestFoundationBackendCancelSession:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         await backend.cancel_session("sess-cancel-001", "graceful")
         mock_handle.cancel.assert_awaited_once_with("graceful")
@@ -76,6 +77,7 @@ class TestFoundationBackendCancelSession:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         await backend.cancel_session("no-such-session", "immediate")  # no raise
 
@@ -90,6 +92,7 @@ class TestFoundationBackendCancelSession:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         await backend.cancel_session("s", "immediate")
         mock_handle.cancel.assert_awaited_once_with("immediate")

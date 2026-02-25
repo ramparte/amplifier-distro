@@ -322,6 +322,21 @@ class TestDelegatePropagation:
             "default": "deny",
         }
 
+    def test_server_index_is_public_static_method(self):
+        """server_index (no underscore) is a public static method on the translator."""
+        assert hasattr(SessionEventTranslator, "server_index")
+        assert callable(SessionEventTranslator.server_index)
+        # Verify it works as a static call (no instance needed)
+        result = SessionEventTranslator.server_index({"block_index": 5})
+        assert result == 5
+
+    def test_block_text_is_public_static_method(self):
+        """block_text (no underscore) is a public static method on the translator."""
+        assert hasattr(SessionEventTranslator, "block_text")
+        assert callable(SessionEventTranslator.block_text)
+        result = SessionEventTranslator.block_text({"block": {"text": "hello"}})
+        assert result == "hello"
+
     def test_fifo_order_for_parallel_delegates(self):
         self.t.translate(
             "tool:pre",

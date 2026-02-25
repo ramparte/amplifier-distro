@@ -245,6 +245,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         reconnect_count = 0
 
@@ -301,6 +302,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         mock_handle = MagicMock()
         mock_handle.session_id = "sess-456"
@@ -345,6 +347,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         reconnect_count = 0
 
@@ -403,6 +406,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         async def fake_reconnect(session_id, *, working_dir="~"):
             mock_session = MagicMock()
@@ -443,6 +447,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         async def fake_reconnect(session_id, *, working_dir="~"):
             raise FileNotFoundError("session dir gone")
@@ -473,6 +478,7 @@ class TestFoundationBackendReconnectLock:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         call_count = 0
 

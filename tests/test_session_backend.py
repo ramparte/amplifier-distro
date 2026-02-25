@@ -40,6 +40,7 @@ def bridge_backend():
         backend._worker_tasks = {}
         backend._ended_sessions = set()
         backend._approval_systems = {}
+        backend._wired_sessions = set()
         return backend
 
 
@@ -730,6 +731,86 @@ class TestFoundationBackendEventQueueWiring:
         await FoundationBackend.stop(bridge_backend)
 
         assert len(bridge_backend._approval_systems) == 0
+
+
+class TestDoubleHookRegistrationGuard:
+    """_wire_event_queue must not double-register hooks on resume."""
+
+    async def test_wire_twice_does_not_double_register_hooks(self, bridge_backend):
+        """Calling _wire_event_queue twice for the same session must not
+        register hooks a second time (guards against page-refresh duplication)."""
+        mock_session = MagicMock()
+        mock_session.coordinator = MagicMock()
+        mock_session.coordinator.hooks = MagicMock()
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        q1: asyncio.Queue = asyncio.Queue()
+        q2: asyncio.Queue = asyncio.Queue()
+
+        # First wire — hooks should be registered
+        FoundationBackend._wire_event_queue(
+            bridge_backend, mock_session, "sess-double-001", q1
+        )
+        first_register_count = mock_session.coordinator.hooks.register.call_count
+
+        # Second wire (simulating page refresh) — hooks must NOT be re-registered
+        FoundationBackend._wire_event_queue(
+            bridge_backend, mock_session, "sess-double-001", q2
+        )
+        second_register_count = mock_session.coordinator.hooks.register.call_count
+
+        assert second_register_count == first_register_count, (
+            f"Hooks registered twice: {first_register_count} -> {second_register_count}"
+        )
+
+    async def test_wire_guard_still_updates_approval_system(self, bridge_backend):
+        """Second _wire_event_queue call must still update the approval system
+        (new queue connection needs a new approval instance)."""
+        mock_session = MagicMock()
+        mock_session.coordinator = MagicMock()
+        mock_session.coordinator.hooks = MagicMock()
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        q1: asyncio.Queue = asyncio.Queue()
+        q2: asyncio.Queue = asyncio.Queue()
+
+        FoundationBackend._wire_event_queue(
+            bridge_backend, mock_session, "sess-double-002", q1
+        )
+        approval_1 = bridge_backend._approval_systems.get("sess-double-002")
+
+        FoundationBackend._wire_event_queue(
+            bridge_backend, mock_session, "sess-double-002", q2
+        )
+        approval_2 = bridge_backend._approval_systems.get("sess-double-002")
+
+        assert approval_1 is not None
+        assert approval_2 is not None
+        assert approval_1 is not approval_2, (
+            "Approval system should be replaced on re-wire"
+        )
+
+    async def test_end_session_clears_wired_sessions(self, bridge_backend):
+        """end_session must remove session from _wired_sessions set."""
+        bridge_backend._wired_sessions = {"sess-end-wire"}
+        handle = _make_mock_handle("sess-end-wire")
+        bridge_backend._sessions["sess-end-wire"] = handle
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.end_session(bridge_backend, "sess-end-wire")
+        assert "sess-end-wire" not in bridge_backend._wired_sessions
+
+    async def test_stop_clears_wired_sessions(self, bridge_backend):
+        """stop() must clear the entire _wired_sessions set."""
+        bridge_backend._wired_sessions = {"a", "b"}
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.stop(bridge_backend)
+        assert len(bridge_backend._wired_sessions) == 0
 
 
 class TestSessionBackendProtocol:

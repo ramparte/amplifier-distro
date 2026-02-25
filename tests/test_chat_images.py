@@ -22,6 +22,7 @@ class TestExecuteWithImages:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         images = ["base64datahere", "anotherimage"]
         await backend.execute("s001", "describe these", images=images)
@@ -42,6 +43,7 @@ class TestExecuteWithImages:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         await backend.execute("s002", "no images here")
         handle.run.assert_called_once_with("no images here")
@@ -60,6 +62,7 @@ class TestExecuteWithImages:
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._wired_sessions = set()
 
         await backend.execute("s003", "prompt with none images", images=None)
         handle.run.assert_called_once_with("prompt with none images")
