@@ -9,6 +9,7 @@ Routes:
     GET  /wizard       - Full multi-step setup wizard
     GET  /detect       - Auto-detect environment
     GET  /modules      - Feature/module catalog
+    GET  /providers    - Provider catalog with config status
     POST /quickstart   - Fast-path API key setup
     POST /steps/welcome   - Save identity + workspace
     POST /steps/config    - Save cache/preflight
@@ -273,6 +274,23 @@ async def get_modules() -> dict[str, Any]:
     return {"modules": modules}
 
 
+@router.get("/providers")
+async def get_providers() -> dict[str, Any]:
+    """Return all supported providers with their current configuration status."""
+    providers = [
+        {
+            "id": pid,
+            "name": p.name,
+            "description": p.description,
+            "console_url": p.console_url,
+            "key_prefix": p.key_prefix,
+            "configured": bool(os.environ.get(p.env_var)),
+        }
+        for pid, p in PROVIDERS.items()
+    ]
+    return {"providers": providers}
+
+
 @router.post("/quickstart")
 async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
     """Fast path: paste one API key, get a working setup.
@@ -400,7 +418,9 @@ async def step_provider(req: ProviderData) -> dict[str, Any]:
 
     return {
         "status": "ok",
+        "verified": True,
         "provider": provider_id,
+        "provider_name": provider.name,
         "model": provider.default_model,
     }
 

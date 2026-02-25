@@ -346,53 +346,88 @@ input:focus, select:focus {
 /* ------------------------------------------------------------------ */
 /*  Provider Selection                                                 */
 /* ------------------------------------------------------------------ */
-.provider-options {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 24px;
+.provider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .provider-card {
-  flex: 1;
   background: var(--bg-card);
   border: 2px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 16px;
   cursor: pointer;
-  text-align: center;
   transition: all 0.15s ease;
 }
 .provider-card:hover { border-color: var(--accent); }
 .provider-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+.provider-card.configured { border-color: var(--success); }
+.provider-card.configured.selected { border-color: var(--accent); }
 
-.provider-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-.provider-card p  { font-size: 13px; color: var(--text-secondary); }
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.provider-card-header h3 { font-size: 15px; font-weight: 600; margin: 0; }
+
+.provider-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.provider-badge.configured {
+  background: rgba(34,197,94,0.15);
+  color: var(--success);
+}
+
+.provider-card p { font-size: 13px; color: var(--text-secondary); margin: 0 0 6px; }
 
 .provider-card .provider-link {
   display: inline-block;
-  margin-top: 8px;
   font-size: 12px;
   color: var(--accent);
   text-decoration: none;
 }
 .provider-card .provider-link:hover { text-decoration: underline; }
 
-.key-verify-row {
+.provider-key-row {
   display: flex;
-  gap: 12px;
-  align-items: flex-end;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
-.key-verify-row .field-group { flex: 1; margin-bottom: 0; }
-
-.verify-result {
+.provider-key-row input {
+  flex: 1;
   font-size: 13px;
-  margin-top: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-main);
+  color: var(--text-primary);
+}
+
+.provider-save-msg {
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 4px 8px;
   border-radius: var(--radius);
 }
-.verify-result.ok      { background: rgba(34,197,94,0.1);  color: var(--success); }
-.verify-result.fail    { background: rgba(239,68,68,0.1);  color: var(--error); }
-.verify-result.loading { background: rgba(59,130,246,0.1); color: var(--accent); }
+.provider-save-msg.ok   { background: rgba(34,197,94,0.1);  color: var(--success); }
+.provider-save-msg.fail { background: rgba(239,68,68,0.1);  color: var(--error); }
+
+.configured-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+.configured-summary strong { color: var(--text-primary); }
 
 /* ------------------------------------------------------------------ */
 /*  Verification Checklist                                             */
@@ -534,10 +569,10 @@ input:focus, select:focus {
 const STEPS = [
   { id: 'welcome',    title: 'Welcome' },
   { id: 'config',     title: 'Configuration' },
+  { id: 'provider',   title: 'Provider' },
   { id: 'modules',    title: 'Modules' },
   { id: 'interfaces', title: 'Interfaces' },
   { id: 'network',    title: 'Network' },
-  { id: 'provider',   title: 'Provider' },
   { id: 'verify',     title: 'Verify' },
 ];
 
@@ -551,21 +586,21 @@ const state = {
   // Step 2 - Config
   cacheTTL: 168,
   preflightMode: 'block',
-  // Step 3 - Modules
+  // Step 3 - Provider
+  providers: [],              // loaded from /providers endpoint
+  selectedProvider: null,     // which provider card is expanded for key entry
+  providerKeyInput: '',       // current key input value
+  savingProvider: null,       // provider ID currently being saved
+  // Step 4 - Modules
   modules: [],
   selectedModules: new Set(),
-
-  // Step 4 - Interfaces
+  // Step 5 - Interfaces
   cliInstalled: false,
   guiInstalled: true,
   cliInstalling: false,
-  // Step 5 - Network
+  // Step 6 - Network
   tailscaleEnabled: false,
   tailscaleHostname: '',
-  // Step 6 - Provider
-  provider: 'anthropic',
-  apiKey: '',
-  keyVerified: null,    // null | 'loading' | 'ok' | 'fail'
   // Step 7 - Verify
   checks: [],
   verifyRunning: false,
@@ -605,8 +640,11 @@ async function autoDetect() {
     if (data.preflight_mode) state.preflightMode = data.preflight_mode;
     if (data.cli_installed != null)  state.cliInstalled = data.cli_installed;
     if (data.tailscale_hostname) state.tailscaleHostname = data.tailscale_hostname;
-    if (data.provider)       state.provider = data.provider;
-    if (data.has_api_key)    state.keyVerified = 'ok';
+  }
+  // Load provider catalog with configuration status
+  const provData = await api('GET', '/providers');
+  if (provData && !provData.error && provData.providers) {
+    state.providers = provData.providers;
   }
   // Load available modules and track currently enabled ones
   const mods = await api('GET', '/modules');
@@ -641,19 +679,19 @@ function detectCompletedSteps() {
   // Step 2 (config): has non-default cache TTL
   state.completedSteps.config = state.cacheTTL != null && state.cacheTTL !== 168;
   
-  // Step 3 (modules): has selected modules beyond just defaults
+  // Step 3 (provider): at least one provider is configured
+  state.completedSteps.provider = (state.providers || []).some(p => p.configured);
+  
+  // Step 4 (modules): has selected modules beyond just defaults
   const defaultCount = (state.modules || []).filter(m => m.default).length;
   const selectedCount = state.selectedModules ? state.selectedModules.size : 0;
   state.completedSteps.modules = selectedCount > defaultCount;
   
-  // Step 4 (interfaces): CLI is installed
+  // Step 5 (interfaces): CLI is installed
   state.completedSteps.interfaces = state.cliInstalled;
   
-  // Step 5 (network): tailscale hostname is set
+  // Step 6 (network): tailscale hostname is set
   state.completedSteps.network = !!state.tailscaleHostname;
-  
-  // Step 6 (provider): has API key AND provider is set
-  state.completedSteps.provider = state.keyVerified === 'ok' && state.provider;
   
   // Step 7 (verify): runs on demand
   state.completedSteps.verify = false;
@@ -700,10 +738,7 @@ async function submitStep() {
       };
       break;
     case 'provider':
-      body = {
-        provider: state.provider,
-        api_key: state.apiKey,
-      };
+      // Keys are saved individually via "Add Key" buttons; just advance.
       break;
     case 'verify':
       return;
@@ -814,7 +849,7 @@ function renderConfig() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Step 3: Modules                                                    */
+/*  Step 4: Modules                                                    */
 /* ------------------------------------------------------------------ */
 function renderModules() {
   const mods = state.modules;
@@ -825,7 +860,7 @@ function renderModules() {
 
   return `
     <h1>Choose Your Features</h1>
-    <p class="subtitle">Select the providers, tools, and bundles to install</p>
+    <p class="subtitle">Select the features you would like to enable (you can change these later)</p>
     <div class="card-body">
       ${fallbackModules}
       <div class="module-grid">
@@ -852,7 +887,7 @@ function renderModules() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Step 4: Interfaces                                                 */
+/*  Step 5: Interfaces                                                 */
 /* ------------------------------------------------------------------ */
 function renderInterfaces() {
   const cliBtnHtml = state.cliInstalled
@@ -889,7 +924,7 @@ function renderInterfaces() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Step 5: Network                                                    */
+/*  Step 6: Network                                                    */
 /* ------------------------------------------------------------------ */
 function renderNetwork() {
   const tsFields = state.tailscaleEnabled ? `
@@ -926,54 +961,69 @@ function renderNetwork() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Step 6: Provider                                                   */
+/*  Step 3: Provider                                                   */
 /* ------------------------------------------------------------------ */
 function renderProvider() {
-  const verifyHtml = state.keyVerified === 'loading'
-    ? '<div class="verify-result loading"><span class="spinner"></span> Verifying key...</div>'
-    : state.keyVerified === 'ok'
-      ? '<div class="verify-result ok">Key verified successfully</div>'
-      : state.keyVerified === 'fail'
-        ? '<div class="verify-result fail">Key verification failed. Check your key and try again.</div>'
-        : '';
+  const providers = state.providers || [];
+  const configuredNames = providers.filter(p => p.configured).map(p => p.name);
+
+  const summaryHtml = configuredNames.length > 0
+    ? `<div class="configured-summary">Configured: <strong>${configuredNames.map(esc).join('</strong>, <strong>')}</strong></div>`
+    : `<div class="configured-summary">No providers configured yet. Add at least one API key to continue.</div>`;
 
   return `
-    <h1>Set Up Your AI Provider</h1>
-    <p class="subtitle">Connect to your preferred AI model provider</p>
+    <h1>Set Up Your AI Providers</h1>
+    <p class="subtitle">Add API keys for one or more AI model providers</p>
     <div class="card-body">
-      <div class="provider-options">
-        <div class="provider-card ${state.provider === 'anthropic' ? 'selected' : ''}" data-provider="anthropic">
-          <h3>Anthropic</h3>
-          <p>Claude models</p>
-          <a class="provider-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get an API key</a>
-        </div>
-        <div class="provider-card ${state.provider === 'openai' ? 'selected' : ''}" data-provider="openai">
-          <h3>OpenAI</h3>
-          <p>GPT models</p>
-          <a class="provider-link" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get an API key</a>
-        </div>
+      ${summaryHtml}
+      <div class="provider-grid">
+        ${providers.map(p => {
+          const isSelected = state.selectedProvider === p.id;
+          const cls = [
+            'provider-card',
+            p.configured ? 'configured' : '',
+            isSelected ? 'selected' : '',
+          ].filter(Boolean).join(' ');
+
+          const placeholder = p.key_prefix ? p.key_prefix + '...' : 'Enter key or URL';
+
+          const saveResult = state.providerSaveResult && state.providerSaveResult.id === p.id
+            ? state.providerSaveResult : null;
+
+          return `
+            <div class="${cls}" data-provider="${esc(p.id)}">
+              <div class="provider-card-header">
+                <h3>${esc(p.name)}</h3>
+                ${p.configured ? '<span class="provider-badge configured">Configured</span>' : ''}
+              </div>
+              <p>${esc(p.description)}</p>
+              <a class="provider-link" href="${esc(p.console_url)}" target="_blank" rel="noopener">Get an API key</a>
+              ${isSelected ? `
+                <div class="provider-key-row">
+                  <input type="password" class="provider-key-input"
+                         data-provider-key="${esc(p.id)}"
+                         placeholder="${esc(placeholder)}"
+                         value="${esc(state.providerKeyInput)}">
+                  <button class="btn-sm btn-secondary provider-save-btn"
+                          data-provider-save="${esc(p.id)}"
+                          ${state.savingProvider === p.id ? 'disabled' : ''}>
+                    ${state.savingProvider === p.id ? 'Saving...' : p.configured ? 'Update' : 'Add Key'}
+                  </button>
+                </div>
+                ${saveResult ? `<div class="provider-save-msg ${saveResult.ok ? 'ok' : 'fail'}">${esc(saveResult.message)}</div>` : ''}
+              ` : ''}
+            </div>`;
+        }).join('')}
       </div>
-      <div class="key-verify-row">
-        <div class="field-group">
-          <label for="apiKey">API Key</label>
-          <input type="password" id="apiKey" value="${esc(state.apiKey)}"
-                 data-bind="apiKey"
-                 placeholder="${state.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}">
-        </div>
-        <button class="btn-sm btn-secondary" id="verifyKeyBtn"
-                style="margin-bottom: 0; height: 40px;"
-                ${!state.apiKey ? 'disabled' : ''}>Verify Key</button>
-      </div>
-      ${verifyHtml}
     </div>
     <div class="nav-row">
       <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
-      <button class="btn-primary" onclick="submitStep()">Next</button>
+      <button class="btn-primary" onclick="goTo(${state.step + 1})">Next</button>
     </div>`;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Step 7: Verify                                                     */
+/*  Step 7: Verify                                                      */
 /* ------------------------------------------------------------------ */
 function renderVerify() {
   const allPassed = state.checks.length > 0 && state.checks.every(c => c.passed);
@@ -1105,31 +1155,59 @@ function bindEvents() {
     });
   }
 
-  // Provider selection
+  // Provider card selection (expand key input)
   document.querySelectorAll('[data-provider]').forEach(card => {
     card.addEventListener('click', (e) => {
-      // Don't switch provider when clicking the link
       if (e.target.tagName === 'A') return;
-      state.provider = card.dataset.provider;
-      state.keyVerified = null;
+      if (e.target.closest('.provider-key-row')) return;
+      const pid = card.dataset.provider;
+      if (state.selectedProvider === pid) {
+        state.selectedProvider = null;
+      } else {
+        state.selectedProvider = pid;
+        state.providerKeyInput = '';
+        state.providerSaveResult = null;
+      }
       render();
     });
   });
 
-  // Verify key
-  const verifyBtn = document.getElementById('verifyKeyBtn');
-  if (verifyBtn) {
-    verifyBtn.addEventListener('click', async () => {
-      state.keyVerified = 'loading';
+  // Provider key input binding
+  document.querySelectorAll('[data-provider-key]').forEach(el => {
+    el.addEventListener('input', () => {
+      state.providerKeyInput = el.value;
+    });
+  });
+
+  // Provider save key buttons
+  document.querySelectorAll('[data-provider-save]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.providerSave;
+      if (!state.providerKeyInput.trim()) return;
+      state.savingProvider = pid;
+      state.providerSaveResult = null;
       render();
       const res = await api('POST', '/steps/provider', {
-        provider: state.provider,
-        api_key: state.apiKey,
+        provider: pid,
+        api_key: state.providerKeyInput,
       });
-      state.keyVerified = (res && !res.error && res.verified) ? 'ok' : 'fail';
+      state.savingProvider = null;
+      if (res && !res.error && res.verified) {
+        // Mark provider as configured in local state
+        const prov = state.providers.find(p => p.id === (res.provider || pid));
+        if (prov) prov.configured = true;
+        state.providerSaveResult = { id: res.provider || pid, ok: true, message: res.provider_name + ' configured' };
+        state.providerKeyInput = '';
+        state.selectedProvider = null;
+        detectCompletedSteps();
+      } else {
+        const detail = (res && res.detail) || 'Failed to save key. Check your key and try again.';
+        state.providerSaveResult = { id: pid, ok: false, message: detail };
+      }
       render();
     });
-  }
+  });
 }
 
 /* ================================================================== */
