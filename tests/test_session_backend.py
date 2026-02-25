@@ -6,6 +6,7 @@ without a real Amplifier installation.
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -38,6 +39,7 @@ def bridge_backend():
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._approval_systems = {}
         return backend
 
 
@@ -524,6 +526,132 @@ class TestFoundationBackendReconnect:
         assert messages[0]["content"] == "hello"
         assert messages[1]["role"] == "assistant"
         assert messages[1]["content"] == "hi there"
+
+
+# ── _SessionHandle.cancel ──────────────────────────────────────────────
+
+
+class TestSessionHandleCancel:
+    async def test_cancel_calls_coordinator_request_cancel(self):
+        """cancel() delegates to session.coordinator.request_cancel()."""
+        from amplifier_distro.server.session_backend import _SessionHandle
+
+        mock_session = MagicMock()
+        mock_session.coordinator = MagicMock()
+        mock_session.coordinator.request_cancel = MagicMock()
+
+        handle = _SessionHandle(
+            session_id="s001",
+            project_id="p001",
+            working_dir=Path("/tmp"),
+            session=mock_session,
+        )
+        await handle.cancel("graceful")
+        mock_session.coordinator.request_cancel.assert_called_once_with("graceful")
+
+    async def test_cancel_no_session_does_not_raise(self):
+        from amplifier_distro.server.session_backend import _SessionHandle
+
+        handle = _SessionHandle(
+            session_id="s002",
+            project_id="p002",
+            working_dir=Path("/tmp"),
+            session=None,
+        )
+        await handle.cancel("graceful")  # must not raise
+
+    async def test_cancel_no_coordinator_does_not_raise(self):
+        from amplifier_distro.server.session_backend import _SessionHandle
+
+        mock_session = MagicMock(spec=[])  # no coordinator attr
+        handle = _SessionHandle(
+            session_id="s003",
+            project_id="p003",
+            working_dir=Path("/tmp"),
+            session=mock_session,
+        )
+        await handle.cancel("graceful")  # must not raise
+
+
+# ── FoundationBackend.execute ──────────────────────────────────────────
+
+
+class TestFoundationBackendExecute:
+    async def test_execute_calls_handle_run(self, bridge_backend):
+        handle = _make_mock_handle("sess-exec-001")
+        bridge_backend._sessions["sess-exec-001"] = handle
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.execute(bridge_backend, "sess-exec-001", "hello")
+        handle.run.assert_called_once_with("hello")
+
+    async def test_execute_raises_on_unknown_session(self, bridge_backend):
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        with pytest.raises(ValueError, match="Unknown session"):
+            await FoundationBackend.execute(bridge_backend, "no-such", "hi")
+
+    async def test_execute_with_images_still_calls_run(self, bridge_backend):
+        handle = _make_mock_handle("sess-img-001")
+        bridge_backend._sessions["sess-img-001"] = handle
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.execute(
+            bridge_backend, "sess-img-001", "describe", images=["base64data"]
+        )
+        handle.run.assert_called_once_with("describe")
+
+
+# ── FoundationBackend.cancel_session ───────────────────────────────────
+
+
+class TestFoundationBackendCancelSession:
+    async def test_cancel_session_delegates_to_handle(self, bridge_backend):
+        mock_handle = MagicMock()
+        mock_handle.cancel = AsyncMock()
+        bridge_backend._sessions["sess-cancel-001"] = mock_handle
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.cancel_session(
+            bridge_backend, "sess-cancel-001", "graceful"
+        )
+        mock_handle.cancel.assert_awaited_once_with("graceful")
+
+    async def test_cancel_session_unknown_id_does_not_raise(self, bridge_backend):
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        await FoundationBackend.cancel_session(
+            bridge_backend, "no-such", "immediate"
+        )  # must not raise
+
+
+# ── FoundationBackend.resolve_approval ─────────────────────────────────
+
+
+class TestFoundationBackendResolveApproval:
+    def test_resolve_delegates_to_approval_system(self, bridge_backend):
+        mock_approval = MagicMock()
+        mock_approval.handle_response = MagicMock(return_value=True)
+        bridge_backend._approval_systems["s001"] = mock_approval
+
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        result = FoundationBackend.resolve_approval(
+            bridge_backend, "s001", "req-001", "allow"
+        )
+        assert result is True
+        mock_approval.handle_response.assert_called_once_with("req-001", "allow")
+
+    def test_resolve_unknown_session_returns_false(self, bridge_backend):
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        result = FoundationBackend.resolve_approval(
+            bridge_backend, "no-session", "req", "allow"
+        )
+        assert result is False
 
 
 class TestSessionBackendProtocol:

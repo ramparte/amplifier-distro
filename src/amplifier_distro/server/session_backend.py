@@ -69,6 +69,22 @@ class _SessionHandle:
         finally:
             self._cleanup_done = True
 
+    async def cancel(self, level: str = "graceful") -> None:
+        """Request cancellation of the running session."""
+        if self.session is None:
+            return
+        coordinator = getattr(self.session, "coordinator", None)
+        if coordinator is None:
+            return
+        request_cancel = getattr(coordinator, "request_cancel", None)
+        if request_cancel is not None:
+            try:
+                request_cancel(level)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Error requesting cancel (level=%s)", level, exc_info=True
+                )
+
 
 @runtime_checkable
 class SessionBackend(Protocol):
@@ -227,6 +243,7 @@ class FoundationBackend:
         self._worker_tasks: dict[str, asyncio.Task] = {}
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
+        self._approval_systems: dict[str, Any] = {}
 
     async def _load_bundle(self, bundle_name: str | None = None) -> Any:
         """Load and prepare a bundle via foundation.
@@ -311,10 +328,41 @@ class FoundationBackend:
                 self._session_worker(session_id)
             )
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         await self._session_queues[session_id].put((message, future))
         return await future
+
+    async def execute(
+        self, session_id: str, prompt: str, images: list[str] | None = None
+    ) -> None:
+        """Execute a prompt with streaming via the event queue.
+
+        Unlike send_message() which routes through the worker queue and
+        returns response text, execute() calls handle.run() directly.
+        Events stream via the event_queue wired at create_session() time.
+        """
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            raise ValueError(f"Unknown session: {session_id}")
+        await handle.run(prompt)
+
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """Cancel a running session. No-op for unknown IDs."""
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            return
+        await handle.cancel(level)
+
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """Unblock a pending approval gate. Sync — not async.
+
+        Returns True if the request was found and resolved.
+        """
+        approval = self._approval_systems.get(session_id)
+        if approval is None:
+            return False
+        return approval.handle_response(request_id, choice)
 
     def _find_transcript(self, session_id: str) -> list[dict[str, Any]]:
         """Find and load a session transcript from disk.
