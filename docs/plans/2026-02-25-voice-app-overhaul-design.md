@@ -81,6 +81,29 @@ Per-conversation WebRTC lifecycle manager. One instance per active voice convers
 
 Tracks active child sessions (delegate calls) for the `StopButton` display. Cancellation routes through `backend.cancel_session()`.
 
+#### Spawn Capability (Protocol Boundary Point 4)
+
+After `services.backend.create_session()` returns, the spawn capability must be registered on the session's coordinator before the first `session.execute()` call. This is how the Amplifier orchestrator knows to route `delegate` tool sub-session creation through the shared `FoundationBackend` — without it, delegate calls silently fail or spawn sessions outside the shared backend entirely.
+
+```python
+async def _spawn_child_session(config: dict) -> AmplifierSession:
+    """Routes delegate tool sub-session creation through shared backend."""
+    child_info = await services.backend.create_session(
+        app_name="voice",
+        working_dir=config.get("cwd", workspace_root),
+        event_queue=self._event_queue,  # child events flow to same SSE stream
+    )
+    return child_info.session
+
+session.coordinator.register_capability("spawn", _spawn_child_session)
+```
+
+**Why this is critical:** The voice model's primary tool is `delegate` — all heavy work (file ops, web search, code execution) routes through Amplifier specialist agents. Without the spawn capability registered, delegate calls silently fail or bypass the shared backend entirely: no hooks, no observability, no session tracking. This is the mechanism that makes `delegate` work in the distro context.
+
+**Failure mode without it:** `delegate` tool calls return errors or the Amplifier coordinator throws when attempting to spawn a child session.
+
+**`session_cwd`:** Always pass `VoiceSettings.workspace_root` (from `AMPLIFIER_WORKSPACE_ROOT`) explicitly when creating sessions — both parent and child. Without it, filesystem tools see the server's working directory, not the user's project.
+
 ---
 
 ### `translator.py` — VoiceEventTranslator
@@ -108,6 +131,23 @@ Subscribes to Amplifier canonical events and translates to SSE-friendly JSON wit
 | *(+ 16 more)* | |
 
 Maintains `_current_blocks: dict[int, str]` state so deltas know their block type. Strips base64 image payloads over 1000 chars. Wired via `event_queue` parameter on `BridgeBackend.create_session()` — same pattern as chat-app.
+
+#### Hook Cleanup
+
+`EventStreamingHook` is registered per-session (per `VoiceConnection`) and must be unregistered in a `finally` block on teardown. The registration returns an unregister callable — store it on `VoiceConnection` at session creation time and call it unconditionally:
+
+```python
+async def teardown(self):
+    try:
+        await services.backend.mark_disconnected(self._amplifier_session_id)
+        await self._repository.update_status("disconnected")
+    finally:
+        if self._hook_unregister:
+            self._hook_unregister()  # Always clean up registered hooks
+        self._event_queue = None
+```
+
+Without this, dead hook registrations accumulate across reconnects and fire against closed queues.
 
 ---
 
@@ -268,6 +308,19 @@ Tool call in response:
       → data channel → conversation.item.create { type: "function_call_output", ... }
       → data channel → response.create
 ```
+
+### Tool Set Exposed to OpenAI Realtime
+
+The voice model is a conversational interface, not a shell. Following `APPLICATION_INTEGRATION_GUIDE.md` Pattern D — "Only expose `delegate` and a few lookup tools to the voice model" — the `AMPLIFIER_TOOLS` list in `__init__.py` must be exactly these four tools:
+
+| Tool | Handled by | Notes |
+|---|---|---|
+| `delegate` | Server → `services.backend.execute()` | All real work routes through here |
+| `cancel_current_task` | Server → `backend.cancel_session()` | Two-level cancel |
+| `pause_replies` | Browser (intercepted before server) | Sub-100ms, no round-trip |
+| `resume_replies` | Browser (intercepted before server) | Sub-100ms, no round-trip |
+
+No `run_command`. No `search_files`. No `read_file`. If the voice model needs to read a file or run a command, it calls `delegate` with an instruction and the appropriate Amplifier specialist agent handles it — with full observability, hook firing, and session tracking. Exposing filesystem or shell tools directly to a conversational interface bypasses the Amplifier agent loop entirely: no hooks, no observability, no delegation.
 
 ### Async Tool Queuing (race condition prevention)
 
@@ -540,3 +593,7 @@ None. All design decisions were resolved during review.
 | TURN server | Not in scope | Infrastructure dependency; `TODO` in code for future discovery |
 | Semantic VAD | Two-stage init (server_vad → semantic_vad, 100ms) | GA API constraint; `semantic_vad` can't be initial type on WebRTC |
 | `create_response` | `false` (manual gating) | Prevents background noise from triggering model responses |
+| Spawn capability | Register on coordinator post-create | Routes delegate sub-sessions through shared backend |
+| Tool set (OpenAI) | `delegate` + 3 voice-control tools only | No direct file/shell access; Pattern D from integration guide |
+| Hook cleanup | Unregister callable stored, called in `finally` | Prevents dead hook accumulation across reconnects |
+| `session_cwd` | Always from `VoiceSettings.workspace_root` | Filesystem tools need explicit workspace, not server cwd |
