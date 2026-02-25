@@ -236,27 +236,6 @@ input:focus, select:focus {
 /* ------------------------------------------------------------------ */
 /*  Module Grid                                                        */
 /* ------------------------------------------------------------------ */
-.filter-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.filter-tab {
-  padding: 6px 16px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 500;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-.filter-tab:hover { color: var(--text-primary); border-color: var(--text-primary); }
-.filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-
 .module-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -575,7 +554,7 @@ const state = {
   // Step 3 - Modules
   modules: [],
   selectedModules: new Set(),
-  moduleFilter: 'all',
+
   // Step 4 - Interfaces
   cliInstalled: false,
   guiInstalled: true,
@@ -838,25 +817,16 @@ function renderConfig() {
 /*  Step 3: Modules                                                    */
 /* ------------------------------------------------------------------ */
 function renderModules() {
-  const filters = ['all', 'provider', 'tool', 'bundle'];
-  const mods = state.modules.filter(m =>
-    state.moduleFilter === 'all' || m.category === state.moduleFilter
-  );
+  const mods = state.modules;
   const fallbackModules = state.modules.length > 0 ? '' : `
     <p style="color: var(--text-secondary); padding: 40px 0; text-align: center;">
-      Module list unavailable. The backend will provide available modules once connected.
+      Feature list unavailable. The backend will provide available features once connected.
     </p>`;
 
   return `
-    <h1>Choose Your Modules</h1>
+    <h1>Choose Your Features</h1>
     <p class="subtitle">Select the providers, tools, and bundles to install</p>
     <div class="card-body">
-      <div class="filter-tabs">
-        ${filters.map(f => `
-          <button class="filter-tab ${state.moduleFilter === f ? 'active' : ''}"
-                  data-filter="${f}">${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1) + 's'}</button>
-        `).join('')}
-      </div>
       ${fallbackModules}
       <div class="module-grid">
         ${mods.map(m => {
@@ -1097,14 +1067,6 @@ function bindEvents() {
     el.addEventListener('change', () => {
       const key = el.dataset.bind;
       state[key] = el.dataset.type === 'number' ? Number(el.value) : el.value;
-    });
-  });
-
-  // Module filter tabs
-  document.querySelectorAll('[data-filter]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.moduleFilter = btn.dataset.filter;
-      render();
     });
   });
 
