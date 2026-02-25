@@ -551,7 +551,14 @@
       user-select: none;
     }
     .thinking-header:hover { background: rgba(139,92,246,0.1); }
-    .thinking-preview { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); }
+    .thinking-preview {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      color: var(--text-muted);
+    }
     .thinking-content {
       padding: 8px 12px;
       font-size: 12px;
@@ -1071,7 +1078,9 @@
 
   function ThinkingBlock({ item }) {
     const [expanded, setExpanded] = useState(false);
-    const preview = item.content ? item.content.slice(0, 60) : '';
+    const preview = typeof item.content === 'string'
+      ? item.content.replace(/\s+/g, ' ').trim()
+      : '';
     return html`
       <div class="thinking-block">
         <div class="thinking-header" onClick=${() => setExpanded(e => !e)}>
