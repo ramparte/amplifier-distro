@@ -45,11 +45,35 @@ The **Amplifier session** (managed by `services.backend`) is the single source o
 
 Cross-surface continuity follows naturally from this identity model. A chat session resumed in voice creates a `VoiceConversation` for the existing `amplifier_session_id` and injects prior context into OpenAI Realtime. A voice session resumed in chat opens a WebSocket to the existing Amplifier session — no migration needed.
 
+Session visibility requires no additional registry. Voice sessions created through `services.backend.create_session()` are automatically visible in `/api/sessions` via the shared `FoundationBackend` — that is sufficient. No further registry integration is planned.
+
 ## Components
+
+**File structure:**
+
+```
+server/apps/voice/
+├── __init__.py          # routes + AppManifest — thin handlers only, no API call logic
+├── realtime.py          # NEW: GA API client — client_secrets + calls endpoints isolated here
+├── connection.py        # VoiceConnection — per-conversation lifecycle manager
+├── translator.py        # VoiceEventTranslator — OpenAI ↔ browser event translation
+├── protocols/
+│   ├── event_streaming.py   # EventStreamingHook
+│   ├── voice_display.py     # VoiceDisplaySystem
+│   └── voice_approval.py    # VoiceApprovalSystem
+├── transcript/
+│   ├── models.py            # VoiceConversation, TranscriptEntry
+│   └── repository.py        # VoiceConversationRepository
+└── static/
+    ├── index.html
+    └── vendor.js
+```
+
+---
 
 ### `__init__.py` — Routes & AppManifest
 
-Registers the app via `AppManifest`. Owns all HTTP routes and the SSE endpoint. No business logic — delegates to `VoiceConnection` for session lifecycle and `VoiceConversationRepository` for persistence.
+Registers the app via `AppManifest`. Owns all HTTP routes and the SSE endpoint. Thin handlers only — no OpenAI API call logic. Delegates to `realtime.py` for all GA API calls, `VoiceConnection` for session lifecycle, and `VoiceConversationRepository` for persistence.
 
 **Routes:**
 
@@ -72,6 +96,26 @@ Registers the app via `AppManifest`. Owns all HTTP routes and the SSE endpoint. 
 Auth follows `feat/chat-app` exactly: `_require_api_key` reads `config.server.api_key`. When unset, auth is skipped entirely — zero friction for personal use, secure when deployed.
 
 Static file serving uses two explicit route handlers returning file content directly. No `StaticFiles` mount. 404 fallbacks for missing files so tests don't break.
+
+---
+
+---
+
+### `realtime.py` — GA API Client
+
+Isolates all OpenAI GA Realtime API calls from the route handlers. Route handlers in `__init__.py` call these functions and return the results — no OpenAI API logic lives in the routes themselves. This matches the `amplifier-voice/voice_server/realtime.py` pattern and keeps the stub extension clean for CI (`stub.py` mocks these two functions, not the route handlers).
+
+**Two exported functions:**
+
+```python
+async def create_client_secret(config: VoiceConfig) -> str:
+    """POSTs to /v1/realtime/client_secrets. Returns the ephemeral token value (str)."""
+
+async def exchange_sdp(sdp_offer: str, ephemeral_token: str, model: str) -> str:
+    """POSTs to /v1/realtime/calls. Returns the SDP answer string."""
+```
+
+`create_client_secret` constructs the session payload (model, instructions, tools, VAD config) and POSTs it to `/v1/realtime/client_secrets`, returning only the `client_secret.value` string. `exchange_sdp` forwards the browser's SDP offer to `/v1/realtime/calls` using the ephemeral token as the bearer credential and returns the SDP answer.
 
 ---
 
@@ -302,12 +346,31 @@ Tool call in response:
       → handled in browser immediately
   → else:
       → POST /tools/execute { name, arguments, call_id }
-          → services.backend.execute(amplifier_session_id, ...)
+          → handle.run(instruction)   ← plain string in, plain string out
           → Amplifier events flow through EventStreamingHook → SSE → browser debug panel
           → return ToolResult
       → data channel → conversation.item.create { type: "function_call_output", ... }
       → data channel → response.create
 ```
+
+### `/tools/execute` Route — `handle.run()` Contract
+
+**`SessionHandle.run(prompt: str) -> str`** — plain string in, plain string out. There is no `execute()` method on `SessionHandle`; that lives on the underlying `AmplifierSession` which the handle wraps and hides.
+
+When the OpenAI Realtime model calls `delegate` with an instruction string, the route calls `handle.run(instruction)` directly. No wrapping, no formatting, no structured payload. The string returned is the tool result sent back to the OpenAI data channel.
+
+```python
+# /tools/execute route (simplified)
+async def execute_tool(request: ToolExecuteRequest) -> ToolResult:
+    if request.tool_name == "delegate":
+        instruction = request.arguments.get("instruction", "")
+        result = await handle.run(instruction)   # ← plain string
+        return ToolResult(success=True, output=result)
+```
+
+The bridge handles all session state, context injection, and provider delegation internally. The route is intentionally dumb.
+
+---
 
 ### Tool Set Exposed to OpenAI Realtime
 
@@ -461,6 +524,14 @@ Matching uses two strategies: direct substring match and word-sequence match (al
 
 The wake word (`"Hey Amplifier"`) derives from `VoiceSettings.assistant_name` — a new field added to distro settings. Renaming the assistant automatically updates all keyword triggers with no code changes.
 
+```python
+# distro_settings.py — add to VoiceSettings dataclass
+assistant_name: str = "Amplifier"
+# Exported as: AMPLIFIER_VOICE_ASSISTANT_NAME
+```
+
+**Settings flow:** `distro_settings.py` → `export_to_env()` → `AMPLIFIER_VOICE_ASSISTANT_NAME` env var → read by voice app at startup → passed into `useVoiceKeywords` as the wake word prefix. All keyword phrases are constructed at runtime from this value, so renaming requires no code changes.
+
 ## Security
 
 Follows `feat/chat-app` exactly.
@@ -574,6 +645,44 @@ WebRTC connection establishment, audio pipeline, Preact frontend behaviour, actu
 
 None. All design decisions were resolved during review.
 
+## Implementation Order
+
+Each phase is independently mergeable and adds testable value. Phases 1 and 2 have zero FastAPI dependencies — pure logic, fast tests.
+
+```
+PREREQUISITE
+  ├── Confirm feat/chat-app merge into lean-experience-server  OR
+  ├── Branch voice work off feat/chat-app directly
+  └── Verify handle.run() signature ✅ (confirmed: plain string, SessionHandle.run)
+
+PHASE 1 — Data layer (no FastAPI deps, pure I/O)
+  1a. distro_settings.py: add VoiceSettings.assistant_name
+  1b. voice/realtime.py: GA API client (create_client_secret + exchange_sdp)
+  1c. voice/transcript/models.py: VoiceConversation, TranscriptEntry
+  1d. voice/transcript/repository.py: VoiceConversationRepository
+  Tests: repository unit tests with tmp_path; realtime.py with httpx mock
+
+PHASE 2 — Protocol layer (no FastAPI deps)
+  2a. voice/protocols/event_streaming.py: EventStreamingHook (port from amplifier-voice)
+  2b. voice/protocols/voice_display.py: VoiceDisplaySystem
+  2c. voice/protocols/voice_approval.py: VoiceApprovalSystem
+  Tests: table-driven unit tests for all three
+
+PHASE 3 — Connection + translation core
+  3a. voice/translator.py: VoiceEventTranslator
+  3b. voice/connection.py: VoiceConnection (lifecycle, spawn capability, hook cleanup, cancellation)
+  Tests: translator unit tests; VoiceConnection lifecycle tests with MockBackend
+
+PHASE 4 — Routes (replaces current __init__.py entirely)
+  4a. voice/__init__.py: all routes per design doc, AppManifest, stub mode extension
+  Tests: full route test suite via TestClient
+
+PHASE 5 — Frontend (manual testing only)
+  5a. Committed vendor.js: Preact 10 + HTM + marked.js
+  5b. voice/static/index.html: Preact app — full hook/component tree from design doc
+  Manual: test with real OpenAI credentials
+```
+
 ## Key Decisions
 
 | Decision | Choice | Rationale |
@@ -589,7 +698,10 @@ None. All design decisions were resolved during review.
 | `VoiceEventHook` | Dropped | Dead code; wrong event names; replaced by `VoiceDisplaySystem` |
 | `VoiceApprovalSystem` async | Replaced with `asyncio.Event` | Matches distro's `BridgeApprovalSystem` contract |
 | Auth | `config.server.api_key`, optional | Matches chat-app; zero friction for personal use |
+| `VoiceSettings.assistant_name` | New field, default `"Amplifier"` | Wake word configurable without code changes |
 | Wake word | Derived from `VoiceSettings.assistant_name` | Configurable; rename assistant without touching code |
+| `realtime.py` separate module | Isolated GA API calls | Thin routes, clean CI stub extension, matches `amplifier-voice` structure |
+| `handle.run()` contract | Plain string in, plain string out | No `execute()` on `SessionHandle`; bridge handles all session state internally |
 | TURN server | Not in scope | Infrastructure dependency; `TODO` in code for future discovery |
 | Semantic VAD | Two-stage init (server_vad → semantic_vad, 100ms) | GA API constraint; `semantic_vad` can't be initial type on WebRTC |
 | `create_response` | `false` (manual gating) | Prevents background noise from triggering model responses |
