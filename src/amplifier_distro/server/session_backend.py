@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from amplifier_distro.features import AMPLIFIER_START_URI
+
 logger = logging.getLogger(__name__)
 
 
@@ -291,7 +293,7 @@ class FoundationBackend:
     NOTE: Requires amplifier-foundation to be available at runtime.
     """
 
-    def __init__(self, bundle_name: str = "amplifier-start") -> None:
+    def __init__(self, bundle_name: str = AMPLIFIER_START_URI) -> None:
         self._bundle_name = bundle_name
         self._sessions: dict[str, _SessionHandle] = {}
         self._reconnect_locks: dict[str, asyncio.Lock] = {}

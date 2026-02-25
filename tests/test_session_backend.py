@@ -44,6 +44,26 @@ def bridge_backend():
         return backend
 
 
+class TestFoundationBackendDefaultBundleName:
+    """The default bundle_name must be a full git URI, not a bare name."""
+
+    def test_default_bundle_name_is_full_git_uri(self):
+        """FoundationBackend default _bundle_name must be a resolvable git URI.
+
+        Bare names like 'amplifier-start' cannot be resolved by
+        amplifier_foundation.load_bundle() — the full git+https:// URI
+        is required.
+        """
+        from amplifier_distro.features import AMPLIFIER_START_URI
+        from amplifier_distro.server.session_backend import FoundationBackend
+
+        backend = FoundationBackend()
+        assert backend._bundle_name == AMPLIFIER_START_URI
+        assert backend._bundle_name.startswith("git+https://"), (
+            f"Default bundle_name must be a git URI, got: {backend._bundle_name}"
+        )
+
+
 class TestFoundationBackendQueueInfrastructure:
     """Verify the queue-based session worker infrastructure."""
 
