@@ -339,28 +339,6 @@
       border-radius: 4px;
       padding: 6px 8px;
     }
-    .session-refresh-btn {
-      width: 100%;
-      margin-top: 6px;
-      padding: 6px 8px;
-      border: 1px solid rgba(245, 158, 11, 0.38);
-      border-radius: 4px;
-      background: rgba(245, 158, 11, 0.1);
-      color: var(--accent-amber);
-      font-size: 11px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .session-refresh-btn:hover {
-      background: rgba(245, 158, 11, 0.16);
-    }
-    .session-refresh-btn:disabled {
-      opacity: 0.65;
-      cursor: default;
-    }
     .history-loading-banner {
       margin: 8px 12px 0;
       padding: 8px 10px;
@@ -484,6 +462,33 @@
       opacity: 0.45;
       cursor: default;
     }
+    .new-content-pill-wrap {
+      position: absolute;
+      left: 50%;
+      bottom: 10px;
+      transform: translateX(-50%);
+      z-index: 6;
+      pointer-events: none;
+    }
+    .new-content-pill {
+      pointer-events: auto;
+      border: 1px solid rgba(37, 99, 235, 0.5);
+      background: rgba(37, 99, 235, 0.18);
+      color: #dbeafe;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(3px);
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    }
+    .new-content-pill:hover {
+      background: rgba(37, 99, 235, 0.28);
+      border-color: rgba(37, 99, 235, 0.7);
+      transform: translateY(-1px);
+    }
 
     /* —— Text Blocks ——————————————————————————————————————————————— */
     .text-block {
@@ -594,6 +599,21 @@
     .tool-header:hover { background: var(--bg-tertiary); }
     .tool-status { font-size: 13px; flex-shrink: 0; }
     .tool-name { font-weight: 500; color: var(--text-primary); }
+    .tool-origin-badge {
+      font-size: 10px;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+      color: var(--accent-amber);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      background: rgba(245, 158, 11, 0.1);
+      border-radius: 999px;
+      padding: 1px 6px;
+      flex-shrink: 0;
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .tool-arg-preview { color: var(--text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
     .tool-body { padding: 8px 10px; border-top: 1px solid var(--border); }
     .tool-args-json { background: var(--bg-tertiary); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: pre; color: var(--text-secondary); font-family: monospace; font-size: 11px; }
@@ -971,6 +991,9 @@
           }
           if ((block.type === 'tool_use' || block.type === 'tool_call') && block.name) {
             const id = block.id || block.tool_call_id;
+            const originSessionId = typeof block.session_id === 'string' ? block.session_id : null;
+            const originParentId = typeof block.parent_id === 'string' ? block.parent_id : null;
+            const subAgentName = typeof block.agent === 'string' ? block.agent : null;
             const item = {
               id: makeId(),
               type: 'tool_call',
@@ -979,6 +1002,10 @@
               arguments: block.input || block.arguments || {},
               toolStatus: 'complete',
               result: '',
+              origin: originParentId ? 'sub-agent' : 'main',
+              subAgentName,
+              originSessionId,
+              originParentId,
               streaming: false,
               order: order++,
             };
@@ -1105,6 +1132,14 @@
     const statusIcon = getToolStatusIcon(item.toolStatus);
     const isRunning = item.toolStatus === 'running';
     const argPreview = getArgPreview(item.toolName, item.arguments || {});
+    const subAgentName = item.subAgentName ? truncate(item.subAgentName, 24) : null;
+    const isSubAgentTool = item.origin === 'sub-agent' || isActivity;
+    const originLabel = isSubAgentTool
+      ? (subAgentName ? ('sub-agent · ' + subAgentName) : 'sub-agent')
+      : null;
+    const originTitle = item.originSessionId
+      ? ('Executed in delegated session ' + item.originSessionId)
+      : 'Executed in a delegated sub-agent session';
 
     // Keep card sizing/layout unchanged; only auto-open once result is available.
     useEffect(() => {
@@ -1118,6 +1153,7 @@
         <div class="tool-header" onClick=${() => setExpanded(e => !e)}>
           <span class=${'tool-status' + (isRunning ? ' status-running' : '')}>${statusIcon}</span>
           <span class="tool-name">${item.toolName || 'tool'}</span>
+          ${originLabel && html`<span class="tool-origin-badge" title=${originTitle}>${originLabel}</span>`}
           <span class="tool-arg-preview">${argPreview}</span>
         </div>
         ${expanded && html`
@@ -1164,7 +1200,14 @@
     return null;
   }
 
-  function MessageList({ items, filterFn, sessionKey, showJumpControls = false }) {
+  function MessageList({
+    items,
+    filterFn,
+    sessionKey,
+    showJumpControls = false,
+    bottomNoticeSignal = 0,
+    bottomNoticeLabel = 'New messages',
+  }) {
     const filtered = filterFn ? items.filter(filterFn) : items;
     const sorted = [...filtered].sort((a, b) => a.order - b.order);
     const listRef = useRef(null);
@@ -1176,6 +1219,8 @@
     });
     const nearBottomRef = useRef(true);
     const initialAnchorDoneRef = useRef(false);
+    const [showBottomNotice, setShowBottomNotice] = useState(false);
+    const lastNoticeSignalRef = useRef(bottomNoticeSignal);
 
     const updateScrollState = useCallback(() => {
       const el = listRef.current;
@@ -1195,8 +1240,18 @@
     useEffect(() => {
       initialAnchorDoneRef.current = false;
       nearBottomRef.current = true;
+      lastNoticeSignalRef.current = bottomNoticeSignal;
+      setShowBottomNotice(false);
       setScrollState({ canTop: false, canBottom: false, hasOverflow: false });
     }, [sessionKey]);
+
+    useEffect(() => {
+      if (bottomNoticeSignal === lastNoticeSignalRef.current) return;
+      lastNoticeSignalRef.current = bottomNoticeSignal;
+      if (nearBottomRef.current) return;
+      setShowBottomNotice(true);
+      updateScrollState();
+    }, [bottomNoticeSignal, updateScrollState]);
 
     // Anchor to newest on first load per session.
     useEffect(() => {
@@ -1229,8 +1284,15 @@
     }, []);
 
     const jumpBottom = useCallback(() => {
+      setShowBottomNotice(false);
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, []);
+
+    useEffect(() => {
+      if (!scrollState.canBottom) {
+        setShowBottomNotice(false);
+      }
+    }, [scrollState.canBottom]);
 
     return html`
       <div class="message-list-wrap">
@@ -1245,6 +1307,13 @@
             </button>
             <button class="jump-btn" title="Jump to bottom" onClick=${jumpBottom} disabled=${!scrollState.canBottom}>
               <${Icon} name="chevron-down" className="sm" />
+            </button>
+          </div>
+        `}
+        ${showBottomNotice && scrollState.canBottom && html`
+          <div class="new-content-pill-wrap">
+            <button class="new-content-pill" title="Jump to latest messages" onClick=${jumpBottom}>
+              ${bottomNoticeLabel} ↓
             </button>
           </div>
         `}
@@ -1464,6 +1533,7 @@
     const [cwd, setCwd] = useState('~');
     const [defaultCwd, setDefaultCwd] = useState('~');
     const [turnCount, setTurnCount] = useState(0);
+    const [diskUpdateNoticeSignal, setDiskUpdateNoticeSignal] = useState(0);
 
     // UI state
     const [viewMode, setViewMode] = useState('default');
@@ -1499,6 +1569,7 @@
     const localIndexRef = useRef(0);
     const toolMapRef = useRef({});
     const childToToolRef = useRef({});
+    const childAgentRef = useRef({});
     const activeKeyRef = useRef(null);
     const sessionsRef = useRef(new Map());
     const chronoItemsRef = useRef([]);
@@ -1511,6 +1582,8 @@
     const historySyncInFlightRef = useRef(false);
     const historyDiscoverInFlightRef = useRef(false);
     const transcriptFetchAbortRef = useRef(null);
+    const diskRefreshInFlightRef = useRef(new Set());
+    const autoDiskRefreshAtRef = useRef({});
 
     useEffect(() => {
       activeKeyRef.current = activeKey;
@@ -1841,12 +1914,20 @@
 
         case 'tool_call': {
           const itemId = makeId();
+          const originSessionId = typeof msg.session_id === 'string' ? msg.session_id : null;
+          const originParentId = typeof msg.parent_id === 'string' ? msg.parent_id : null;
+          const subAgentName = originSessionId ? childAgentRef.current[originSessionId] : null;
+          const isSubAgentTool = !!originParentId || !!(originSessionId && childToToolRef.current[originSessionId]);
           toolMapRef.current[msg.tool_call_id] = itemId;
           setChronoItems(prev => [...prev, {
             id: itemId, type: 'tool_call',
             toolName: msg.tool_name, toolCallId: msg.tool_call_id,
             arguments: msg.arguments || {},
             toolStatus: 'running',
+            origin: isSubAgentTool ? 'sub-agent' : 'main',
+            subAgentName: typeof subAgentName === 'string' && subAgentName ? subAgentName : null,
+            originSessionId,
+            originParentId,
             order: orderCounterRef.current++,
           }]);
           setExecuting(true);
@@ -1866,8 +1947,13 @@
 
         case 'session_fork': {
           const parentToolId = toolMapRef.current[msg.parent_tool_call_id];
+          const childId = typeof msg.child_id === 'string' ? msg.child_id : null;
+          const childAgent = typeof msg.agent === 'string' ? msg.agent : null;
+          if (childId && childAgent) {
+            childAgentRef.current[childId] = childAgent;
+          }
           if (parentToolId) {
-            childToToolRef.current[msg.child_id] = parentToolId;
+            if (childId) childToToolRef.current[childId] = parentToolId;
           }
           break;
         }
@@ -2101,6 +2187,10 @@
               if (!existingKey) {
                 const historyKey = 'history-' + sessionId;
                 if (next.has(historyKey)) continue;
+                // New session never seen by this client — badge if it has content
+                // (was created or used on another surface). knownRevision is null
+                // so the revision poll will detect any future changes too.
+                const isNewWithContent = messageCount > 0;
                 next.set(historyKey, {
                   source: 'history',
                   status: 'history',
@@ -2111,9 +2201,9 @@
                   messageCount,
                   lastUserMessage: s.last_user_message || null,
                   lastUpdated: s.last_updated || null,
-                  knownRevision: revision,
+                  knownRevision: isNewWithContent ? null : revision,
                   remoteRevision: revision,
-                  hasExternalUpdate: false,
+                  hasExternalUpdate: isNewWithContent,
                 });
                 sessionKeyById.set(sessionId, historyKey);
                 changed = true;
@@ -2655,10 +2745,22 @@
         });
     }, [sessions, handleWsMessage]);
 
-    const refreshSessionFromDisk = useCallback((key) => {
+    const refreshSessionFromDisk = useCallback((key, options = {}) => {
       const target = sessionsRef.current.get(key);
       if (!target || !target.sessionId) return;
-      if (target.status === 'running') return;
+      if (target.status === 'running' || target.status === 'loading_history') return;
+      if (diskRefreshInFlightRef.current.has(key)) return;
+
+      diskRefreshInFlightRef.current.add(key);
+      const notifyBottom = !!options.notifyBottom;
+      const activeOnly = !!options.activeOnly;
+      if (activeOnly && activeKeyRef.current !== key) {
+        diskRefreshInFlightRef.current.delete(key);
+        return;
+      }
+      const previousCount = Number(
+        target.messageCount || target.savedTurnCount || target.turnCount || 0
+      );
 
       fetch('/apps/chat/api/sessions/' + encodeURIComponent(target.sessionId) + '/transcript')
         .then(r => {
@@ -2670,10 +2772,12 @@
           const items = transcriptToChronoItems(transcript);
           const messageCount = countTranscriptMessages(transcript);
           const nextTurns = messageCount || target.savedTurnCount || target.turnCount || 0;
+          const nextCount = Number(messageCount || nextTurns || 0);
           const revision = typeof data?.revision === 'string'
             ? data.revision
             : (target.remoteRevision || target.knownRevision || null);
           const lastUserMessage = extractLastUserMessage(transcript) || target.lastUserMessage || null;
+          if (activeOnly && activeKeyRef.current !== key) return;
 
           setSessions(prev => {
             const next = new Map(prev);
@@ -2694,11 +2798,15 @@
           });
 
           if (activeKeyRef.current !== key) return;
+          const hasNewMessages = nextCount > previousCount;
           setChronoItems(items);
           orderCounterRef.current = nextOrder(items);
           setTurnCount(nextTurns);
           setExecuting(false);
           setPendingApproval(null);
+          if (notifyBottom && hasNewMessages) {
+            setDiskUpdateNoticeSignal(v => v + 1);
+          }
         })
         .catch(err => {
           console.warn('[chat] failed to refresh session from disk', err);
@@ -2711,6 +2819,9 @@
             streaming: false,
             order: orderCounterRef.current++,
           }]);
+        })
+        .finally(() => {
+          diskRefreshInFlightRef.current.delete(key);
         });
     }, []);
 
@@ -2901,6 +3012,20 @@
         document.removeEventListener('visibilitychange', onVisibility);
       };
     }, [pollSessionRevisions]);
+
+    useEffect(() => {
+      if (!activeKey) return;
+      const active = sessions.get(activeKey);
+      if (!active || !active.sessionId || !active.hasExternalUpdate) return;
+      if (executing || active.status === 'running' || active.status === 'loading_history') return;
+
+      const now = Date.now();
+      const lastAt = Number(autoDiskRefreshAtRef.current[activeKey] || 0);
+      if (now - lastAt < 4000) return;
+      autoDiskRefreshAtRef.current[activeKey] = now;
+
+      refreshSessionFromDisk(activeKey, { notifyBottom: true, activeOnly: true });
+    }, [activeKey, sessions, executing, refreshSessionFromDisk]);
 
     const persistDefaultCwd = useCallback((value) => {
       const payload = { default_cwd: value };
@@ -3156,17 +3281,6 @@
                         `
                       : 'No active session'}
                   </div>
-                  ${activeSession && activeSession.hasExternalUpdate && html`
-                    <button
-                      class="session-refresh-btn"
-                      title="Reload this session from disk changes"
-                      onClick=${() => refreshSessionFromDisk(activeKey)}
-                      disabled=${executing || activeSession.status === 'running'}
-                    >
-                      <${Icon} name="refresh" className="sm" />
-                      Update from Disk
-                    </button>
-                  `}
                 `
             }
           </div>
@@ -3191,6 +3305,8 @@
               filterFn=${mainFilter}
               sessionKey=${(activeKey || 'none') + (viewMode === 'focus' ? ':main-focus' : ':main-default')}
               showJumpControls=${true}
+              bottomNoticeSignal=${diskUpdateNoticeSignal}
+              bottomNoticeLabel="New messages"
             />
             <${InputArea}
               onSend=${sendMessage}
