@@ -1197,9 +1197,14 @@ function bindEvents() {
         // Mark provider as configured in local state
         const prov = state.providers.find(p => p.id === (res.provider || pid));
         if (prov) prov.configured = true;
-        state.providerSaveResult = { id: res.provider || pid, ok: true, message: res.provider_name + ' configured' };
+        let msg = res.provider_name + ' configured';
+        if (res.overlay_error) {
+          msg += ' (key saved, but overlay bundle not updated: ' + res.overlay_error + ')';
+        }
+        state.providerSaveResult = { id: res.provider || pid, ok: !res.overlay_error, message: msg };
         state.providerKeyInput = '';
-        state.selectedProvider = null;
+        // Keep card expanded if overlay failed so user sees the warning
+        if (!res.overlay_error) state.selectedProvider = null;
         detectCompletedSteps();
       } else {
         const detail = (res && res.detail) || 'Failed to save key. Check your key and try again.';

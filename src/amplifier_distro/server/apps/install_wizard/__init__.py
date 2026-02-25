@@ -397,7 +397,16 @@ async def step_network(request: Request) -> dict[str, Any]:
 
 @steps_router.post("/provider")
 async def step_provider(req: ProviderData) -> dict[str, Any]:
-    """Save API key and provider configuration."""
+    """Save API key and provider configuration.
+
+    Performs three writes in order:
+    1. keys.env   - persist the raw API key (chmod 600)
+    2. settings.yaml - add provider module config
+    3. bundle.yaml   - add provider include to overlay bundle
+
+    Each step is wrapped individually so partial success is reported
+    clearly instead of returning an opaque 500.
+    """
     if not req.api_key.strip():
         return {"status": "skipped"}
 
@@ -407,22 +416,32 @@ async def step_provider(req: ProviderData) -> dict[str, Any]:
 
     provider = PROVIDERS[provider_id]
 
-    # Write key to keys.env and set in env
+    # 1. Write key to keys.env and set in env
     persist_api_key(provider_id, req.api_key)
 
-    # Add provider config to settings.yaml
+    # 2. Add provider config to settings.yaml
     add_provider_config(provider_id)
 
-    # Ensure overlay exists with this provider
-    overlay.ensure_overlay(provider)
+    # 3. Ensure overlay bundle includes this provider
+    overlay_ok = True
+    overlay_error = ""
+    try:
+        overlay.ensure_overlay(provider)
+    except OSError as exc:
+        overlay_ok = False
+        overlay_error = f"Failed to update overlay bundle: {exc}"
 
-    return {
+    result: dict[str, Any] = {
         "status": "ok",
         "verified": True,
         "provider": provider_id,
         "provider_name": provider.name,
         "model": provider.default_model,
+        "overlay_updated": overlay_ok,
     }
+    if overlay_error:
+        result["overlay_error"] = overlay_error
+    return result
 
 
 @steps_router.post("/verify")
