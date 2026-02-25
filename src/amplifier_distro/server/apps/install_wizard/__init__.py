@@ -429,6 +429,34 @@ async def step_provider(req: ProviderData) -> dict[str, Any]:
             result["overlay_error"] = reg.overlay_error
         return result
 
+    if req.provider and req.provider in PROVIDERS:
+        # Use existing env/keys.env key for a specific provider
+        from amplifier_distro.server.apps.settings import load_keys
+
+        provider = PROVIDERS[req.provider]
+        key = os.environ.get(provider.env_var) or load_keys().get(provider.env_var)
+        if not key:
+            return {
+                "status": "error",
+                "detail": (
+                    f"No key found for {provider.name} in environment or keys.env"
+                ),
+            }
+
+        reg = register_provider(req.provider, key)
+
+        result = {
+            "status": "ok",
+            "verified": True,
+            "provider": reg.provider_id,
+            "provider_name": reg.provider_name,
+            "model": reg.default_model,
+            "overlay_updated": reg.overlay_updated,
+        }
+        if reg.overlay_error:
+            result["overlay_error"] = reg.overlay_error
+        return result
+
     # Sync mode (from "Next" button) - auto-register incomplete providers
     synced = sync_providers()
     return {

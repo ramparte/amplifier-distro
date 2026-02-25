@@ -401,6 +401,20 @@ input:focus, select:focus {
 }
 .provider-card .provider-link:hover { text-decoration: underline; }
 
+.provider-env-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.env-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .provider-key-row {
   display: flex;
   gap: 8px;
@@ -1014,7 +1028,17 @@ function renderProvider() {
                   : p.has_key ? '<span class="provider-badge detected">Key Detected</span>' : ''}
               </div>
               <p>${esc(p.description)}</p>
-              <a class="provider-link" href="${esc(p.console_url)}" target="_blank" rel="noopener">Get an API key</a>
+              ${!p.configured && !p.has_key ? `<a class="provider-link" href="${esc(p.console_url)}" target="_blank" rel="noopener">Get an API key</a>` : ''}
+              ${p.has_key && !p.configured ? `
+                <div class="provider-env-row">
+                  <span class="env-hint">Key found in environment</span>
+                  <button class="btn-sm btn-secondary"
+                          data-provider-use="${esc(p.id)}"
+                          ${state.savingProvider === p.id ? 'disabled' : ''}>
+                    ${state.savingProvider === p.id ? 'Setting up...' : 'Use This Key'}
+                  </button>
+                </div>
+              ` : ''}
               ${isSelected ? `
                 <div class="provider-key-row">
                   <input type="password" class="provider-key-input"
@@ -1027,8 +1051,8 @@ function renderProvider() {
                     ${state.savingProvider === p.id ? 'Saving...' : p.configured ? 'Update' : 'Add Key'}
                   </button>
                 </div>
-                ${saveResult ? `<div class="provider-save-msg ${saveResult.ok ? 'ok' : 'fail'}">${esc(saveResult.message)}</div>` : ''}
               ` : ''}
+              ${saveResult ? `<div class="provider-save-msg ${saveResult.ok ? 'ok' : 'fail'}">${esc(saveResult.message)}</div>` : ''}
             </div>`;
         }).join('')}
       </div>
@@ -1177,6 +1201,7 @@ function bindEvents() {
     card.addEventListener('click', (e) => {
       if (e.target.tagName === 'A') return;
       if (e.target.closest('.provider-key-row')) return;
+      if (e.target.closest('.provider-env-row')) return;
       const pid = card.dataset.provider;
       if (state.selectedProvider === pid) {
         state.selectedProvider = null;
@@ -1193,6 +1218,33 @@ function bindEvents() {
   document.querySelectorAll('[data-provider-key]').forEach(el => {
     el.addEventListener('input', () => {
       state.providerKeyInput = el.value;
+    });
+  });
+
+  // "Use This Key" buttons (env var detected, no manual input needed)
+  document.querySelectorAll('[data-provider-use]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.providerUse;
+      state.savingProvider = pid;
+      state.providerSaveResult = null;
+      render();
+      const res = await api('POST', '/steps/provider', { provider: pid });
+      state.savingProvider = null;
+      if (res && !res.error && res.verified) {
+        const prov = state.providers.find(p => p.id === (res.provider || pid));
+        if (prov) prov.configured = true;
+        let msg = res.provider_name + ' configured using existing key';
+        if (res.overlay_error) {
+          msg += ' (key saved, but overlay bundle not updated: ' + res.overlay_error + ')';
+        }
+        state.providerSaveResult = { id: res.provider || pid, ok: !res.overlay_error, message: msg };
+        detectCompletedSteps();
+      } else {
+        const detail = (res && res.detail) || 'Failed to register provider with existing key.';
+        state.providerSaveResult = { id: pid, ok: false, message: detail };
+      }
+      render();
     });
   });
 
