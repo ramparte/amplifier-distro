@@ -195,16 +195,32 @@ def check_foundation_available() -> bool:
         return False
 
 
+def export_distro_settings() -> list[str]:
+    """Export distro settings to environment variables at startup.
+
+    Voice, workspace, and other distro settings are bridged into
+    env vars so that subsystems that read from ``os.environ`` pick
+    them up without needing a direct dependency on ``distro_settings``.
+    """
+    from amplifier_distro import distro_settings
+
+    exported = distro_settings.export_to_env()
+    if exported:
+        logger.info("Exported distro settings to env: %s", ", ".join(exported))
+    return exported
+
+
 def check_legacy_config() -> None:
     """Log a notice if the old distro.yaml config file exists."""
     legacy = Path(conventions.AMPLIFIER_HOME).expanduser() / "distro.yaml"
     if legacy.exists():
         logger.info(
             "Found legacy distro.yaml at %s. "
-            "This file is no longer used -- configuration is now via "
-            "environment variables and foundation's settings.yaml. "
-            "You can safely delete it.",
+            "Configuration has moved to distro settings at %s. "
+            "You can safely delete the old file.",
             legacy,
+            Path(conventions.DISTRO_HOME).expanduser()
+            / conventions.DISTRO_SETTINGS_FILENAME,
         )
 
 
@@ -236,3 +252,4 @@ def log_startup_info(
 
     check_foundation_available()
     check_legacy_config()
+    export_distro_settings()

@@ -1181,9 +1181,9 @@ class TestSlackBridgeEndpoints:
 
 
 class TestSlackConfigFile:
-    """Test SlackConfig loading from keys.yaml + distro.yaml + env.
+    """Test SlackConfig loading from keys.env + distro settings + env.
 
-    Opinion #11: secrets in keys.yaml, config in distro.yaml.
+    Opinion #11: secrets in keys.env, config in distro settings (settings.yaml).
     """
 
     def test_from_env_only(self):
@@ -1205,7 +1205,8 @@ class TestSlackConfigFile:
             assert cfg.socket_mode is True
 
     def test_from_files(self, tmp_path):
-        """Config loads from keys.env + distro.yaml when no env vars."""
+        """Config loads from keys.env + distro settings when no env vars."""
+        from amplifier_distro import conventions
         from amplifier_distro.server.apps.slack import config as config_mod
 
         # Write keys.env (secrets)
@@ -1214,16 +1215,16 @@ class TestSlackConfigFile:
             'SLACK_BOT_TOKEN="xoxb-file"\nSLACK_APP_TOKEN="xapp-file"\n'
         )
 
-        # Write distro.yaml (config)
-        distro_file = tmp_path / "distro.yaml"
-        distro_file.write_text(
+        # Write distro settings.yaml (config in DISTRO_HOME format)
+        settings_file = tmp_path / "settings.yaml"
+        settings_file.write_text(
             "slack:\n"
             "  hub_channel_id: C_FILE\n"
             "  hub_channel_name: test-channel\n"
             "  socket_mode: true\n"
         )
 
-        # Patch the home path to use our temp dir
+        # Patch both home paths to use our temp dir
         original = config_mod._amplifier_home
         config_mod._amplifier_home = lambda: tmp_path
         try:
@@ -1237,7 +1238,10 @@ class TestSlackConfigFile:
                 "SLACK_SIMULATOR_MODE": "",
                 "SLACK_HUB_CHANNEL_NAME": "",
             }
-            with patch.dict(os.environ, env, clear=False):
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch.object(conventions, "DISTRO_HOME", str(tmp_path)),
+            ):
                 cfg = config_mod.SlackConfig.from_env()
                 assert cfg.bot_token == "xoxb-file"
                 assert cfg.app_token == "xapp-file"
@@ -1268,34 +1272,42 @@ class TestSlackConfigFile:
             config_mod._amplifier_home = original
 
     def test_from_env_reads_default_working_dir(self, tmp_path):
-        """default_working_dir is read from distro.yaml slack section."""
+        """default_working_dir is read from distro settings slack section."""
+        from amplifier_distro import conventions
         from amplifier_distro.server.apps.slack import config as config_mod
 
-        distro_file = tmp_path / "distro.yaml"
-        distro_file.write_text("slack:\n  default_working_dir: ~/repo/my-project\n")
+        settings_file = tmp_path / "settings.yaml"
+        settings_file.write_text("slack:\n  default_working_dir: ~/repo/my-project\n")
 
         original = config_mod._amplifier_home
         config_mod._amplifier_home = lambda: tmp_path
         try:
             env = {"SLACK_DEFAULT_WORKING_DIR": ""}
-            with patch.dict(os.environ, env, clear=False):
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch.object(conventions, "DISTRO_HOME", str(tmp_path)),
+            ):
                 cfg = config_mod.SlackConfig.from_env()
                 assert cfg.default_working_dir == "~/repo/my-project"
         finally:
             config_mod._amplifier_home = original
 
     def test_from_env_default_working_dir_env_override(self, tmp_path):
-        """SLACK_DEFAULT_WORKING_DIR env var overrides distro.yaml."""
+        """SLACK_DEFAULT_WORKING_DIR env var overrides distro settings."""
+        from amplifier_distro import conventions
         from amplifier_distro.server.apps.slack import config as config_mod
 
-        distro_file = tmp_path / "distro.yaml"
-        distro_file.write_text("slack:\n  default_working_dir: ~/repo/from-file\n")
+        settings_file = tmp_path / "settings.yaml"
+        settings_file.write_text("slack:\n  default_working_dir: ~/repo/from-file\n")
 
         original = config_mod._amplifier_home
         config_mod._amplifier_home = lambda: tmp_path
         try:
             env = {"SLACK_DEFAULT_WORKING_DIR": "/custom/from-env"}
-            with patch.dict(os.environ, env, clear=False):
+            with (
+                patch.dict(os.environ, env, clear=False),
+                patch.object(conventions, "DISTRO_HOME", str(tmp_path)),
+            ):
                 cfg = config_mod.SlackConfig.from_env()
                 assert cfg.default_working_dir == "/custom/from-env"
         finally:
@@ -1360,40 +1372,40 @@ class TestSlackSetup:
         assert resp.status_code == 400
 
     def test_configure_saves_to_keys_and_distro(self, bridge_client, tmp_path):
-        """Configure persists secrets to keys.env, config to distro.yaml."""
+        """Configure persists secrets to keys.env, config to distro settings."""
+        from amplifier_distro import conventions, distro_settings
         from amplifier_distro.server.apps.slack import setup
 
-        # Redirect home path to temp dir
+        # Redirect both home paths to temp dir
         original = setup._amplifier_home
         setup._amplifier_home = lambda: tmp_path
         try:
-            resp = bridge_client.post(
-                "/apps/slack/setup/configure",
-                json={
-                    "bot_token": "xoxb-test-token",
-                    "app_token": "xapp-test-token",
-                    "hub_channel_id": "C_TEST",
-                    "hub_channel_name": "test-channel",
-                    "socket_mode": True,
-                },
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "saved"
-            assert data["mode"] == "socket"
+            with patch.object(conventions, "DISTRO_HOME", str(tmp_path)):
+                resp = bridge_client.post(
+                    "/apps/slack/setup/configure",
+                    json={
+                        "bot_token": "xoxb-test-token",
+                        "app_token": "xapp-test-token",
+                        "hub_channel_id": "C_TEST",
+                        "hub_channel_name": "test-channel",
+                        "socket_mode": True,
+                    },
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["status"] == "saved"
+                assert data["mode"] == "socket"
 
-            import yaml
+                # Verify secrets in keys.env (.env format)
+                keys = setup.load_keys()
+                assert keys["SLACK_BOT_TOKEN"] == "xoxb-test-token"
+                assert keys["SLACK_APP_TOKEN"] == "xapp-test-token"
 
-            # Verify secrets in keys.env (.env format)
-            keys = setup.load_keys()
-            assert keys["SLACK_BOT_TOKEN"] == "xoxb-test-token"
-            assert keys["SLACK_APP_TOKEN"] == "xapp-test-token"
-
-            # Verify config in distro.yaml
-            distro = yaml.safe_load((tmp_path / "distro.yaml").read_text())
-            assert distro["slack"]["hub_channel_id"] == "C_TEST"
-            assert distro["slack"]["hub_channel_name"] == "test-channel"
-            assert distro["slack"]["socket_mode"] is True
+                # Verify config in distro settings
+                ds = distro_settings.load().slack
+                assert ds.hub_channel_id == "C_TEST"
+                assert ds.hub_channel_name == "test-channel"
+                assert ds.socket_mode is True
         finally:
             setup._amplifier_home = original
 
@@ -1425,7 +1437,7 @@ class TestSlackSetup:
 
 
 class TestSlackSetupHelpers:
-    """Test setup module helper functions (keys.env + distro.yaml)."""
+    """Test setup module helper functions (keys.env + distro settings)."""
 
     def test_save_and_load_keys(self, tmp_path):
         """Round-trip: save keys then load them back."""
@@ -1447,64 +1459,67 @@ class TestSlackSetupHelpers:
             setup._amplifier_home = original
 
     def test_save_and_load_distro_slack(self, tmp_path):
-        """Round-trip: save slack config to distro.yaml then load it back."""
+        """Round-trip: save slack config to distro settings then load it back."""
+        from amplifier_distro import conventions, distro_settings
         from amplifier_distro.server.apps.slack import setup
 
         original = setup._amplifier_home
         setup._amplifier_home = lambda: tmp_path
         try:
-            setup._save_distro_slack(
-                {
-                    "hub_channel_id": "C_RT",
-                    "hub_channel_name": "test",
-                    "socket_mode": True,
-                }
-            )
-            loaded = setup.load_distro_slack()
-            assert loaded["hub_channel_id"] == "C_RT"
-            assert loaded["hub_channel_name"] == "test"
-            assert loaded["socket_mode"] is True
+            with patch.object(conventions, "DISTRO_HOME", str(tmp_path)):
+                setup._save_distro_slack(
+                    hub_channel_id="C_RT",
+                    hub_channel_name="test",
+                    socket_mode=True,
+                )
+                slack = distro_settings.load().slack
+                assert slack.hub_channel_id == "C_RT"
+                assert slack.hub_channel_name == "test"
+                assert slack.socket_mode is True
         finally:
             setup._amplifier_home = original
 
     def test_distro_slack_preserves_other_sections(self, tmp_path):
-        """Writing slack: section preserves other distro.yaml sections."""
-        import yaml
-
+        """Writing slack section preserves other distro settings."""
+        from amplifier_distro import conventions, distro_settings
         from amplifier_distro.server.apps.slack import setup
 
         original = setup._amplifier_home
         setup._amplifier_home = lambda: tmp_path
 
-        # Pre-populate distro.yaml with existing content
-        distro_path = tmp_path / "distro.yaml"
-        distro_path.write_text(
-            yaml.dump(
-                {"workspace_root": "~/dev", "identity": {"github_handle": "test"}},
-                default_flow_style=False,
-            )
-        )
-
         try:
-            setup._save_distro_slack({"hub_channel_id": "C_NEW"})
-            loaded = yaml.safe_load(distro_path.read_text())
-            # Existing sections preserved
-            assert loaded["workspace_root"] == "~/dev"
-            assert loaded["identity"]["github_handle"] == "test"
-            # New section added
-            assert loaded["slack"]["hub_channel_id"] == "C_NEW"
+            with patch.object(conventions, "DISTRO_HOME", str(tmp_path)):
+                # Pre-populate settings with existing workspace_root + identity
+                initial = distro_settings.DistroSettings(workspace_root="~/dev")
+                initial.identity.github_handle = "test"
+                distro_settings.save(initial)
+
+                # Save only the slack section
+                setup._save_distro_slack(hub_channel_id="C_NEW")
+
+                # Verify other sections are preserved
+                loaded = distro_settings.load()
+                assert loaded.workspace_root == "~/dev"
+                assert loaded.identity.github_handle == "test"
+                # New slack section added
+                assert loaded.slack.hub_channel_id == "C_NEW"
         finally:
             setup._amplifier_home = original
 
     def test_load_missing_config(self, tmp_path):
-        """Loading from non-existent paths returns empty dict."""
+        """Loading from non-existent paths returns empty dict / defaults."""
+        from amplifier_distro import conventions, distro_settings
         from amplifier_distro.server.apps.slack import setup
 
+        nonexistent = tmp_path / "nonexistent"
         original = setup._amplifier_home
-        setup._amplifier_home = lambda: tmp_path / "nonexistent"
+        setup._amplifier_home = lambda: nonexistent
         try:
-            assert setup.load_keys() == {}
-            assert setup.load_distro_slack() == {}
+            with patch.object(conventions, "DISTRO_HOME", str(nonexistent)):
+                assert setup.load_keys() == {}
+                # distro_settings returns defaults when file doesn't exist
+                slack = distro_settings.load().slack
+                assert slack.hub_channel_id == ""
         finally:
             setup._amplifier_home = original
 

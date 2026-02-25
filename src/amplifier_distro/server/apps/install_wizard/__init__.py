@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from amplifier_distro import overlay
+from amplifier_distro import distro_settings, overlay
 from amplifier_distro.features import PROVIDERS, detect_provider
 from amplifier_distro.server.app import AppManifest
 from amplifier_distro.server.apps.settings import (
@@ -43,6 +43,8 @@ _static_dir = Path(__file__).parent / "static"
 
 class QuickstartRequest(BaseModel):
     api_key: str
+    workspace_root: str = ""
+    github_handle: str = ""
 
 
 # --- HTML Pages ---
@@ -194,6 +196,12 @@ async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
 
     # Step 4: Create overlay bundle (includes amplifier-start + provider)
     overlay.ensure_overlay(provider)
+
+    # Step 5: Persist identity and workspace to distro settings
+    if req.github_handle:
+        distro_settings.update("identity", github_handle=req.github_handle)
+    if req.workspace_root:
+        distro_settings.update(workspace_root=req.workspace_root)
 
     return {
         "status": "ready",

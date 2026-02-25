@@ -60,30 +60,34 @@ def _seed_stub_config(home: Path) -> None:
     """Create minimal config files in the temp home for UI rendering."""
     import yaml
 
+    from amplifier_distro import conventions, distro_settings
+
     home.mkdir(parents=True, exist_ok=True)
 
-    # distro.yaml -- minimal valid config
-    distro_config = {
-        "workspace_root": "~/dev",
-        "identity": {
-            "github_handle": "stub-user",
-            "git_email": "stub@example.com",
-        },
-        "cache": {"max_age_hours": 168},
-        "preflight": {"enabled": True, "mode": "warn"},
-        "voice": {"voice": "ash", "model": "gpt-4o-realtime-preview"},
-    }
-    (home / "distro.yaml").write_text(
-        yaml.dump(distro_config, default_flow_style=False, sort_keys=False)
+    # Distro settings (replaces old distro.yaml)
+    settings = distro_settings.DistroSettings(
+        workspace_root="~/dev",
+        identity=distro_settings.IdentitySettings(
+            github_handle="stub-user",
+            git_email="stub@example.com",
+        ),
+        voice=distro_settings.VoiceSettings(
+            voice="ash",
+            model="gpt-4o-realtime-preview",
+        ),
     )
+    distro_home = Path(conventions.DISTRO_HOME).expanduser()
+    distro_home.mkdir(parents=True, exist_ok=True)
+    distro_settings.save(settings)
 
-    # keys.yaml -- fake keys so the UI shows "configured" states
+    # keys.env -- fake keys so the UI shows "configured" states
     keys = {
         "ANTHROPIC_API_KEY": "sk-ant-stub-key-for-ui-testing-not-real",
         "OPENAI_API_KEY": "sk-stub-key-for-ui-testing-not-real",
     }
-    keys_path = home / "keys.yaml"
-    keys_path.write_text(yaml.dump(keys, default_flow_style=False, sort_keys=False))
+    keys_path = home / "keys.env"
+    lines = [f'{k}="{v}"' for k, v in keys.items()]
+    keys_path.write_text("\n".join(lines) + "\n")
     keys_path.chmod(0o600)
 
     # Set fake keys in env so provider detection works
@@ -91,14 +95,14 @@ def _seed_stub_config(home: Path) -> None:
         os.environ.setdefault(k, v)
 
     # settings.yaml -- marks system as "configured" so we get the ready phase
-    settings = {
+    amp_settings = {
         "bundle": {
             "active": "distro",
             "added": {"distro": str(home / "bundles" / "distro.yaml")},
         }
     }
     (home / "settings.yaml").write_text(
-        yaml.dump(settings, default_flow_style=False, sort_keys=False)
+        yaml.dump(amp_settings, default_flow_style=False, sort_keys=False)
     )
 
     # bundles/ dir with a minimal bundle so status endpoint works

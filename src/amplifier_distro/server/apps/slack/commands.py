@@ -227,8 +227,8 @@ class CommandHandler:
         # Show a hint if the session landed in the home directory (unconfigured)
         if mapping.working_dir in ("~", "", "~/"):
             text += (
-                "\n_Tip: set `slack.default_working_dir` in distro.yaml"
-                " to default to your project directory._"
+                "\n_Tip: set `slack.default_working_dir` in distro"
+                " settings to default to your project directory._"
             )
 
         return CommandResult(

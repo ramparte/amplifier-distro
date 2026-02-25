@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from amplifier_distro import overlay
+from amplifier_distro import distro_settings, overlay
 from amplifier_distro.conventions import (
     AMPLIFIER_HOME,
     KEYS_FILENAME,
@@ -399,6 +399,45 @@ async def change_provider(req: ProviderRequest) -> dict[str, Any]:
 async def get_bridges() -> dict[str, Any]:
     """Status of all communication bridges (Slack, Voice)."""
     return {"bridges": detect_bridges()}
+
+
+# --- Distro Settings CRUD ---
+
+
+class DistroSettingsUpdate(BaseModel):
+    """Partial update for distro settings. All fields optional."""
+
+    workspace_root: str | None = None
+    identity: dict[str, Any] | None = None
+    backup: dict[str, Any] | None = None
+    slack: dict[str, Any] | None = None
+    voice: dict[str, Any] | None = None
+    watchdog: dict[str, Any] | None = None
+
+
+@router.get("/distro-settings")
+async def get_distro_settings() -> dict[str, Any]:
+    """Read all distro settings."""
+    from dataclasses import asdict
+
+    settings = distro_settings.load()
+    return {"settings": asdict(settings), "path": str(distro_settings._settings_path())}
+
+
+@router.post("/distro-settings")
+async def update_distro_settings(req: DistroSettingsUpdate) -> dict[str, Any]:
+    """Update distro settings (partial merge)."""
+    from dataclasses import asdict
+
+    if req.workspace_root is not None:
+        distro_settings.update(workspace_root=req.workspace_root)
+    for section_name in ("identity", "backup", "slack", "voice", "watchdog"):
+        section_data = getattr(req, section_name)
+        if section_data is not None:
+            distro_settings.update(section_name, **section_data)
+
+    settings = distro_settings.load()
+    return {"settings": asdict(settings), "path": str(distro_settings._settings_path())}
 
 
 manifest = AppManifest(

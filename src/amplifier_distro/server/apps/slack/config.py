@@ -1,10 +1,10 @@
 """Configuration for the Slack bridge.
 
-Secrets live in keys.env, config in distro.yaml.
+Secrets live in keys.env, non-secret config in distro settings.
 
 Priority order (highest wins):
 1. Environment variables (SLACK_BOT_TOKEN, etc.)
-2. keys.env for secrets, distro.yaml for config
+2. keys.env for secrets, distro settings for config
 3. Dataclass defaults
 """
 
@@ -15,8 +15,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from amplifier_distro.conventions import AMPLIFIER_HOME, KEYS_FILENAME
 
@@ -52,55 +50,27 @@ def _load_keys() -> dict[str, Any]:
     return result
 
 
-def _load_distro_slack() -> dict[str, Any]:
-    """Load the slack: section from ~/.amplifier/distro.yaml."""
-    path = _amplifier_home() / "distro.yaml"
-    if not path.exists():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text())
-        if isinstance(data, dict) and isinstance(data.get("slack"), dict):
-            return data["slack"]
-        return {}
-    except (OSError, yaml.YAMLError):
-        logger.warning("Failed to read distro.yaml", exc_info=True)
-        return {}
+def _env_str(env_key: str, fallback: str) -> str:
+    """Return env var if set, else fallback."""
+    val = os.environ.get(env_key, "")
+    return val if val else fallback
 
 
-def _str(
-    env_key: str,
-    keys: dict[str, Any],
-    config: dict[str, Any],
-    config_key: str,
-    default: str = "",
-) -> str:
-    """Get string: env > keys.env > distro.yaml > default."""
-    env = os.environ.get(env_key, "")
-    if env:
-        return env
+def _env_bool(env_key: str, fallback: bool) -> bool:
+    """Return env var as bool if set, else fallback."""
+    val = os.environ.get(env_key, "")
+    if val:
+        return val.lower() in ("1", "true", "yes")
+    return fallback
+
+
+def _key_str(env_key: str, keys: dict[str, Any]) -> str:
+    """Return env var > keys.env value, or empty string."""
+    val = os.environ.get(env_key, "")
+    if val:
+        return val
     k = keys.get(env_key, "")
-    if k:
-        return str(k)
-    c = config.get(config_key, "")
-    if c:
-        return str(c)
-    return default
-
-
-def _bool(
-    env_key: str,
-    config: dict[str, Any],
-    config_key: str,
-    default: bool = False,
-) -> bool:
-    """Get bool: env > distro.yaml > default."""
-    env = os.environ.get(env_key, "")
-    if env:
-        return env.lower() in ("1", "true", "yes")
-    val = config.get(config_key)
-    if val is not None:
-        return bool(val)
-    return default
+    return str(k) if k else ""
 
 
 @dataclass
@@ -112,11 +82,11 @@ class SlackConfig:
     app_token: str = ""  # xapp-... (for Socket Mode)
     signing_secret: str = ""  # For Events API verification
 
-    # --- Channel Configuration (from distro.yaml) ---
+    # --- Channel Configuration (from distro settings) ---
     hub_channel_id: str = ""
     hub_channel_name: str = "amplifier"
 
-    # --- Behavior (from distro.yaml) ---
+    # --- Behavior (from distro settings) ---
     thread_per_session: bool = True
     allow_breakout: bool = True
     channel_prefix: str = "amp-"
@@ -136,34 +106,35 @@ class SlackConfig:
 
     @classmethod
     def from_env(cls) -> SlackConfig:
-        """Load config from keys.env + distro.yaml + env overrides.
+        """Load config from keys.env + distro settings + env overrides.
 
-        Priority: env vars > keys.env (secrets) > distro.yaml (config)
+        Priority: env vars > keys.env (secrets) > distro settings (config)
         > dataclass defaults.
         """
+        from amplifier_distro import distro_settings
+
         keys = _load_keys()
-        cfg = _load_distro_slack()
+        ds = distro_settings.load().slack
+
         config = cls(
-            bot_token=_str("SLACK_BOT_TOKEN", keys, cfg, "bot_token"),
-            app_token=_str("SLACK_APP_TOKEN", keys, cfg, "app_token"),
-            signing_secret=_str("SLACK_SIGNING_SECRET", keys, cfg, "signing_secret"),
-            hub_channel_id=_str("SLACK_HUB_CHANNEL_ID", {}, cfg, "hub_channel_id"),
-            hub_channel_name=_str(
-                "SLACK_HUB_CHANNEL_NAME",
-                {},
-                cfg,
-                "hub_channel_name",
-                "amplifier",
+            bot_token=_key_str("SLACK_BOT_TOKEN", keys),
+            app_token=_key_str("SLACK_APP_TOKEN", keys),
+            signing_secret=_key_str("SLACK_SIGNING_SECRET", keys),
+            hub_channel_id=_env_str("SLACK_HUB_CHANNEL_ID", ds.hub_channel_id),
+            hub_channel_name=_env_str("SLACK_HUB_CHANNEL_NAME", ds.hub_channel_name),
+            default_working_dir=_env_str(
+                "SLACK_DEFAULT_WORKING_DIR", ds.default_working_dir
             ),
-            default_working_dir=_str(
-                "SLACK_DEFAULT_WORKING_DIR",
-                {},
-                cfg,
-                "default_working_dir",
-                "~",
-            ),
-            simulator_mode=_bool("SLACK_SIMULATOR_MODE", cfg, "simulator_mode"),
-            socket_mode=_bool("SLACK_SOCKET_MODE", cfg, "socket_mode"),
+            simulator_mode=_env_bool("SLACK_SIMULATOR_MODE", ds.simulator_mode),
+            socket_mode=_env_bool("SLACK_SOCKET_MODE", ds.socket_mode),
+            # These come directly from distro settings (no env override)
+            thread_per_session=ds.thread_per_session,
+            allow_breakout=ds.allow_breakout,
+            channel_prefix=ds.channel_prefix,
+            bot_name=ds.bot_name,
+            default_bundle=ds.default_bundle or None,
+            max_message_length=ds.max_message_length,
+            response_timeout=ds.response_timeout,
         )
         logger.debug(
             "SlackConfig.from_env: default_working_dir=%s",

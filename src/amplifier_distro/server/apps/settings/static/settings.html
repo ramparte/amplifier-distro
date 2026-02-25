@@ -709,8 +709,8 @@ async function coreApi(method, path, body) {
 async function loadAll() {
   const [statusData, detectData, configData, integrationsData, memoryData, workData, serverData] = await Promise.all([
     api('GET', '/status'),
-    api('GET', '/detect'),
-    coreApi('GET', '/config'),
+    fetch('/apps/install-wizard/detect').then(r => r.ok ? r.json() : { error: 'HTTP ' + r.status }).catch(() => ({ error: true })),
+    api('GET', '/distro-settings'),
     coreApi('GET', '/integrations'),
     coreApi('GET', '/memory/recall?q=*').catch(() => ({ error: true })),
     coreApi('GET', '/memory/work-status'),
@@ -718,7 +718,7 @@ async function loadAll() {
   ]);
   state.status = statusData.error ? null : statusData;
   state.detect = detectData.error ? null : detectData;
-  state.config = configData.error ? null : configData;
+  state.config = (configData && !configData.error && configData.settings) ? configData.settings : null;
   state.integrations = integrationsData.error ? null : integrationsData;
   state.memoryCount = (memoryData && !memoryData.error && memoryData.count != null) ? memoryData.count : null;
   state.workStatus = (workData && !workData.error) ? workData : null;
@@ -808,10 +808,10 @@ async function saveConfig(field) {
   const btn = document.getElementById('btn-save-' + field);
   if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
 
-  const res = await coreApi('PUT', '/config', body);
+  const res = await api('POST', '/distro-settings', body);
 
   if (res && !res.error) {
-    state.config = res;
+    state.config = (res.settings) ? res.settings : res;
     showToast('Saved', 'success');
   } else {
     showToast('Failed to save', 'error');
