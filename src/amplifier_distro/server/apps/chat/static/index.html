@@ -231,6 +231,10 @@
       color: var(--accent-amber);
       font-size: 10px;
       font-weight: 600;
+    }
+    .session-stale-badge.new-session {
+      border-color: rgba(99, 102, 241, 0.45);
+      color: rgb(129, 140, 248);
       letter-spacing: 0.01em;
       text-transform: uppercase;
     }
@@ -1379,7 +1383,9 @@
         </div>
         <div class="session-card-meta">
           <span>${metaText}</span>
-          ${session.hasExternalUpdate ? html`<span class="session-stale-badge">Updated</span>` : null}
+          ${session.hasExternalUpdate
+            ? html`<span class="session-stale-badge ${session.isNewSession ? 'new-session' : ''}">${session.isNewSession ? 'New' : 'Updated'}</span>`
+            : null}
         </div>
         ${preview ? html`<div class="session-card-cwd" title=${session.lastUserMessage || ''}>${preview}</div>` : null}
       </div>
@@ -1716,6 +1722,7 @@
               status: 'idle',
               lastUpdated: s.lastUpdated || nowIso,
               hasExternalUpdate: false,
+              isNewSession: false,
             });
             return next;
           });
@@ -1805,6 +1812,7 @@
               turnCount: s.turnCount || 0,
               lastUpdated: s.lastUpdated || nowIso,
               hasExternalUpdate: false,
+              isNewSession: false,
             });
             return next;
           });
@@ -2204,6 +2212,7 @@
                   knownRevision: isNewWithContent ? null : revision,
                   remoteRevision: revision,
                   hasExternalUpdate: isNewWithContent,
+                  isNewSession: isNewWithContent,
                 });
                 sessionKeyById.set(sessionId, historyKey);
                 changed = true;
@@ -2648,6 +2657,7 @@
               knownRevision: revision,
               remoteRevision: revision,
               hasExternalUpdate: false,
+              isNewSession: false,
               status: 'connecting',
               source: 'history',
             });
@@ -2793,6 +2803,7 @@
               knownRevision: revision,
               remoteRevision: revision,
               hasExternalUpdate: false,
+              isNewSession: false,
             });
             return next;
           });
@@ -2958,11 +2969,13 @@
               if (!row || typeof row.revision !== 'string') continue;
 
               const remoteRevision = row.revision;
-              const currentKnown = session.knownRevision || null;
-              const nextKnown = currentKnown || remoteRevision;
-              const hasExternalUpdate = nextKnown === remoteRevision
-                ? false
-                : true;
+              const currentKnown = session.knownRevision ?? null;
+              // Never advance knownRevision in the poll — null means "never reviewed
+              // by this client". Only set a baseline when the user opens the session.
+              const nextKnown = currentKnown;
+              const hasExternalUpdate = currentKnown === null
+                ? (remoteRevision !== null)   // never reviewed: badge if has content
+                : currentKnown !== remoteRevision; // reviewed before: badge if changed
               const nextUpdatedAt = row.last_updated || session.lastUpdated || null;
 
               if (
