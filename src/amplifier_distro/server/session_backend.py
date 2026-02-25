@@ -385,22 +385,26 @@ class FoundationBackend:
 
         self._wired_sessions.add(session_id)
 
-        # 1. Streaming hook — all coordinator events to queue
-        def on_stream(event: str, data: dict) -> None:
+        # 1. Streaming hook — all coordinator events to queue.
+        # The hooks API requires an async handler returning HookResult.
+        # There is no wildcard support — register for each event explicitly.
+        from amplifier_core.events import ALL_EVENTS
+        from amplifier_core.models import HookResult
+
+        async def on_stream(event: str, data: dict) -> HookResult:
             try:
                 _q.put_nowait((event, data))
             except asyncio.QueueFull:
                 logger.warning("Event queue full, dropping event: %s", event)
+            return HookResult(action="continue", data=data)
 
         hooks = coordinator.hooks
 
-        # Register for all events via wildcard; fall back silently
-        try:
-            hooks.register("*", on_stream)
-        except Exception:  # noqa: BLE001
-            logger.debug("hooks.register('*', ...) failed, trying individual events")
+        for evt in ALL_EVENTS:
+            with contextlib.suppress(Exception):
+                hooks.register(evt, on_stream)
 
-        # Delegate events may not be covered by "*" — register explicitly
+        # Delegate events are not in ALL_EVENTS — register explicitly
         for evt in [
             "delegate:agent_spawned",
             "delegate:agent_resumed",
