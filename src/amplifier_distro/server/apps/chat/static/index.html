@@ -161,46 +161,89 @@
     #session-panel.no-transition { transition: none; }
 
     .session-panel-header {
-      padding: 10px 12px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      padding: 10px;
       border-bottom: 1px solid var(--border);
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--bg-secondary);
     }
-    .session-panel-header-actions {
+    .session-panel-header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
+    .session-panel-title-wrap {
+      min-width: 0;
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-
-    .new-session-header-btn {
-      padding: 3px 8px;
+    .session-panel-header-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: center;
+      gap: 6px;
+    }
+    .session-control-btn {
+      min-width: 0;
+      height: 26px;
+      padding: 0 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       background: var(--bg-tertiary);
-      border: 1px dashed var(--border);
+      border: 1px solid var(--border);
       color: var(--text-secondary);
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
       font-size: 11px;
-      text-transform: none;
-      letter-spacing: 0;
+      line-height: 1;
     }
-    .new-session-header-btn:hover {
+    .session-control-btn:hover {
       border-color: var(--accent-blue);
       color: var(--accent-blue);
     }
-    .new-session-header-btn.active {
+    .session-control-btn.active {
       border-color: var(--accent-blue);
       color: var(--accent-blue);
       background: rgba(37, 99, 235, 0.08);
     }
-    .new-session-header-btn:disabled {
+    .session-control-btn:disabled {
       opacity: 0.65;
       cursor: default;
       border-color: var(--border);
       color: var(--text-muted);
+    }
+    .session-control-value {
+      color: var(--text-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .session-new-btn {
+      flex-shrink: 0;
+      height: 26px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .session-new-btn:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
     }
     .session-filter-wrap {
       padding: 8px 10px;
@@ -424,8 +467,8 @@
       background: rgba(59, 130, 246, 0.28);
     }
 
-    /* Focus mode layout */
-    #chat-main.focus-mode {
+    /* Workspace mode layout */
+    #chat-main.workspace-mode {
       flex-direction: row;
     }
     .main-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -840,7 +883,7 @@
         transform: translateX(0);
         box-shadow: 4px 0 20px rgba(0,0,0,0.5);
       }
-      .focus-toggle { display: none !important; }
+      .workspace-toggle { display: none !important; }
       .activity-panel { display: none !important; }
       .pane-resizer { display: none !important; }
       #message-input { font-size: 16px; }
@@ -859,7 +902,7 @@
   const SLASH_COMMANDS = [
     { name: '/help',    desc: 'Show available commands', clientSide: true },
     { name: '/clear',   desc: 'Clear conversation',      clientSide: true },
-    { name: '/focus',   desc: 'Toggle focus mode',       clientSide: true },
+    { name: '/workspace', desc: 'Toggle workspace mode',       clientSide: true },
     { name: '/thinking', desc: 'Toggle thinking visibility', clientSide: true },
     { name: '/status',  desc: 'Session status',          clientSide: false },
     { name: '/tools',   desc: 'List tools',              clientSide: false },
@@ -1453,12 +1496,23 @@
     `;
   }
 
-  function InputArea({ onSend, onStop, executing, viewMode, setViewMode }) {
+  function InputArea({ onSend, onStop, executing, viewMode, setViewMode, activeKey }) {
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
     const [pendingImages, setPendingImages] = useState([]);
     const [slashOpen, setSlashOpen] = useState(false);
     const [slashFilter, setSlashFilter] = useState('');
+
+    useEffect(() => {
+      const ta = textareaRef.current;
+      if (!ta || ta.disabled) return;
+      const rafId = window.requestAnimationFrame(() => {
+        try {
+          ta.focus();
+        } catch {}
+      });
+      return () => window.cancelAnimationFrame(rafId);
+    }, [activeKey]);
 
     const autoResize = useCallback(() => {
       const ta = textareaRef.current;
@@ -1603,7 +1657,7 @@
     const [diskUpdateNoticeSignal, setDiskUpdateNoticeSignal] = useState(0);
 
     // UI state
-    const [viewMode, setViewMode] = useState('default');
+    const [viewMode, setViewMode] = useState('chat');
     const [showSessions, setShowSessions] = useState(true);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const [syncingHistory, setSyncingHistory] = useState(false);
@@ -2476,8 +2530,8 @@
           case '/clear':
             setChronoItems([]);
             return;
-          case '/focus':
-            setViewMode(m => m === 'focus' ? 'default' : 'focus');
+          case '/workspace':
+            setViewMode(m => m === 'workspace' ? 'chat' : 'workspace');
             return;
           case '/thinking':
             // Toggle visibility — implemented in Phase 6
@@ -3211,8 +3265,8 @@
       && (activeSession.turnCount || 0) === 0
       && !executing;
 
-    const mainFilter = viewMode === 'focus' ? (i => i.type === 'text') : null;
-    const activityFilter = viewMode === 'focus' ? (i => i.type !== 'text') : null;
+    const mainFilter = viewMode === 'workspace' ? (i => i.type === 'text') : null;
+    const activityFilter = viewMode === 'workspace' ? (i => i.type !== 'text') : null;
 
     return html`
       <div id="header">
@@ -3221,9 +3275,9 @@
         <span class="app-name">Amplifier</span>
         <span class="header-spacer"></span>
         <button
-          class=${'btn focus-toggle' + (viewMode === 'focus' ? ' active' : '')}
-          onClick=${() => setViewMode(m => m === 'focus' ? 'default' : 'focus')}
-        >${viewMode === 'focus' ? 'Default' : 'Focus'}</button>
+          class=${'btn workspace-toggle' + (viewMode === 'workspace' ? ' active' : '')}
+          onClick=${() => setViewMode(m => m === 'workspace' ? 'chat' : 'workspace')}
+        >${viewMode === 'workspace' ? 'Chat' : 'Workspace'}</button>
         <button class=${'btn' + (showSessions ? ' active' : '')} onClick=${() => setShowSessions(s => !s)}>
           Sessions
         </button>
@@ -3260,17 +3314,25 @@
           style=${showSessions ? { width: sessionPanelWidth + 'px' } : { width: '0px' }}
         >
           <div class="session-panel-header">
-            <span>Sessions</span>
+            <div class="session-panel-header-top">
+              <div class="session-panel-title-wrap">
+                <span>Sessions</span>
+              </div>
+              <button class="session-new-btn" onClick=${newSession}>+ New</button>
+            </div>
             <div class="session-panel-header-actions">
               <button
-                class="new-session-header-btn"
+                class="session-control-btn"
                 title=${sessionSortMode === 'recent'
                   ? 'Sorting by last updated time'
                   : 'Sorting by working directory'}
                 onClick=${() => setSessionSortMode(mode => mode === 'recent' ? 'directory' : 'recent')}
-              >${sessionSortMode === 'recent' ? 'Sort: Time' : 'Sort: Dir'}</button>
+              >
+                <span>Sort</span>
+                <span class="session-control-value">${sessionSortMode === 'recent' ? 'time' : 'dir'}</span>
+              </button>
               <button
-                class=${'new-session-header-btn' + (isSessionFilterOpen ? ' active' : '')}
+                class=${'session-control-btn' + (isSessionFilterOpen ? ' active' : '')}
                 title="Show or hide session filter"
                 onClick=${() => {
                   if (isSessionFilterOpen) {
@@ -3280,18 +3342,9 @@
                     setShowSessionFilter(true);
                   }
                 }}
-              >Filter</button>
-              ${(syncingHistory || pendingHistorySyncCount > 0) && html`
-                <button
-                  class="new-session-header-btn"
-                  title=${pendingHistorySyncCount > 0
-                    ? ('Sync ' + pendingHistorySyncCount + ' new sessions from disk')
-                    : 'Sync sessions from disk'}
-                  onClick=${() => syncSessionHistory({ silent: false })}
-                  disabled=${syncingHistory}
-                >${syncingHistory ? 'Syncing…' : ('Sync (' + pendingHistorySyncCount + ')')}</button>
-              `}
-              <button class="new-session-header-btn" onClick=${newSession}>+ New</button>
+              >
+                <span>Filter</span>
+              </button>
             </div>
           </div>
           ${isSessionFilterOpen && html`
@@ -3411,7 +3464,7 @@
           ></div>
         `}
 
-        <div id="chat-main" class=${viewMode === 'focus' ? 'focus-mode' : ''}>
+        <div id="chat-main" class=${viewMode === 'workspace' ? 'workspace-mode' : ''}>
           <div class="main-pane">
             ${activeSession && activeSession.status === 'loading_history' && html`
               <div class="history-loading-banner">
@@ -3422,7 +3475,7 @@
             <${MessageList}
               items=${chronoItems}
               filterFn=${mainFilter}
-              sessionKey=${(activeKey || 'none') + (viewMode === 'focus' ? ':main-focus' : ':main-default')}
+              sessionKey=${(activeKey || 'none') + (viewMode === 'workspace' ? ':main-workspace' : ':main-chat')}
               showJumpControls=${true}
               bottomNoticeSignal=${diskUpdateNoticeSignal}
               bottomNoticeLabel="New messages"
@@ -3433,9 +3486,10 @@
               executing=${executing}
               viewMode=${viewMode}
               setViewMode=${setViewMode}
+              activeKey=${activeKey}
             />
           </div>
-          ${viewMode === 'focus' && html`
+          ${viewMode === 'workspace' && html`
             <div
               class=${'pane-resizer' + (draggingPane === 'activity' ? ' active' : '')}
               onMouseDown=${e => startPaneResize('activity', e)}
