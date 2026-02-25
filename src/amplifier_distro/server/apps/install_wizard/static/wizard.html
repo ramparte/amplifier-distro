@@ -629,20 +629,55 @@ async function autoDetect() {
     if (data.provider)       state.provider = data.provider;
     if (data.has_api_key)    state.keyVerified = 'ok';
   }
-  // Load available modules
+  // Load available modules and track currently enabled ones
   const mods = await api('GET', '/modules');
   if (mods && !mods.error && Array.isArray(mods)) {
     state.modules = mods;
     state.selectedModules = new Set(
-      mods.filter(m => m.default).map(m => m.name)
+      mods.filter(m => m.enabled || m.default).map(m => m.id || m.name)
     );
   } else if (mods && !mods.error && mods.modules) {
     state.modules = mods.modules;
     state.selectedModules = new Set(
-      mods.modules.filter(m => m.default).map(m => m.name)
+      mods.modules.filter(m => m.enabled || m.default).map(m => m.id || m.name)
     );
   }
+  
+  // Detect which steps are already complete (idempotency)
+  detectCompletedSteps();
   render();
+}
+
+/* ================================================================== */
+/*  Step Completion Detection (Idempotency)                           */
+/* ================================================================== */
+function detectCompletedSteps() {
+  state.completedSteps = state.completedSteps || {};
+  
+  // Step 1 (welcome): has workspace AND at least one identity field
+  state.completedSteps.welcome = !!(
+    state.workspace && (state.githubHandle || state.gitEmail)
+  );
+  
+  // Step 2 (config): has non-default cache TTL
+  state.completedSteps.config = state.cacheTTL != null && state.cacheTTL !== 168;
+  
+  // Step 3 (modules): has selected modules beyond just defaults
+  const defaultCount = (state.modules || []).filter(m => m.default).length;
+  const selectedCount = state.selectedModules ? state.selectedModules.size : 0;
+  state.completedSteps.modules = selectedCount > defaultCount;
+  
+  // Step 4 (interfaces): CLI is installed
+  state.completedSteps.interfaces = state.cliInstalled;
+  
+  // Step 5 (network): tailscale hostname is set
+  state.completedSteps.network = !!state.tailscaleHostname;
+  
+  // Step 6 (provider): has API key AND provider is set
+  state.completedSteps.provider = state.keyVerified === 'ok' && state.provider;
+  
+  // Step 7 (verify): runs on demand
+  state.completedSteps.verify = false;
 }
 
 /* ================================================================== */
@@ -706,11 +741,17 @@ function renderIndicator() {
   const el = document.getElementById('stepIndicator');
   let html = '';
   STEPS.forEach((s, i) => {
-    const cls = i < state.step ? 'completed' : i === state.step ? 'active' : '';
-    const icon = i < state.step ? '&#10003;' : (i + 1);
-    html += `<div class="step-dot ${cls}">${icon}</div>`;
+    // A step is "completed" if we've already passed it OR if it's already configured
+    const isPassed = i < state.step;
+    const isCompleted = (state.completedSteps && state.completedSteps[s.id]) || isPassed;
+    const isActive = i === state.step;
+    
+    const cls = isCompleted ? 'completed' : isActive ? 'active' : '';
+    const icon = isCompleted ? '&#10003;' : (i + 1);
+    html += `<div class="step-dot ${cls}" title="${isCompleted && !isPassed ? s.name + ' (already configured)' : ''}">${icon}</div>`;
     if (i < STEPS.length - 1) {
-      html += `<div class="step-connector ${i < state.step ? 'completed' : ''}"></div>`;
+      const connectorCompleted = isCompleted && !isPassed ? 'completed' : isPassed ? 'completed' : '';
+      html += `<div class="step-connector ${connectorCompleted}"></div>`;
     }
   });
   el.innerHTML = html;
