@@ -66,7 +66,7 @@ class TestFoundationBackendQueueInfrastructure:
 
         mock_prepared = MagicMock()
         mock_prepared.create_session = AsyncMock(return_value=mock_session)
-        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
 
         from amplifier_distro.server.session_backend import FoundationBackend
 
@@ -96,7 +96,7 @@ class TestFoundationBackendCreateSession:
         mock_prepared = MagicMock()
         mock_prepared.create_session = AsyncMock(return_value=mock_session)
 
-        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
 
         from amplifier_distro.server.session_backend import FoundationBackend
 
@@ -125,7 +125,7 @@ class TestFoundationBackendCreateSession:
         mock_prepared = MagicMock()
         mock_prepared.create_session = AsyncMock(return_value=mock_session)
 
-        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
 
         from amplifier_distro.server.session_backend import FoundationBackend
 
@@ -149,7 +149,7 @@ class TestFoundationBackendCreateSession:
         mock_prepared = MagicMock()
         mock_prepared.create_session = AsyncMock(return_value=mock_session)
 
-        bridge_backend._load_bundle = MagicMock(return_value=mock_prepared)
+        bridge_backend._load_bundle = AsyncMock(return_value=mock_prepared)
 
         from amplifier_distro.server.session_backend import (
             FoundationBackend,

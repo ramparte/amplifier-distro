@@ -310,11 +310,13 @@ class TestSystemdServiceFile:
 
 
 class TestKeyExport:
-    """Verify keys.yaml export into environment variables."""
+    """Verify keys.env export into environment variables."""
 
-    def test_exports_keys_from_yaml(self, tmp_path: Path) -> None:
-        keys_file = tmp_path / "keys.yaml"
-        keys_file.write_text("TEST_DAEMON_KEY_A: value-a\nTEST_DAEMON_KEY_B: value-b\n")
+    def test_exports_keys_from_env_file(self, tmp_path: Path) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text(
+            'TEST_DAEMON_KEY_A="value-a"\nTEST_DAEMON_KEY_B="value-b"\n'
+        )
         # Ensure keys are not already set
         os.environ.pop("TEST_DAEMON_KEY_A", None)
         os.environ.pop("TEST_DAEMON_KEY_B", None)
@@ -330,8 +332,8 @@ class TestKeyExport:
             os.environ.pop("TEST_DAEMON_KEY_B", None)
 
     def test_does_not_override_existing_env(self, tmp_path: Path) -> None:
-        keys_file = tmp_path / "keys.yaml"
-        keys_file.write_text("TEST_DAEMON_KEY_C: from-yaml\n")
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text('TEST_DAEMON_KEY_C="from-env-file"\n')
         os.environ["TEST_DAEMON_KEY_C"] = "from-env"
 
         try:
@@ -341,11 +343,11 @@ class TestKeyExport:
             os.environ.pop("TEST_DAEMON_KEY_C", None)
 
     def test_returns_empty_for_missing_file(self, tmp_path: Path) -> None:
-        assert export_keys(tmp_path / "nonexistent.yaml") == []
+        assert export_keys(tmp_path / "nonexistent.env") == []
 
-    def test_skips_non_string_values(self, tmp_path: Path) -> None:
-        keys_file = tmp_path / "keys.yaml"
-        keys_file.write_text("number_key: 42\nlist_key: [a, b]\n")
+    def test_skips_comments_and_blank_lines(self, tmp_path: Path) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text("# comment\n\nno_equals_here\n")
         exported = export_keys(keys_file)
         assert exported == []
 

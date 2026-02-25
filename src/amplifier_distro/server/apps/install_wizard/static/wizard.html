@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amplifier - Install Wizard</title>
+<style>
+/* ------------------------------------------------------------------ */
+/*  Design Tokens                                                      */
+/* ------------------------------------------------------------------ */
+:root {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --bg-card: #374151;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --border: #4b5563;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Reset & Base                                                       */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step Indicator                                                     */
+/* ------------------------------------------------------------------ */
+.step-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 48px;
+  flex-shrink: 0;
+}
+
+.step-dot {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 2px solid var(--border);
+  transition: all 0.25s ease;
+  cursor: default;
+  position: relative;
+}
+
+.step-dot.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.step-dot.completed {
+  background: var(--success);
+  color: #fff;
+  border-color: var(--success);
+}
+
+.step-connector {
+  width: 40px;
+  height: 2px;
+  background: var(--border);
+  transition: background 0.25s ease;
+}
+
+.step-connector.completed {
+  background: var(--success);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Card Container                                                     */
+/* ------------------------------------------------------------------ */
+.wizard-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  width: 100%;
+  max-width: 640px;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-card h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.wizard-card .subtitle {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin-bottom: 32px;
+}
+
+.wizard-card .card-body {
+  flex: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Navigation                                                         */
+/* ------------------------------------------------------------------ */
+.nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Buttons                                                            */
+/* ------------------------------------------------------------------ */
+button, .btn {
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-secondary:hover { color: var(--text-primary); border-color: var(--text-primary); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  padding: 10px 16px;
+}
+.btn-ghost:hover { color: var(--text-primary); }
+
+.btn-success {
+  background: var(--success);
+  color: #fff;
+  border-color: var(--success);
+}
+.btn-success:hover { background: #16a34a; border-color: #16a34a; }
+
+.btn-sm { padding: 6px 14px; font-size: 13px; }
+
+/* ------------------------------------------------------------------ */
+/*  Form Elements                                                      */
+/* ------------------------------------------------------------------ */
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input:focus, select:focus {
+  border-color: var(--accent);
+}
+
+.field-group {
+  margin-bottom: 20px;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Module Grid                                                        */
+/* ------------------------------------------------------------------ */
+.filter-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.filter-tab {
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.filter-tab:hover { color: var(--text-primary); border-color: var(--text-primary); }
+.filter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.module-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.module-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.module-card:hover { border-color: var(--accent); }
+.module-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.1); }
+
+.module-card .module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.module-card .module-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.module-card .module-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.badge-provider { background: rgba(139,92,246,0.2); color: #a78bfa; }
+.badge-tool     { background: rgba(59,130,246,0.2);  color: #93c5fd; }
+.badge-bundle   { background: rgba(245,158,11,0.2);  color: #fbbf24; }
+
+.checkbox-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.module-card.selected .checkbox-icon {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.module-card.selected .checkbox-icon::after {
+  content: '';
+  width: 6px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interface Cards                                                    */
+/* ------------------------------------------------------------------ */
+.interface-row {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.interface-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.interface-info h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.interface-info p  { font-size: 13px; color: var(--text-secondary); }
+
+.installed-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+  padding: 6px 14px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Provider Selection                                                 */
+/* ------------------------------------------------------------------ */
+.provider-options {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.provider-card {
+  flex: 1;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.provider-card:hover { border-color: var(--accent); }
+.provider-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+
+.provider-card h3 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.provider-card p  { font-size: 13px; color: var(--text-secondary); }
+
+.provider-card .provider-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.provider-card .provider-link:hover { text-decoration: underline; }
+
+.key-verify-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+.key-verify-row .field-group { flex: 1; margin-bottom: 0; }
+
+.verify-result {
+  font-size: 13px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+.verify-result.ok      { background: rgba(34,197,94,0.1);  color: var(--success); }
+.verify-result.fail    { background: rgba(239,68,68,0.1);  color: var(--error); }
+.verify-result.loading { background: rgba(59,130,246,0.1); color: var(--accent); }
+
+/* ------------------------------------------------------------------ */
+/*  Verification Checklist                                             */
+/* ------------------------------------------------------------------ */
+.checklist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+}
+
+.check-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.check-icon.pass    { background: var(--success); color: #fff; }
+.check-icon.fail    { background: var(--error);   color: #fff; }
+.check-icon.pending { background: var(--bg-secondary); color: var(--text-secondary); border: 2px solid var(--border); }
+
+.check-label { flex: 1; }
+.check-msg   { font-size: 12px; color: var(--text-secondary); }
+
+/* ------------------------------------------------------------------ */
+/*  Toggle Switch                                                      */
+/* ------------------------------------------------------------------ */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.toggle {
+  width: 48px;
+  height: 26px;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: 13px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.toggle.on { background: var(--accent); border-color: var(--accent); }
+.toggle .toggle-knob {
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+}
+.toggle.on .toggle-knob { transform: translateX(22px); }
+
+.toggle-label { font-size: 15px; font-weight: 500; }
+
+.optional-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Scrollbar                                                          */
+/* ------------------------------------------------------------------ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ------------------------------------------------------------------ */
+/*  Status / Spinner                                                   */
+/* ------------------------------------------------------------------ */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status-line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Hidden                                                             */
+/* ------------------------------------------------------------------ */
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================== -->
+<!--  Step Indicator                                                  -->
+<!-- ============================================================== -->
+<div class="step-indicator" id="stepIndicator"></div>
+
+<!-- ============================================================== -->
+<!--  Wizard Card                                                     -->
+<!-- ============================================================== -->
+<div class="wizard-card" id="wizardCard"></div>
+
+<script>
+/* ================================================================== */
+/*  State                                                              */
+/* ================================================================== */
+const STEPS = [
+  { id: 'welcome',    title: 'Welcome' },
+  { id: 'config',     title: 'Configuration' },
+  { id: 'modules',    title: 'Modules' },
+  { id: 'interfaces', title: 'Interfaces' },
+  { id: 'network',    title: 'Network' },
+  { id: 'provider',   title: 'Provider' },
+  { id: 'verify',     title: 'Verify' },
+];
+
+const state = {
+  step: 0,
+  detected: null,
+  // Step 1 - Welcome
+  workspace: '~/dev',
+  githubHandle: '',
+  gitEmail: '',
+  // Step 2 - Config
+  cacheTTL: 168,
+  preflightMode: 'block',
+  // Step 3 - Modules
+  modules: [],
+  selectedModules: new Set(),
+  moduleFilter: 'all',
+  // Step 4 - Interfaces
+  cliInstalled: false,
+  guiInstalled: true,
+  cliInstalling: false,
+  // Step 5 - Network
+  tailscaleEnabled: false,
+  tailscaleHostname: '',
+  // Step 6 - Provider
+  provider: 'anthropic',
+  apiKey: '',
+  keyVerified: null,    // null | 'loading' | 'ok' | 'fail'
+  // Step 7 - Verify
+  checks: [],
+  verifyRunning: false,
+};
+
+/* ================================================================== */
+/*  API Helpers                                                        */
+/* ================================================================== */
+const API = '/apps/install-wizard';
+
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(API + path, opts);
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+/* ================================================================== */
+/*  Auto-detection on load                                             */
+/* ================================================================== */
+async function autoDetect() {
+  const data = await api('GET', '/detect');
+  if (data && !data.error) {
+    state.detected = data;
+    if (data.workspace_root) state.workspace = data.workspace_root;
+    if (data.github_handle)  state.githubHandle = data.github_handle;
+    if (data.git_email)      state.gitEmail = data.git_email;
+    if (data.cache_max_age_hours != null)   state.cacheTTL = data.cache_max_age_hours;
+    if (data.preflight_mode) state.preflightMode = data.preflight_mode;
+    if (data.cli_installed != null)  state.cliInstalled = data.cli_installed;
+    if (data.tailscale_hostname) state.tailscaleHostname = data.tailscale_hostname;
+    if (data.provider)       state.provider = data.provider;
+    if (data.has_api_key)    state.keyVerified = 'ok';
+  }
+  // Load available modules
+  const mods = await api('GET', '/modules');
+  if (mods && !mods.error && Array.isArray(mods)) {
+    state.modules = mods;
+    state.selectedModules = new Set(
+      mods.filter(m => m.default).map(m => m.name)
+    );
+  } else if (mods && !mods.error && mods.modules) {
+    state.modules = mods.modules;
+    state.selectedModules = new Set(
+      mods.modules.filter(m => m.default).map(m => m.name)
+    );
+  }
+  render();
+}
+
+/* ================================================================== */
+/*  Navigation                                                         */
+/* ================================================================== */
+function goTo(step) {
+  state.step = Math.max(0, Math.min(STEPS.length - 1, step));
+  if (state.step === STEPS.length - 1) runVerification();
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function submitStep() {
+  const stepId = STEPS[state.step].id;
+  let body = {};
+
+  switch (stepId) {
+    case 'welcome':
+      body = {
+        workspace_root: state.workspace,
+        github_handle: state.githubHandle,
+        git_email: state.gitEmail,
+      };
+      break;
+    case 'config':
+      body = {
+        cache_max_age_hours: state.cacheTTL,
+        preflight_mode: state.preflightMode,
+      };
+      break;
+    case 'modules':
+      body = { modules: [...state.selectedModules] };
+      break;
+    case 'interfaces':
+      body = {};
+      break;
+    case 'network':
+      body = {
+        tailscale_enabled: state.tailscaleEnabled,
+        hostname: state.tailscaleHostname,
+      };
+      break;
+    case 'provider':
+      body = {
+        provider: state.provider,
+        api_key: state.apiKey,
+      };
+      break;
+    case 'verify':
+      return;
+  }
+
+  await api('POST', '/steps/' + stepId, body);
+  goTo(state.step + 1);
+}
+
+/* ================================================================== */
+/*  Step Indicator Rendering                                           */
+/* ================================================================== */
+function renderIndicator() {
+  const el = document.getElementById('stepIndicator');
+  let html = '';
+  STEPS.forEach((s, i) => {
+    const cls = i < state.step ? 'completed' : i === state.step ? 'active' : '';
+    const icon = i < state.step ? '&#10003;' : (i + 1);
+    html += `<div class="step-dot ${cls}">${icon}</div>`;
+    if (i < STEPS.length - 1) {
+      html += `<div class="step-connector ${i < state.step ? 'completed' : ''}"></div>`;
+    }
+  });
+  el.innerHTML = html;
+}
+
+/* ================================================================== */
+/*  Step Content Rendering                                             */
+/* ================================================================== */
+function render() {
+  renderIndicator();
+  const card = document.getElementById('wizardCard');
+  const stepId = STEPS[state.step].id;
+  const renderers = {
+    welcome: renderWelcome,
+    config: renderConfig,
+    modules: renderModules,
+    interfaces: renderInterfaces,
+    network: renderNetwork,
+    provider: renderProvider,
+    verify: renderVerify,
+  };
+  card.innerHTML = renderers[stepId]();
+  bindEvents();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 1: Welcome                                                    */
+/* ------------------------------------------------------------------ */
+function renderWelcome() {
+  return `
+    <h1>Welcome to Amplifier</h1>
+    <p class="subtitle">Let's set up your development environment</p>
+    <div class="card-body">
+      <div class="field-group">
+        <label for="workspace">Workspace Folder</label>
+        <input type="text" id="workspace" value="${esc(state.workspace)}" data-bind="workspace">
+        <p class="field-hint">Root directory for your Amplifier projects</p>
+      </div>
+      <div class="field-group">
+        <label for="githubHandle">GitHub Handle</label>
+        <input type="text" id="githubHandle" value="${esc(state.githubHandle)}" data-bind="githubHandle" placeholder="your-username">
+      </div>
+      <div class="field-group">
+        <label for="gitEmail">Git Email</label>
+        <input type="text" id="gitEmail" value="${esc(state.gitEmail)}" data-bind="gitEmail" placeholder="you@example.com">
+      </div>
+    </div>
+    <div class="nav-row">
+      <div></div>
+      <button class="btn-primary" onclick="submitStep()">Get Started</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 2: Configuration                                              */
+/* ------------------------------------------------------------------ */
+function renderConfig() {
+  return `
+    <h1>Configuration</h1>
+    <p class="subtitle">Tune your distro.yaml settings</p>
+    <div class="card-body">
+      <div class="field-group">
+        <label for="cacheTTL">Cache TTL (hours)</label>
+        <input type="number" id="cacheTTL" value="${state.cacheTTL}" min="1" data-bind="cacheTTL" data-type="number">
+        <p class="field-hint">How long to cache downloaded modules before refreshing</p>
+      </div>
+      <div class="field-group">
+        <label for="preflightMode">Preflight Mode</label>
+        <select id="preflightMode" data-bind="preflightMode">
+          <option value="block" ${state.preflightMode === 'block' ? 'selected' : ''}>Block - prevent start if checks fail</option>
+          <option value="warn"  ${state.preflightMode === 'warn'  ? 'selected' : ''}>Warn - show warnings but continue</option>
+          <option value="off"   ${state.preflightMode === 'off'   ? 'selected' : ''}>Off - skip preflight checks</option>
+        </select>
+        <p class="field-hint">Controls behavior when preflight checks detect issues</p>
+      </div>
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 3: Modules                                                    */
+/* ------------------------------------------------------------------ */
+function renderModules() {
+  const filters = ['all', 'provider', 'tool', 'bundle'];
+  const mods = state.modules.filter(m =>
+    state.moduleFilter === 'all' || m.category === state.moduleFilter
+  );
+  const fallbackModules = state.modules.length > 0 ? '' : `
+    <p style="color: var(--text-secondary); padding: 40px 0; text-align: center;">
+      Module list unavailable. The backend will provide available modules once connected.
+    </p>`;
+
+  return `
+    <h1>Choose Your Modules</h1>
+    <p class="subtitle">Select the providers, tools, and bundles to install</p>
+    <div class="card-body">
+      <div class="filter-tabs">
+        ${filters.map(f => `
+          <button class="filter-tab ${state.moduleFilter === f ? 'active' : ''}"
+                  data-filter="${f}">${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1) + 's'}</button>
+        `).join('')}
+      </div>
+      ${fallbackModules}
+      <div class="module-grid">
+        ${mods.map(m => {
+          const sel = state.selectedModules.has(m.name);
+          const badgeCls = m.category === 'provider' ? 'badge-provider'
+                         : m.category === 'tool' ? 'badge-tool' : 'badge-bundle';
+          return `
+            <div class="module-card ${sel ? 'selected' : ''}" data-module="${esc(m.name)}">
+              <div class="module-header">
+                <span class="module-name">${esc(m.name)}</span>
+                <span class="checkbox-icon"></span>
+              </div>
+              <span class="badge ${badgeCls}">${esc(m.category)}</span>
+              <span class="module-desc">${esc(m.description || '')}</span>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 4: Interfaces                                                 */
+/* ------------------------------------------------------------------ */
+function renderInterfaces() {
+  const cliBtnHtml = state.cliInstalled
+    ? '<span class="installed-badge">Installed</span>'
+    : state.cliInstalling
+      ? '<button class="btn-sm btn-secondary" disabled><span class="spinner"></span> Installing</button>'
+      : '<button class="btn-sm btn-primary" id="installCliBtn">Install</button>';
+
+  return `
+    <h1>Install Interfaces</h1>
+    <p class="subtitle">Choose how you interact with Amplifier</p>
+    <div class="card-body">
+      <div class="interface-row">
+        <div class="interface-card">
+          <div class="interface-info">
+            <h3>Command Line (CLI)</h3>
+            <p>The <code>amplifier</code> command for your terminal</p>
+          </div>
+          ${cliBtnHtml}
+        </div>
+        <div class="interface-card">
+          <div class="interface-info">
+            <h3>Web GUI</h3>
+            <p>Browser-based chat interface, provided by this server</p>
+          </div>
+          <span class="installed-badge">Available</span>
+        </div>
+      </div>
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 5: Network                                                    */
+/* ------------------------------------------------------------------ */
+function renderNetwork() {
+  const tsFields = state.tailscaleEnabled ? `
+    <div class="field-group" style="margin-top: 20px;">
+      <label for="tsHostname">Tailscale Hostname</label>
+      <input type="text" id="tsHostname" value="${esc(state.tailscaleHostname)}"
+             data-bind="tailscaleHostname" placeholder="my-amplifier-server">
+      <p class="field-hint">Hostname your Amplifier server will be reachable at on the tailnet</p>
+    </div>` : '';
+
+  return `
+    <h1>Network Setup</h1>
+    <p class="subtitle">Configure remote access to your Amplifier server</p>
+    <div class="card-body">
+      <div class="toggle-row">
+        <div class="toggle ${state.tailscaleEnabled ? 'on' : ''}" id="tsToggle">
+          <div class="toggle-knob"></div>
+        </div>
+        <span class="toggle-label">Enable Tailscale</span>
+      </div>
+      ${tsFields}
+      <div class="optional-note">
+        Tailscale allows secure remote access to your Amplifier server from other devices
+        on your private network. This step is optional -- you can set it up later.
+      </div>
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      <div style="display:flex; gap:12px;">
+        <button class="btn-secondary" onclick="goTo(${state.step + 1})">Skip</button>
+        <button class="btn-primary" onclick="submitStep()">Next</button>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 6: Provider                                                   */
+/* ------------------------------------------------------------------ */
+function renderProvider() {
+  const verifyHtml = state.keyVerified === 'loading'
+    ? '<div class="verify-result loading"><span class="spinner"></span> Verifying key...</div>'
+    : state.keyVerified === 'ok'
+      ? '<div class="verify-result ok">Key verified successfully</div>'
+      : state.keyVerified === 'fail'
+        ? '<div class="verify-result fail">Key verification failed. Check your key and try again.</div>'
+        : '';
+
+  return `
+    <h1>Set Up Your AI Provider</h1>
+    <p class="subtitle">Connect to your preferred AI model provider</p>
+    <div class="card-body">
+      <div class="provider-options">
+        <div class="provider-card ${state.provider === 'anthropic' ? 'selected' : ''}" data-provider="anthropic">
+          <h3>Anthropic</h3>
+          <p>Claude models</p>
+          <a class="provider-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get an API key</a>
+        </div>
+        <div class="provider-card ${state.provider === 'openai' ? 'selected' : ''}" data-provider="openai">
+          <h3>OpenAI</h3>
+          <p>GPT models</p>
+          <a class="provider-link" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get an API key</a>
+        </div>
+      </div>
+      <div class="key-verify-row">
+        <div class="field-group">
+          <label for="apiKey">API Key</label>
+          <input type="password" id="apiKey" value="${esc(state.apiKey)}"
+                 data-bind="apiKey"
+                 placeholder="${state.provider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}">
+        </div>
+        <button class="btn-sm btn-secondary" id="verifyKeyBtn"
+                style="margin-bottom: 0; height: 40px;"
+                ${!state.apiKey ? 'disabled' : ''}>Verify Key</button>
+      </div>
+      ${verifyHtml}
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      <button class="btn-primary" onclick="submitStep()">Next</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 7: Verify                                                     */
+/* ------------------------------------------------------------------ */
+function renderVerify() {
+  const allPassed = state.checks.length > 0 && state.checks.every(c => c.passed);
+  const failedChecks = state.checks.filter(c => !c.passed);
+
+  const checksHtml = state.checks.length === 0
+    ? `<div class="status-line"><span class="spinner"></span> Running verification checks...</div>`
+    : `<ul class="checklist">
+        ${state.checks.map(c => `
+          <li class="check-item">
+            <span class="check-icon ${c.passed ? 'pass' : 'fail'}">${c.passed ? '&#10003;' : '&#10007;'}</span>
+            <span class="check-label">${esc(c.name)}</span>
+            <span class="check-msg">${esc(c.message || '')}</span>
+          </li>`).join('')}
+       </ul>`;
+
+  const actionHtml = allPassed
+    ? `<button class="btn-success" onclick="window.location.href='/apps/web-chat/'">Launch Amplifier</button>`
+    : state.checks.length > 0
+      ? `<div style="display:flex; gap:12px;">
+           <button class="btn-secondary" onclick="runVerification()">Re-check</button>
+           <button class="btn-primary" onclick="window.location.href='/apps/web-chat/'">Continue Anyway</button>
+         </div>`
+      : '';
+
+  return `
+    <h1>${allPassed ? 'All Set!' : state.checks.length > 0 ? 'Almost There' : 'Verifying...'}</h1>
+    <p class="subtitle">${allPassed
+        ? 'Your Amplifier environment is ready'
+        : state.checks.length > 0
+          ? failedChecks.length + ' check' + (failedChecks.length !== 1 ? 's' : '') + ' need attention'
+          : 'Checking your environment'}</p>
+    <div class="card-body">
+      ${checksHtml}
+    </div>
+    <div class="nav-row">
+      <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
+      ${actionHtml}
+    </div>`;
+}
+
+/* ================================================================== */
+/*  Verification                                                       */
+/* ================================================================== */
+async function runVerification() {
+  state.checks = [];
+  state.verifyRunning = true;
+  render();
+
+  // Try the backend verification endpoint
+  const data = await api('POST', '/steps/verify', {});
+  if (data && !data.error && data.checks) {
+    state.checks = data.checks;
+  } else {
+    // Fallback: use /api/status (preflight checks)
+    try {
+      const res = await fetch('/api/status');
+      if (res.ok) {
+        const status = await res.json();
+        state.checks = (status.checks || []).map(c => ({
+          name: c.name,
+          passed: c.passed,
+          message: c.message,
+        }));
+      }
+    } catch (_) {
+      // If even that fails, show local-only checks
+      state.checks = [
+        { name: 'Configuration (distro.yaml)', passed: !!state.detected, message: state.detected ? 'Found' : 'Could not verify' },
+        { name: 'Workspace directory', passed: !!state.workspace, message: state.workspace || 'Not set' },
+        { name: 'API key configured', passed: state.keyVerified === 'ok' || !!state.apiKey, message: state.apiKey ? 'Set' : 'Not set' },
+        { name: 'CLI installed', passed: state.cliInstalled, message: state.cliInstalled ? 'Found' : 'Not detected' },
+      ];
+    }
+  }
+
+  state.verifyRunning = false;
+  render();
+}
+
+/* ================================================================== */
+/*  Event Binding                                                      */
+/* ================================================================== */
+function bindEvents() {
+  // Data-bind inputs
+  document.querySelectorAll('[data-bind]').forEach(el => {
+    el.addEventListener('input', () => {
+      const key = el.dataset.bind;
+      state[key] = el.dataset.type === 'number' ? Number(el.value) : el.value;
+    });
+    el.addEventListener('change', () => {
+      const key = el.dataset.bind;
+      state[key] = el.dataset.type === 'number' ? Number(el.value) : el.value;
+    });
+  });
+
+  // Module filter tabs
+  document.querySelectorAll('[data-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.moduleFilter = btn.dataset.filter;
+      render();
+    });
+  });
+
+  // Module cards
+  document.querySelectorAll('[data-module]').forEach(card => {
+    card.addEventListener('click', () => {
+      const name = card.dataset.module;
+      if (state.selectedModules.has(name)) {
+        state.selectedModules.delete(name);
+      } else {
+        state.selectedModules.add(name);
+      }
+      render();
+    });
+  });
+
+  // CLI install
+  const cliBtn = document.getElementById('installCliBtn');
+  if (cliBtn) {
+    cliBtn.addEventListener('click', async () => {
+      state.cliInstalling = true;
+      render();
+      const res = await api('POST', '/steps/interfaces', { install_cli: true });
+      state.cliInstalling = false;
+      if (res && !res.error) state.cliInstalled = true;
+      render();
+    });
+  }
+
+  // Tailscale toggle
+  const tsToggle = document.getElementById('tsToggle');
+  if (tsToggle) {
+    tsToggle.addEventListener('click', () => {
+      state.tailscaleEnabled = !state.tailscaleEnabled;
+      render();
+    });
+  }
+
+  // Provider selection
+  document.querySelectorAll('[data-provider]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // Don't switch provider when clicking the link
+      if (e.target.tagName === 'A') return;
+      state.provider = card.dataset.provider;
+      state.keyVerified = null;
+      render();
+    });
+  });
+
+  // Verify key
+  const verifyBtn = document.getElementById('verifyKeyBtn');
+  if (verifyBtn) {
+    verifyBtn.addEventListener('click', async () => {
+      state.keyVerified = 'loading';
+      render();
+      const res = await api('POST', '/steps/provider', {
+        provider: state.provider,
+        api_key: state.apiKey,
+      });
+      state.keyVerified = (res && !res.error && res.verified) ? 'ok' : 'fail';
+      render();
+    });
+  }
+}
+
+/* ================================================================== */
+/*  Utilities                                                          */
+/* ================================================================== */
+function esc(str) {
+  if (str == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+/* ================================================================== */
+/*  Boot                                                               */
+/* ================================================================== */
+render();
+autoDetect();
+</script>
+</body>
+</html>

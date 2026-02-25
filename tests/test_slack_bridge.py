@@ -838,15 +838,18 @@ class TestCommandHandler:
         result = asyncio.run(command_handler.handle("new", ["test"], ctx))
         assert "default_working_dir" not in result.text
 
-
-    def test_cmd_new_dir_flag_sets_working_directory(self, command_handler, slack_config):
+    def test_cmd_new_dir_flag_sets_working_directory(
+        self, command_handler, slack_config
+    ):
         """--dir flag overrides the config default_working_dir."""
         from amplifier_distro.server.apps.slack.commands import CommandContext
 
         slack_config.default_working_dir = "~"
         ctx = CommandContext(channel_id="C_HUB", user_id="U1", thread_ts=None)
         result = asyncio.run(
-            command_handler.handle("new", ["--dir", "/Users/samule/repo/myproject"], ctx)
+            command_handler.handle(
+                "new", ["--dir", "/Users/samule/repo/myproject"], ctx
+            )
         )
         assert "/Users/samule/repo/myproject" in result.text
         # Explicit --dir should not trigger the "set default_working_dir" tip
@@ -1202,12 +1205,14 @@ class TestSlackConfigFile:
             assert cfg.socket_mode is True
 
     def test_from_files(self, tmp_path):
-        """Config loads from keys.yaml + distro.yaml when no env vars."""
+        """Config loads from keys.env + distro.yaml when no env vars."""
         from amplifier_distro.server.apps.slack import config as config_mod
 
-        # Write keys.yaml (secrets)
-        keys_file = tmp_path / "keys.yaml"
-        keys_file.write_text("SLACK_BOT_TOKEN: xoxb-file\nSLACK_APP_TOKEN: xapp-file\n")
+        # Write keys.env (secrets)
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text(
+            'SLACK_BOT_TOKEN="xoxb-file"\nSLACK_APP_TOKEN="xapp-file"\n'
+        )
 
         # Write distro.yaml (config)
         distro_file = tmp_path / "distro.yaml"
@@ -1242,12 +1247,12 @@ class TestSlackConfigFile:
             config_mod._amplifier_home = original
 
     def test_env_overrides_file(self, tmp_path):
-        """Env vars take priority over keys.yaml values."""
+        """Env vars take priority over keys.env values."""
         from amplifier_distro.server.apps.slack import config as config_mod
 
-        # Write keys.yaml with a different token
-        keys_file = tmp_path / "keys.yaml"
-        keys_file.write_text("SLACK_BOT_TOKEN: xoxb-file\n")
+        # Write keys.env with a different token
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_text('SLACK_BOT_TOKEN="xoxb-file"\n')
 
         original = config_mod._amplifier_home
         config_mod._amplifier_home = lambda: tmp_path
@@ -1355,7 +1360,7 @@ class TestSlackSetup:
         assert resp.status_code == 400
 
     def test_configure_saves_to_keys_and_distro(self, bridge_client, tmp_path):
-        """Configure persists secrets to keys.yaml, config to distro.yaml."""
+        """Configure persists secrets to keys.env, config to distro.yaml."""
         from amplifier_distro.server.apps.slack import setup
 
         # Redirect home path to temp dir
@@ -1379,8 +1384,8 @@ class TestSlackSetup:
 
             import yaml
 
-            # Verify secrets in keys.yaml
-            keys = yaml.safe_load((tmp_path / "keys.yaml").read_text())
+            # Verify secrets in keys.env (.env format)
+            keys = setup.load_keys()
             assert keys["SLACK_BOT_TOKEN"] == "xoxb-test-token"
             assert keys["SLACK_APP_TOKEN"] == "xapp-test-token"
 
@@ -1420,7 +1425,7 @@ class TestSlackSetup:
 
 
 class TestSlackSetupHelpers:
-    """Test setup module helper functions (keys.yaml + distro.yaml)."""
+    """Test setup module helper functions (keys.env + distro.yaml)."""
 
     def test_save_and_load_keys(self, tmp_path):
         """Round-trip: save keys then load them back."""
@@ -1504,14 +1509,14 @@ class TestSlackSetupHelpers:
             setup._amplifier_home = original
 
     def test_keys_file_permissions(self, tmp_path):
-        """keys.yaml is written with chmod 600 (owner-only)."""
+        """keys.env is written with chmod 600 (owner-only)."""
         from amplifier_distro.server.apps.slack import setup
 
         original = setup._amplifier_home
         setup._amplifier_home = lambda: tmp_path
         try:
             setup._save_keys({"SLACK_BOT_TOKEN": "xoxb-perms"})
-            path = tmp_path / "keys.yaml"
+            path = tmp_path / "keys.env"
             assert path.exists()
             mode = oct(path.stat().st_mode & 0o777)
             assert mode == "0o600"

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
@@ -521,12 +521,17 @@ class DistroServer:
                 )
 
     def _setup_root(self) -> None:
-        """Root route: serve the landing page."""
+        """Phase-aware root: landing page when ready, redirect to wizard when not."""
 
         _landing_page = Path(__file__).parent / "static" / "index.html"
 
         @self._app.get("/", response_model=None)
         async def root():
+            from amplifier_distro.server.apps.settings import compute_phase
+
+            phase = compute_phase()
+            if phase == "unconfigured":
+                return RedirectResponse(url="/apps/install-wizard/")
             if _landing_page.exists():
                 return HTMLResponse(content=_landing_page.read_text())
             return HTMLResponse(

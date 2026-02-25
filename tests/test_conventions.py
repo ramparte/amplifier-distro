@@ -44,7 +44,7 @@ class TestCanonicalValues:
         assert conventions.TRANSCRIPT_FILENAME == "transcript.jsonl"
 
     def test_keys_filename(self):
-        assert conventions.KEYS_FILENAME == "keys.yaml"
+        assert conventions.KEYS_FILENAME == "keys.env"
 
     def test_settings_filename(self):
         assert conventions.SETTINGS_FILENAME == "settings.yaml"

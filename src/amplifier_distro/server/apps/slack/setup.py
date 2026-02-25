@@ -1,12 +1,12 @@
 """Slack Bridge Setup Module - guided installation and configuration.
 
-Follows Opinion #11: secrets in keys.yaml, config in distro.yaml.
+Secrets live in keys.env, config in distro.yaml.
 
 Provides API routes for:
 - Checking setup status (what's configured, what's missing)
 - Validating tokens against the Slack API
 - Discovering channels for hub selection
-- Persisting secrets to ~/.amplifier/keys.yaml (chmod 600)
+- Persisting secrets to ~/.amplifier/keys.env (chmod 600)
 - Persisting config to ~/.amplifier/distro.yaml (slack: section)
 - Returning the Slack App Manifest for one-click app creation
 - End-to-end connectivity test
@@ -117,29 +117,56 @@ def _distro_config_path() -> Path:
 
 
 def load_keys() -> dict[str, Any]:
-    """Load ~/.amplifier/keys.yaml."""
+    """Load ~/.amplifier/keys.env (.env format)."""
     path = _keys_path()
     if not path.exists():
         return {}
+    result: dict[str, Any] = {}
     try:
-        data = yaml.safe_load(path.read_text())
-        return data if isinstance(data, dict) else {}
-    except (OSError, yaml.YAMLError):
-        logger.warning("Failed to read keys.yaml", exc_info=True)
-        return {}
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            if key:
+                result[key] = value
+    except OSError:
+        logger.warning("Failed to read keys.env", exc_info=True)
+    return result
 
 
 def _save_keys(updates: dict[str, str]) -> None:
-    """Merge updates into keys.yaml (chmod 600)."""
+    """Merge updates into keys.env (chmod 600, .env format)."""
     path = _keys_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    existing: dict[str, str] = {}
+    # Read existing lines, update matching keys, append new ones
+    lines: list[str] = []
+    found_keys: set[str] = set()
     if path.exists():
-        existing = yaml.safe_load(path.read_text()) or {}
+        for raw_line in path.read_text().splitlines():
+            stripped = raw_line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                existing_key, _, _ = stripped.partition("=")
+                existing_key = existing_key.strip()
+                if existing_key in updates and updates[existing_key]:
+                    lines.append(f'{existing_key}="{updates[existing_key]}"')
+                    found_keys.add(existing_key)
+                    continue
+            lines.append(raw_line)
 
-    existing.update({k: v for k, v in updates.items() if v})
-    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False))
+    # Append keys not already found
+    for key, value in updates.items():
+        if value and key not in found_keys:
+            lines.append(f'{key}="{value}"')
+
+    path.write_text("\n".join(lines) + "\n")
     path.chmod(0o600)
 
 
@@ -338,12 +365,12 @@ async def list_channels(bot_token: str = "") -> dict[str, Any]:
 
 @router.post("/configure")
 async def configure(req: ConfigureRequest) -> dict[str, Any]:
-    """Save Slack secrets to keys.yaml and config to distro.yaml.
+    """Save Slack secrets to keys.env and config to distro.yaml.
 
-    Follows Opinion #11: secrets and config in standard locations.
+    Secrets and config in standard locations.
     Also sets environment variables for the current process.
     """
-    # 1. Persist secrets to keys.yaml
+    # 1. Persist secrets to keys.env
     _save_keys(
         {
             "SLACK_BOT_TOKEN": req.bot_token,

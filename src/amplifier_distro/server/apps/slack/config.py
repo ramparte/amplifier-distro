@@ -1,10 +1,10 @@
 """Configuration for the Slack bridge.
 
-Follows Opinion #11: secrets in keys.yaml, config in distro.yaml.
+Secrets live in keys.env, config in distro.yaml.
 
 Priority order (highest wins):
 1. Environment variables (SLACK_BOT_TOKEN, etc.)
-2. keys.yaml for secrets, distro.yaml for config
+2. keys.env for secrets, distro.yaml for config
 3. Dataclass defaults
 """
 
@@ -28,16 +28,28 @@ def _amplifier_home() -> Path:
 
 
 def _load_keys() -> dict[str, Any]:
-    """Load ~/.amplifier/keys.yaml if it exists."""
+    """Load ~/.amplifier/keys.env if it exists (.env format)."""
     path = _amplifier_home() / KEYS_FILENAME
     if not path.exists():
         return {}
+    result: dict[str, Any] = {}
     try:
-        data = yaml.safe_load(path.read_text())
-        return data if isinstance(data, dict) else {}
-    except (OSError, yaml.YAMLError):
-        logger.warning("Failed to read keys.yaml", exc_info=True)
-        return {}
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            if key:
+                result[key] = value
+    except OSError:
+        logger.warning("Failed to read keys.env", exc_info=True)
+    return result
 
 
 def _load_distro_slack() -> dict[str, Any]:
@@ -62,7 +74,7 @@ def _str(
     config_key: str,
     default: str = "",
 ) -> str:
-    """Get string: env > keys.yaml > distro.yaml > default."""
+    """Get string: env > keys.env > distro.yaml > default."""
     env = os.environ.get(env_key, "")
     if env:
         return env
@@ -95,7 +107,7 @@ def _bool(
 class SlackConfig:
     """Slack bridge configuration."""
 
-    # --- Slack API Credentials (from keys.yaml) ---
+    # --- Slack API Credentials (from keys.env) ---
     bot_token: str = ""  # xoxb-... (Bot User OAuth Token)
     app_token: str = ""  # xapp-... (for Socket Mode)
     signing_secret: str = ""  # For Events API verification
@@ -124,9 +136,9 @@ class SlackConfig:
 
     @classmethod
     def from_env(cls) -> SlackConfig:
-        """Load config from keys.yaml + distro.yaml + env overrides.
+        """Load config from keys.env + distro.yaml + env overrides.
 
-        Priority: env vars > keys.yaml (secrets) > distro.yaml (config)
+        Priority: env vars > keys.env (secrets) > distro.yaml (config)
         > dataclass defaults.
         """
         keys = _load_keys()

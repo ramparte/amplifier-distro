@@ -2,7 +2,7 @@
 
 Handles server initialization tasks that run before the main event loop:
 - Structured logging (JSON to file, human-readable to console)
-- API key export from keys.yaml into the environment
+- API key export from keys.env into the environment
 - Server version and configuration logging
 
 All paths are constructed from conventions.py constants.
@@ -139,30 +139,38 @@ def load_env_file(env_file: Path | None = None) -> list[str]:
 
 
 def export_keys(keys_file: Path | None = None) -> list[str]:
-    """Export keys from keys.yaml as environment variables."""
-    import yaml
+    """Export keys from keys.env as environment variables.
 
+    Reads ``~/.amplifier/keys.env`` (a ``.env``-style file matching the
+    format used by ``amplifier`` CLI's ``KeyManager``) and sets each
+    ``KEY=value`` pair via ``os.environ.setdefault`` so that existing
+    environment variables always take precedence.
+    """
     if keys_file is None:
         keys_file = keys_file_path()
 
     if not keys_file.exists():
         return []
 
-    try:
-        data = yaml.safe_load(keys_file.read_text())
-    except (yaml.YAMLError, OSError) as e:
-        logger.warning("Failed to parse keys file %s: %s", keys_file, e)
-        return []
-
-    if not isinstance(data, dict):
-        return []
-
     exported: list[str] = []
-    for key, value in data.items():
-        if isinstance(value, str) and value:
-            env_name = str(key)
-            os.environ.setdefault(env_name, value)
-            exported.append(env_name)
+    try:
+        for raw_line in keys_file.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            # Strip matching quotes
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            if key and value:
+                os.environ.setdefault(key, value)
+                exported.append(key)
+    except OSError as e:
+        logger.warning("Failed to read keys file %s: %s", keys_file, e)
 
     return exported
 

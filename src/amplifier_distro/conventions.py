@@ -2,18 +2,29 @@
 
 Path constants and naming conventions for the distro experience server.
 Core CLI and bundle conventions live in amplifier-foundation's
-DIRECTORY_CONTRACT.md — this file covers only server-specific paths.
+DIRECTORY_CONTRACT.md -- this file covers only server-specific paths.
 
-These values are NOT configurable. They are the bedrock assumptions
-that make the experience server work.
+Most values are fixed conventions. DISTRO_HOME can be overridden via
+the AMPLIFIER_DISTRO_HOME environment variable.
 """
+
+import os
 
 # --- The Root ---
 AMPLIFIER_HOME = "~/.amplifier"
 
-# --- Keys ---
-KEYS_FILENAME = "keys.yaml"
+# --- Keys & Settings ---
+KEYS_FILENAME = "keys.env"
 SETTINGS_FILENAME = "settings.yaml"
+
+# --- Distro Home ---
+# Override with AMPLIFIER_DISTRO_HOME env var.
+DISTRO_HOME = os.environ.get("AMPLIFIER_DISTRO_HOME", "~/.amplifier-distro")
+
+# --- Local Overlay Bundle ---
+# The distro creates a local overlay bundle that includes amplifier-start.
+# The wizard/settings apps modify this overlay; the underlying bundle is untouched.
+DISTRO_OVERLAY_DIR = f"{DISTRO_HOME}/bundle"
 
 # --- Memory Store ---
 MEMORY_DIR = "memory"  # relative to AMPLIFIER_HOME

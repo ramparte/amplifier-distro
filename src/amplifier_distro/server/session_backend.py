@@ -228,16 +228,24 @@ class FoundationBackend:
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
 
-    def _load_bundle(self, bundle_name: str | None = None) -> Any:
+    async def _load_bundle(self, bundle_name: str | None = None) -> Any:
         """Load and prepare a bundle via foundation.
 
-        Returns a prepared bundle ready for create_session().
+        If a local overlay bundle exists (created by the install wizard),
+        loads it by path.  The overlay includes amplifier-start and any
+        user-selected features, so everything composes automatically.
+        Falls back to loading the bundle by name if no overlay exists.
         """
         from amplifier_foundation import load_bundle
 
-        name = bundle_name or self._bundle_name
-        bundle = load_bundle(name)
-        return bundle.prepare()
+        from amplifier_distro.overlay import overlay_dir, overlay_exists
+
+        if overlay_exists():
+            bundle = await load_bundle(str(overlay_dir()))
+        else:
+            name = bundle_name or self._bundle_name
+            bundle = await load_bundle(name)
+        return await bundle.prepare()
 
     async def create_session(
         self,
@@ -247,7 +255,7 @@ class FoundationBackend:
     ) -> SessionInfo:
         wd = Path(working_dir).expanduser()
 
-        prepared = self._load_bundle(bundle_name)
+        prepared = await self._load_bundle(bundle_name)
         session = await prepared.create_session(session_cwd=wd)
 
         session_id = session.session_id
@@ -322,9 +330,7 @@ class FoundationBackend:
         for project_dir in projects_dir.iterdir():
             if not project_dir.is_dir():
                 continue
-            transcript_path = (
-                project_dir / "sessions" / session_id / "transcript.jsonl"
-            )
+            transcript_path = project_dir / "sessions" / session_id / "transcript.jsonl"
             if transcript_path.exists():
                 messages: list[dict[str, Any]] = []
                 for line in transcript_path.read_text().splitlines():
@@ -373,7 +379,7 @@ class FoundationBackend:
 
             # 3. Create a fresh session with the same bundle
             wd = Path(working_dir).expanduser()
-            prepared = self._load_bundle()
+            prepared = await self._load_bundle()
             session = await prepared.create_session(
                 session_id=session_id,
                 session_cwd=wd,
@@ -384,17 +390,13 @@ class FoundationBackend:
             context = session.coordinator.get("context")
             if context and hasattr(context, "set_messages"):
                 current_msgs = await context.get_messages()
-                system_msgs = [
-                    m for m in current_msgs if m.get("role") == "system"
-                ]
+                system_msgs = [m for m in current_msgs if m.get("role") == "system"]
 
                 await context.set_messages(transcript)
 
                 # Re-inject system prompt if transcript lacks one
                 restored = await context.get_messages()
-                if system_msgs and not any(
-                    m.get("role") == "system" for m in restored
-                ):
+                if system_msgs and not any(m.get("role") == "system" for m in restored):
                     await context.set_messages(system_msgs + restored)
 
             # 5. Build handle and worker infrastructure
@@ -420,9 +422,7 @@ class FoundationBackend:
             return handle
 
         except Exception as err:
-            logger.warning(
-                "Failed to reconnect session %s", session_id, exc_info=True
-            )
+            logger.warning("Failed to reconnect session %s", session_id, exc_info=True)
             raise ValueError(f"Unknown session: {session_id}") from err
 
     async def _session_worker(self, session_id: str) -> None:
