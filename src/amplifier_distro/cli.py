@@ -26,9 +26,8 @@ class _EpilogGroup(click.Group):
 EPILOG = """\
 Quick-start examples:
 
-  amp-distro server          Start the experience server (foreground)
-  amp-distro server start    Start as background daemon
-  amp-distro server stop     Stop the daemon
+  amp-distro serve           Start the experience server (foreground)
+  amp-distro serve --dev     Dev mode (mock sessions, no LLM needed)
   amp-distro backup          Back up Amplifier state to GitHub
   amp-distro restore         Restore from backup
   amp-distro service install Register as auto-start service"""
@@ -45,33 +44,40 @@ def main() -> None:
     """Amplifier Experience Server management tool."""
 
 
-# -- Server (delegates to server.cli) ------------------------------------
+# -- Server --------------------------------------------------------------
 
 
-@main.command(
-    "server",
-    cls=click.Group,
-    help="Manage the Amplifier experience server.",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+@main.command("serve")
+@click.option(
+    "--host", default="127.0.0.1", help="Bind host (use 0.0.0.0 for LAN/Tailscale)"
 )
-def server_group() -> None:
-    """Manage the Amplifier experience server."""
+@click.option(
+    "--port", default=conventions.SERVER_DEFAULT_PORT, type=int, help="Bind port"
+)
+@click.option(
+    "--apps-dir", default=None, type=click.Path(exists=True), help="Apps directory"
+)
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development")
+@click.option("--dev", is_flag=True, help="Dev mode: mock session backend (no LLM)")
+@click.option(
+    "--stub",
+    is_flag=True,
+    help="Stub mode: serve UI with canned data for fast iteration (implies --dev)",
+)
+def serve_cmd(
+    host: str,
+    port: int,
+    apps_dir: str | None,
+    reload: bool,
+    dev: bool,
+    stub: bool,
+) -> None:
+    """Start the experience server."""
+    from .server.cli import _run_foreground
 
-
-# Register the full server CLI as a subcommand
-def _register_server_commands() -> None:
-    """Lazily wire up server subcommands from server.cli."""
-    from .server.cli import serve
-
-    # Merge server CLI commands into our server group
-    for name, cmd in serve.commands.items():
-        main.add_command(cmd, f"server-{name}" if False else None)
-
-    # Replace the placeholder group with the real one
-    main.add_command(serve, "server")
-
-
-_register_server_commands()
+    if stub:
+        dev = True
+    _run_foreground(host, port, apps_dir, reload, dev, stub=stub)
 
 
 # -- Backup commands -----------------------------------------------------

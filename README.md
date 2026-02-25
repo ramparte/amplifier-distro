@@ -18,18 +18,6 @@ amplifier-distro is one part of a three-part setup:
 
 ## Install
 
-### Prerequisites
-
-Install the Amplifier CLI and register the start bundle first:
-
-```bash
-uv tool install git+https://github.com/microsoft/amplifier
-amplifier init
-amplifier bundle add amplifier-start
-```
-
-### Install the experience server
-
 ```bash
 uv tool install git+https://github.com/ramparte/amplifier-distro
 ```
@@ -49,15 +37,13 @@ uv venv && uv pip install -e ".[dev,slack]"
 
 ## Usage
 
-### `amp-distro server` — Start the experience server
+### `amp-distro serve` — Start the experience server
 
 ```bash
-amp-distro server                # Foreground on http://localhost:8400
-amp-distro server --dev          # Dev mode (mock sessions, no LLM needed)
-amp-distro server start          # Background daemon
-amp-distro server stop           # Stop the daemon
-amp-distro server status         # Check daemon status
-amp-distro server watchdog start # Health monitor with auto-restart
+amp-distro serve                 # Foreground on http://localhost:8400
+amp-distro serve --dev           # Dev mode (mock sessions, no LLM needed)
+amp-distro serve --stub          # Stub mode (canned data, fast UI iteration)
+amp-distro serve --reload        # Auto-reload for development
 ```
 
 The server hosts web chat, Slack bridge, voice interface, and routines
@@ -110,7 +96,7 @@ The experience server reads configuration from the environment and
 ## Architecture
 
 ```
-amp-distro server
+amp-distro serve
   │
   ├─ FastAPI core (/api/health, /api/sessions, /api/bridge, /api/memory)
   │
