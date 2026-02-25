@@ -203,9 +203,10 @@ async def detect_environment() -> dict[str, Any]:
         pid: bool(os.environ.get(p.env_var)) for pid, p in PROVIDERS.items()
     }
 
-    # Amplifier CLI
+    # Amplifier CLI & TUI
     cli_installed = shutil.which("amplifier") is not None
     result["amplifier_cli"] = {"installed": cli_installed}
+    result["tui_installed"] = shutil.which("amplifier-tui") is not None
 
     # Overlay bundle
     result["overlay_bundle"] = overlay.read_overlay() or None
@@ -249,8 +250,9 @@ async def detect_environment() -> dict[str, Any]:
         bool(os.environ.get(p.env_var)) for p in PROVIDERS.values()
     )
 
-    # cli_installed flat alias
+    # cli/tui installed flat aliases
     result["cli_installed"] = cli_installed
+    result["tui_installed"] = shutil.which("amplifier-tui") is not None
 
     # tailscale_hostname flat alias
     result["tailscale_hostname"] = ts_hostname
@@ -388,41 +390,57 @@ async def step_modules(req: ModulesData) -> dict[str, Any]:
 
 class InterfacesData(BaseModel):
     install_cli: bool = False
+    install_tui: bool = False
+
+
+_TOOLS: dict[str, tuple[str, str]] = {
+    "cli": ("amplifier", "git+https://github.com/microsoft/amplifier"),
+    "tui": ("amplifier-tui", "git+https://github.com/ramparte/amplifier-tui"),
+}
+
+
+async def _uv_tool_install(binary: str, package_url: str) -> dict[str, Any]:
+    """Install a tool via ``uv tool install``, return status dict."""
+    if shutil.which(binary) is not None:
+        return {"status": "ok", "installed": True}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "uv",
+            "tool",
+            "install",
+            package_url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            detail = stderr.decode().strip() if stderr else "Install failed"
+            return {"status": "error", "detail": detail, "installed": False}
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "detail": "uv is not installed. Install it first: https://docs.astral.sh/uv/",
+            "installed": False,
+        }
+    return {"status": "ok", "installed": shutil.which(binary) is not None}
 
 
 @steps_router.post("/interfaces")
 async def step_interfaces(req: InterfacesData) -> dict[str, Any]:
-    """Handle interfaces step, optionally installing the CLI."""
-    if req.install_cli:
-        if shutil.which("amplifier") is not None:
-            return {"status": "ok", "cli_installed": True}
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "uv",
-                "tool",
-                "install",
-                "git+https://github.com/microsoft/amplifier",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                detail = stderr.decode().strip() if stderr else "Install failed"
-                return {
-                    "status": "error",
-                    "detail": detail,
-                    "cli_installed": False,
-                }
-        except FileNotFoundError:
-            return {
-                "status": "error",
-                "detail": "uv is not installed. Install it first: https://docs.astral.sh/uv/",
-                "cli_installed": False,
-            }
-    return {
-        "status": "ok",
-        "cli_installed": shutil.which("amplifier") is not None,
-    }
+    """Handle interfaces step, optionally installing the CLI and/or TUI."""
+    result: dict[str, Any] = {"status": "ok"}
+
+    for flag, key in [("install_cli", "cli"), ("install_tui", "tui")]:
+        if getattr(req, flag):
+            binary, url = _TOOLS[key]
+            res = await _uv_tool_install(binary, url)
+            if res["status"] == "error":
+                result["status"] = "error"
+                result[f"{key}_error"] = res["detail"]
+
+    result["cli_installed"] = shutil.which("amplifier") is not None
+    result["tui_installed"] = shutil.which("amplifier-tui") is not None
+    return result
 
 
 @steps_router.post("/network")
@@ -520,6 +538,7 @@ async def step_verify(request: Request) -> dict[str, Any]:
         "github_handle": settings.identity.github_handle,
         "has_api_key": any(bool(os.environ.get(p.env_var)) for p in PROVIDERS.values()),
         "cli_installed": shutil.which("amplifier") is not None,
+        "tui_installed": shutil.which("amplifier-tui") is not None,
         "overlay_exists": overlay.overlay_exists(),
     }
 

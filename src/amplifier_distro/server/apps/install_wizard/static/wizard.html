@@ -618,6 +618,9 @@ const state = {
   cliInstalled: false,
   cliError: null,
   cliInstalling: false,
+  tuiInstalled: false,
+  tuiError: null,
+  tuiInstalling: false,
   // Step 6 - Network
   tailscaleEnabled: false,
   tailscaleHostname: '',
@@ -659,6 +662,7 @@ async function autoDetect() {
     if (data.cache_max_age_hours != null)   state.cacheTTL = data.cache_max_age_hours;
     if (data.preflight_mode) state.preflightMode = data.preflight_mode;
     if (data.cli_installed != null)  state.cliInstalled = data.cli_installed;
+    if (data.tui_installed != null)  state.tuiInstalled = data.tui_installed;
     if (data.tailscale_hostname) state.tailscaleHostname = data.tailscale_hostname;
   }
   // Load provider catalog with configuration status
@@ -707,8 +711,8 @@ function detectCompletedSteps() {
   const selectedCount = state.selectedModules ? state.selectedModules.size : 0;
   state.completedSteps.modules = selectedCount > defaultCount;
   
-  // Step 5 (interfaces): CLI is installed
-  state.completedSteps.interfaces = state.cliInstalled;
+  // Step 5 (interfaces): CLI or TUI is installed
+  state.completedSteps.interfaces = state.cliInstalled || state.tuiInstalled;
   
   // Step 6 (network): tailscale hostname is set
   state.completedSteps.network = !!state.tailscaleHostname;
@@ -918,6 +922,12 @@ function renderInterfaces() {
       ? '<button class="btn-sm btn-secondary" disabled><span class="spinner"></span> Installing</button>'
       : '<button class="btn-sm btn-primary" id="installCliBtn">Install</button>';
 
+  const tuiBtnHtml = state.tuiInstalled
+    ? '<span class="installed-badge">Installed</span>'
+    : state.tuiInstalling
+      ? '<button class="btn-sm btn-secondary" disabled><span class="spinner"></span> Installing</button>'
+      : '<button class="btn-sm btn-primary" id="installTuiBtn">Install</button>';
+
   return `
     <h1>Install Interfaces</h1>
     <p class="subtitle">Choose how you interact with Amplifier</p>
@@ -930,8 +940,16 @@ function renderInterfaces() {
           </div>
           ${cliBtnHtml}
         </div>
+        <div class="interface-card">
+          <div class="interface-info">
+            <h3>Terminal UI (TUI)</h3>
+            <p>The <code>amplifier-tui</code> interactive terminal app</p>
+          </div>
+          ${tuiBtnHtml}
+        </div>
       </div>
-      ${state.cliError ? `<div class="provider-save-msg fail">${esc(state.cliError)}</div>` : ''}
+      ${state.cliError ? `<div class="provider-save-msg fail">CLI: ${esc(state.cliError)}</div>` : ''}
+      ${state.tuiError ? `<div class="provider-save-msg fail">TUI: ${esc(state.tuiError)}</div>` : ''}
     </div>
     <div class="nav-row">
       <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
@@ -1179,9 +1197,25 @@ function bindEvents() {
       state.cliInstalling = false;
       if (res) {
         state.cliInstalled = !!res.cli_installed;
-        if (res.status === 'error') {
-          state.cliError = res.detail || 'Installation failed.';
-        }
+        if (res.cli_error) state.cliError = res.cli_error;
+      }
+      detectCompletedSteps();
+      render();
+    });
+  }
+
+  // TUI install
+  const tuiBtn = document.getElementById('installTuiBtn');
+  if (tuiBtn) {
+    tuiBtn.addEventListener('click', async () => {
+      state.tuiInstalling = true;
+      state.tuiError = null;
+      render();
+      const res = await api('POST', '/steps/interfaces', { install_tui: true });
+      state.tuiInstalling = false;
+      if (res) {
+        state.tuiInstalled = !!res.tui_installed;
+        if (res.tui_error) state.tuiError = res.tui_error;
       }
       detectCompletedSteps();
       render();
