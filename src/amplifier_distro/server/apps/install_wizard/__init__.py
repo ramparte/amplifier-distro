@@ -22,6 +22,7 @@ Routes:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -385,9 +386,39 @@ async def step_modules(req: ModulesData) -> dict[str, Any]:
     return {"status": "ok", "enabled": req.modules}
 
 
+class InterfacesData(BaseModel):
+    install_cli: bool = False
+
+
 @steps_router.post("/interfaces")
-async def step_interfaces(request: Request) -> dict[str, Any]:
-    """Acknowledge interfaces step (CLI install is a user action)."""
+async def step_interfaces(req: InterfacesData) -> dict[str, Any]:
+    """Handle interfaces step, optionally installing the CLI."""
+    if req.install_cli:
+        if shutil.which("amplifier") is not None:
+            return {"status": "ok", "cli_installed": True}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "uv",
+                "tool",
+                "install",
+                "git+https://github.com/microsoft/amplifier",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                detail = stderr.decode().strip() if stderr else "Install failed"
+                return {
+                    "status": "error",
+                    "detail": detail,
+                    "cli_installed": False,
+                }
+        except FileNotFoundError:
+            return {
+                "status": "error",
+                "detail": "uv is not installed. Install it first: https://docs.astral.sh/uv/",
+                "cli_installed": False,
+            }
     return {
         "status": "ok",
         "cli_installed": shutil.which("amplifier") is not None,

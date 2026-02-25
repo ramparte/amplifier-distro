@@ -616,7 +616,7 @@ const state = {
   selectedModules: new Set(),
   // Step 5 - Interfaces
   cliInstalled: false,
-  guiInstalled: true,
+  cliError: null,
   cliInstalling: false,
   // Step 6 - Network
   tailscaleEnabled: false,
@@ -930,14 +930,8 @@ function renderInterfaces() {
           </div>
           ${cliBtnHtml}
         </div>
-        <div class="interface-card">
-          <div class="interface-info">
-            <h3>Web GUI</h3>
-            <p>Browser-based chat interface, provided by this server</p>
-          </div>
-          <span class="installed-badge">Available</span>
-        </div>
       </div>
+      ${state.cliError ? `<div class="provider-save-msg fail">${esc(state.cliError)}</div>` : ''}
     </div>
     <div class="nav-row">
       <button class="btn-ghost" onclick="goTo(${state.step - 1})">Back</button>
@@ -1179,10 +1173,17 @@ function bindEvents() {
   if (cliBtn) {
     cliBtn.addEventListener('click', async () => {
       state.cliInstalling = true;
+      state.cliError = null;
       render();
       const res = await api('POST', '/steps/interfaces', { install_cli: true });
       state.cliInstalling = false;
-      if (res && !res.error) state.cliInstalled = true;
+      if (res) {
+        state.cliInstalled = !!res.cli_installed;
+        if (res.status === 'error') {
+          state.cliError = res.detail || 'Installation failed.';
+        }
+      }
+      detectCompletedSteps();
       render();
     });
   }
