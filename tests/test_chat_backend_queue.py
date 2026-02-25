@@ -66,8 +66,9 @@ class TestFoundationBackendQueueWiring:
         mock_session.coordinator.hooks.register.assert_called()
 
     @pytest.mark.asyncio
-    async def test_create_session_no_queue_skips_wiring(self, bare_backend):
-        """Without event_queue, _wire_event_queue is not called."""
+    async def test_create_session_no_queue_skips_streaming_wiring(self, bare_backend):
+        """Without event_queue, streaming hooks (ALL_EVENTS) are not registered.
+        Transcript hooks (tool:post, orchestrator:complete) are always registered."""
         mock_session = self._mock_session("test-session-002")
         mock_prepared = MagicMock()
         mock_prepared.create_session = AsyncMock(return_value=mock_session)
@@ -76,8 +77,15 @@ class TestFoundationBackendQueueWiring:
         with patch("asyncio.create_task"):
             await bare_backend.create_session(working_dir="~")
 
-        # Without event_queue, hooks.register should NOT be called
-        mock_session.coordinator.hooks.register.assert_not_called()
+        # Transcript hooks are always registered regardless of event_queue
+        call_args = [
+            c.kwargs.get("event") or (c.args[0] if c.args else None)
+            for c in mock_session.coordinator.hooks.register.call_args_list
+        ]
+        assert "tool:post" in call_args
+        assert "orchestrator:complete" in call_args
+        # Streaming events (from ALL_EVENTS) should NOT be registered without queue
+        assert "content_block:delta" not in call_args
 
     @pytest.mark.asyncio
     async def test_execute_calls_handle_run(self, bare_backend):

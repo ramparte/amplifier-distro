@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from amplifier_distro.conventions import AMPLIFIER_HOME, PROJECTS_DIR
 from amplifier_distro.features import AMPLIFIER_START_URI
+from amplifier_distro.transcript_persistence import register_transcript_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -400,9 +402,14 @@ class FoundationBackend:
 
         hooks = coordinator.hooks
 
+        registered = 0
+        failed_evts = []
         for evt in ALL_EVENTS:
-            with contextlib.suppress(Exception):
+            try:
                 hooks.register(evt, on_stream)
+                registered += 1
+            except Exception as exc:
+                failed_evts.append((evt, exc))
 
         # Delegate events are not in ALL_EVENTS — register explicitly
         for evt in [
@@ -411,8 +418,21 @@ class FoundationBackend:
             "delegate:agent_completed",
             "delegate:error",
         ]:
-            with contextlib.suppress(Exception):
+            try:
                 hooks.register(evt, on_stream)
+                registered += 1
+            except Exception as exc:
+                failed_evts.append((evt, exc))
+
+        logger.info(
+            "Event hook wiring: %d registered, %d failed for session %s",
+            registered,
+            len(failed_evts),
+            session_id,
+        )
+        if failed_evts:
+            for evt, exc in failed_evts:
+                logger.warning("  hook registration failed [%s]: %s", evt, exc)
 
         # 2. Display system — display messages to queue
         display = QueueDisplaySystem(event_queue)
@@ -471,6 +491,16 @@ class FoundationBackend:
             session=session,
         )
         self._sessions[session_id] = handle
+
+        # Wire transcript persistence hooks (tool:post + orchestrator:complete)
+        session_dir = (
+            Path(AMPLIFIER_HOME).expanduser()
+            / PROJECTS_DIR
+            / handle.project_id
+            / "sessions"
+            / session_id
+        )
+        register_transcript_hooks(session, session_dir)
 
         # Wire streaming/display/approval when event_queue provided
         if event_queue is not None:
@@ -648,6 +678,16 @@ class FoundationBackend:
                 session=session,
             )
             self._sessions[session_id] = handle
+
+            # Wire transcript persistence hooks on reconnect too
+            session_dir = (
+                Path(AMPLIFIER_HOME).expanduser()
+                / PROJECTS_DIR
+                / handle.project_id
+                / "sessions"
+                / session_id
+            )
+            register_transcript_hooks(session, session_dir)
 
             queue: asyncio.Queue = asyncio.Queue()
             self._session_queues[session_id] = queue
