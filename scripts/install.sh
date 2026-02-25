@@ -69,6 +69,15 @@ install_editable() {
     export PATH="$PWD/.venv/bin:$PATH"
     uv pip install -e ".[all,dev]"
 
+    # Symlink entry points into ~/.local/bin so they're on PATH after the script exits
+    mkdir -p "$HOME/.local/bin"
+    for cmd in amp-distro amp-distro-server; do
+        if [ -f "$PWD/.venv/bin/$cmd" ]; then
+            ln -sf "$PWD/.venv/bin/$cmd" "$HOME/.local/bin/$cmd"
+            echo "[install] Linked $cmd → ~/.local/bin/$cmd"
+        fi
+    done
+
     echo ""
     if command -v amplifier &>/dev/null; then
         echo "[2/3] Amplifier CLI already installed — skipping (use 'amplifier update' to upgrade)"
