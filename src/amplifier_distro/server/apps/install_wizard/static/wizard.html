@@ -695,8 +695,8 @@ function detectCompletedSteps() {
     state.workspace && (state.githubHandle || state.gitEmail)
   );
   
-  // Step 2 (config): has non-default cache TTL
-  state.completedSteps.config = state.cacheTTL != null && state.cacheTTL !== 168;
+  // Step 2 (config): always complete (defaults are valid, step is review-only)
+  state.completedSteps.config = true;
   
   // Step 3 (provider): at least one provider is fully configured (key + settings + overlay)
   state.completedSteps.provider = (state.providers || []).some(p => p.configured);
