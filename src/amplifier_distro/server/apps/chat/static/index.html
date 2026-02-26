@@ -856,6 +856,7 @@
       align-items: center;
     }
     .slash-cmd:hover { background: var(--bg-tertiary); }
+    .slash-cmd.active { background: var(--bg-tertiary); }
     .slash-cmd-name { color: var(--accent-blue); font-weight: 500; }
     .slash-cmd-desc { color: var(--text-muted); }
 
@@ -1506,6 +1507,7 @@
     const [pendingImages, setPendingImages] = useState([]);
     const [slashOpen, setSlashOpen] = useState(false);
     const [slashFilter, setSlashFilter] = useState('');
+    const [slashActiveIndex, setSlashActiveIndex] = useState(0);
 
     useEffect(() => {
       const ta = textareaRef.current;
@@ -1563,13 +1565,65 @@
       setSlashOpen(false);
     }, [onSend, pendingImages, executing]);
 
+    const applySlashCommand = useCallback((cmdName) => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.value = cmdName + ' ';
+      ta.focus();
+      autoResize();
+      setSlashOpen(false);
+      setSlashActiveIndex(0);
+    }, [autoResize]);
+
+    const filteredCmds = SLASH_COMMANDS.filter(c =>
+      c.name.slice(1).startsWith(slashFilter)
+    );
+    const slashMenuOpen = slashOpen && filteredCmds.length > 0;
+    const activeSlashIndex = Math.max(0, Math.min(slashActiveIndex, filteredCmds.length - 1));
+    const slashPopupId = 'slash-command-popup';
+    const activeSlashOptionId = slashMenuOpen
+      ? ('slash-command-option-' + activeSlashIndex)
+      : null;
+
+    useEffect(() => {
+      if (!slashMenuOpen) return;
+      setSlashActiveIndex(i => Math.max(0, Math.min(i, filteredCmds.length - 1)));
+    }, [slashMenuOpen, filteredCmds.length]);
+
     const handleKeyDown = useCallback((e) => {
+      if (slashMenuOpen) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSlashActiveIndex(i => (i + 1) % filteredCmds.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSlashActiveIndex(i => (i - 1 + filteredCmds.length) % filteredCmds.length);
+          return;
+        }
+        if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+          e.preventDefault();
+          const cmd = filteredCmds[activeSlashIndex];
+          if (cmd) applySlashCommand(cmd.name);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setSlashOpen(false);
+          setSlashActiveIndex(0);
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         doSend();
       }
-      if (e.key === 'Escape') setSlashOpen(false);
-    }, [doSend]);
+      if (e.key === 'Escape') {
+        setSlashOpen(false);
+        setSlashActiveIndex(0);
+      }
+    }, [doSend, slashMenuOpen, filteredCmds, activeSlashIndex, applySlashCommand]);
 
     const handleInput = useCallback((e) => {
       autoResize();
@@ -1577,14 +1631,12 @@
       if (val.startsWith('/')) {
         setSlashOpen(true);
         setSlashFilter(val.slice(1).toLowerCase());
+        setSlashActiveIndex(0);
       } else {
         setSlashOpen(false);
+        setSlashActiveIndex(0);
       }
     }, [autoResize]);
-
-    const filteredCmds = SLASH_COMMANDS.filter(c =>
-      c.name.slice(1).startsWith(slashFilter)
-    );
 
     return html`
       <div id="input-area">
@@ -1598,14 +1650,23 @@
             `)}
           </div>
         `}
-        ${slashOpen && filteredCmds.length > 0 && html`
-          <div class="slash-popup">
-            ${filteredCmds.map(cmd => html`
-              <div class="slash-cmd" onClick=${() => {
-                if (textareaRef.current) textareaRef.current.value = cmd.name + ' ';
-                setSlashOpen(false);
-                textareaRef.current?.focus();
-              }}>
+        ${slashMenuOpen && html`
+          <div
+            class="slash-popup"
+            id=${slashPopupId}
+            role="listbox"
+            aria-label="Slash commands"
+          >
+            ${filteredCmds.map((cmd, idx) => html`
+              <div
+                id=${'slash-command-option-' + idx}
+                class=${'slash-cmd' + (idx === activeSlashIndex ? ' active' : '')}
+                role="option"
+                aria-selected=${idx === activeSlashIndex ? 'true' : 'false'}
+                onMouseEnter=${() => setSlashActiveIndex(idx)}
+                onMouseDown=${e => e.preventDefault()}
+                onClick=${() => applySlashCommand(cmd.name)}
+              >
                 <span class="slash-cmd-name">${cmd.name}</span>
                 <span class="slash-cmd-desc">${cmd.desc}</span>
               </div>
@@ -1620,6 +1681,11 @@
             rows="1"
             disabled=${executing}
             style=${{ opacity: executing ? 0.6 : 1 }}
+            aria-label="Message input"
+            aria-autocomplete="list"
+            aria-expanded=${slashMenuOpen ? 'true' : 'false'}
+            aria-controls=${slashMenuOpen ? slashPopupId : null}
+            aria-activedescendant=${slashMenuOpen ? activeSlashOptionId : null}
             onInput=${handleInput}
             onKeyDown=${handleKeyDown}
             onPaste=${handlePaste}
