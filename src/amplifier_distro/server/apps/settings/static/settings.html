@@ -1273,7 +1273,6 @@ function renderEnvironment(detect) {
   const tools = [
     { name: 'Git', found: detect.git && detect.git.installed },
     { name: 'GitHub', found: detect.github && detect.github.configured, detail: detect.github && detect.github.handle },
-    { name: 'Tailscale', found: detect.tailscale && detect.tailscale.installed, detail: detect.tailscale && detect.tailscale.ip },
     { name: 'Amplifier CLI', found: detect.amplifier_cli && detect.amplifier_cli.installed },
     { name: 'Anthropic Key', found: detect.api_keys && detect.api_keys.anthropic },
     { name: 'OpenAI Key', found: detect.api_keys && detect.api_keys.openai },

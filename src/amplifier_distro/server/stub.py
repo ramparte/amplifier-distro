@@ -128,7 +128,6 @@ def stub_detect_environment() -> dict[str, Any]:
     return {
         "github": {"handle": "stub-user", "configured": True},
         "git": {"installed": True, "configured": True},
-        "tailscale": {"installed": False, "ip": None},
         "api_keys": {"anthropic": True, "openai": True},
         "amplifier_cli": {"installed": True},
         "overlay_bundle": {
