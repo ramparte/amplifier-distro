@@ -964,8 +964,6 @@ function render() {
     + renderFeatureSection('Power User', tier2, features.length > 0)
     + renderTierAction(2, tier2)
     + '<hr class="section-divider">'
-    + renderBundleContents()
-    + '<hr class="section-divider">'
     + renderMemoryStats()
     + '<hr class="section-divider">'
     + renderIntegrations()
@@ -983,7 +981,7 @@ function renderHeader() {
   return '<div class="header">'
     + '<h1>Amplifier Settings</h1>'
     + '<div class="header-actions">'
-    + '<a href="/apps/web-chat/">Back to Chat</a>'
+    + '<a href="/">Back to Dashboard</a>'
     + '</div>'
     + '</div>';
 }
@@ -1191,34 +1189,6 @@ function renderTierAction(tierLevel, tierFeatures) {
   return '<div class="tier-action">'
     + '<button class="btn-tier" id="tierBtn' + tierLevel + '" onclick="setTier(' + tierLevel + ')">'
     + 'Enable All ' + esc(label) + '</button></div>';
-}
-
-/* ------------------------------------------------------------------ */
-/*  Bundle Contents                                                    */
-/* ------------------------------------------------------------------ */
-function renderBundleContents() {
-  const detect = state.detect || {};
-  const bundle = detect.existing_bundle;
-
-  if (!bundle || !bundle.includes || bundle.includes.length === 0) {
-    return '<div class="section">'
-      + '<div class="section-title">Bundle Contents</div>'
-      + '<div style="color: var(--text-secondary); font-size: 13px; padding: 12px 0;">'
-      + 'No bundle configured yet. Complete the <a href="/apps/install-wizard/">setup wizard</a> first.'
-      + '</div></div>';
-  }
-
-  let html = '<div class="section">'
-    + '<div class="section-title">Bundle Contents</div>'
-    + '<div class="bundle-list">';
-
-  bundle.includes.forEach(inc => {
-    const label = typeof inc === 'object' ? (inc.bundle || JSON.stringify(inc)) : inc;
-    html += '<div class="bundle-item">' + esc(label) + '</div>';
-  });
-
-  html += '</div></div>';
-  return html;
 }
 
 /* ------------------------------------------------------------------ */

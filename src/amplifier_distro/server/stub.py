@@ -131,10 +131,17 @@ def stub_detect_environment() -> dict[str, Any]:
         "tailscale": {"installed": False, "ip": None},
         "api_keys": {"anthropic": True, "openai": True},
         "amplifier_cli": {"installed": True},
-        "existing_bundle": {
-            "name": "distro",
-            "provider": "anthropic",
-            "features": ["recipes", "agents"],
+        "overlay_bundle": {
+            "bundle": {"name": "distro", "version": "0.1.0"},
+            "includes": [
+                {"bundle": "git+https://github.com/payneio/amplifier-start@main"},
+                {
+                    "bundle": "git+https://github.com/microsoft/amplifier-foundation@main#subdirectory=providers/anthropic-sonnet.yaml"
+                },
+                {
+                    "bundle": "git+https://github.com/microsoft/amplifier-bundle-recipes@main"
+                },
+            ],
         },
         "workspace_candidates": ["~/dev", "~/dev/ANext"],
     }
