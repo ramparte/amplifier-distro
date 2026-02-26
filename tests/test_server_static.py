@@ -80,4 +80,4 @@ class TestRootLandingPage:
             client = _make_client()
             response = client.get("/")
             assert response.status_code == 200
-            assert "/apps/web-chat/" in response.text
+            assert "/apps/chat/" in response.text
