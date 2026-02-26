@@ -1042,11 +1042,11 @@ function renderVerify() {
        </ul>`;
 
   const actionHtml = allPassed
-    ? `<button class="btn-success" onclick="window.location.href='/apps/web-chat/'">Launch Amplifier</button>`
+    ? `<button class="btn-success" onclick="window.location.href='/'">Setup Finished!</button>`
     : state.checks.length > 0
       ? `<div style="display:flex; gap:12px;">
            <button class="btn-secondary" onclick="runVerification()">Re-check</button>
-           <button class="btn-primary" onclick="window.location.href='/apps/web-chat/'">Continue Anyway</button>
+           <button class="btn-primary" onclick="window.location.href='/'">Continue to Dashboard</button>
          </div>`
       : '';
 
