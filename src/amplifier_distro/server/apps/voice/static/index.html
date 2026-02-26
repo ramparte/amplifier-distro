@@ -1511,7 +1511,7 @@ body {
         const entries = transcriptRef.current;
         if (!entries || entries.length === 0) return;
         navigator.sendBeacon(
-          `/sessions/${sessionId}/transcript`,
+          `/apps/voice/sessions/${sessionId}/transcript`,
           JSON.stringify(entries),
         );
       };
@@ -1532,7 +1532,7 @@ body {
       setError(null);
       setIsConnecting(true);
       try {
-        const resp = await fetch(`/sessions/${resumeSessionId}/resume`, { method: 'POST' });
+        const resp = await fetch(`/apps/voice/sessions/${resumeSessionId}/resume`, { method: 'POST' });
         if (!resp.ok) throw new Error(`Resume failed: ${resp.status}`);
         setSessionId(resumeSessionId);
         console.debug('[VoiceApp] Session resumed:', resumeSessionId);
