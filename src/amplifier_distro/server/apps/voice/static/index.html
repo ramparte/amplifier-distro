@@ -523,11 +523,12 @@ body {
         await connect();
       } catch (err) {
         console.error('[VoiceApp] Connection failed:', err);
+        disconnect(); // ensure full cleanup on any partial failure
         setError(err.message || 'Connection failed. Please try again.');
       } finally {
         setIsConnecting(false);
       }
-    }, [connect]);
+    }, [connect, disconnect]);
 
     const handleDisconnect = useCallback(() => {
       disconnect();

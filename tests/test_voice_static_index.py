@@ -237,6 +237,21 @@ class TestIndexContent:
             "handleStateChange should reference Task 5.3 to clarify its purpose"
         )
 
+    # --- Mic resource leak fix (Important issue from quality review) ---
+
+    def test_handle_connect_calls_disconnect_on_failure(self) -> None:
+        """handleConnect catch block must call disconnect() to release mic on failure.
+
+        Without this, an SDP exchange failure leaves the mic indicator active.
+        Each retry compounds the leak (multiple MediaStream tracks running).
+        Preferred fix: call disconnect() in handleConnect's catch, not just in the
+        SDP-specific catch inside connect() — covers all partial-failure paths.
+        """
+        assert "ensure full cleanup on any partial failure" in self.html, (
+            "handleConnect catch block must call disconnect() with a comment "
+            "'ensure full cleanup on any partial failure' to release mic on SDP failure"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestIndexRouteServesFile
