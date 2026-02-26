@@ -192,6 +192,9 @@
       align-items: center;
       gap: 6px;
     }
+    .session-panel-header-actions.has-sync {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
     .session-control-btn {
       min-width: 0;
       height: 26px;
@@ -765,6 +768,7 @@
 
     /* —— Input Area ————————————————————————————————————————————————— */
     #input-area {
+      position: relative;
       border-top: 1px solid var(--border);
       padding: 12px 16px;
       background: var(--bg-secondary);
@@ -3024,11 +3028,20 @@
       const ids = [];
       const seen = new Set();
       const knownRevisions = {};
+      const activeSession = activeKeyRef.current
+        ? sessionsRef.current.get(activeKeyRef.current)
+        : null;
+      const activeSessionId = (activeSession && activeSession.sessionId) || null;
       for (const session of sessionsRef.current.values()) {
         if (!session || !session.sessionId) continue;
         if (seen.has(session.sessionId)) continue;
+        const isActiveSessionId = activeSessionId && session.sessionId === activeSessionId;
         const ws = session.ws;
-        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        if (
+          ws
+          && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
+          && !isActiveSessionId
+        ) {
           continue;
         }
         seen.add(session.sessionId);
@@ -3257,6 +3270,7 @@
     const hasSessionFilter = !!sessionFilterQuery.trim();
     const hasSessionResults = filteredSessionEntries.length > 0;
     const isSessionFilterOpen = showSessionFilter || hasSessionFilter;
+    const showSyncButton = syncingHistory || pendingHistorySyncCount > 0;
     const activeSession = activeKey ? sessions.get(activeKey) : null;
     const activeSessionId = (activeSession && activeSession.sessionId) || sessionId || null;
     const showDraftCwdEditor =
@@ -3320,7 +3334,7 @@
               </div>
               <button class="session-new-btn" onClick=${newSession}>+ New</button>
             </div>
-            <div class="session-panel-header-actions">
+            <div class=${'session-panel-header-actions' + (showSyncButton ? ' has-sync' : '')}>
               <button
                 class="session-control-btn"
                 title=${sessionSortMode === 'recent'
@@ -3345,6 +3359,19 @@
               >
                 <span>Filter</span>
               </button>
+              ${showSyncButton && html`
+                <button
+                  class=${'session-control-btn' + (pendingHistorySyncCount > 0 ? ' active' : '')}
+                  title=${pendingHistorySyncCount > 0
+                    ? ('Sync ' + pendingHistorySyncCount + ' new sessions from disk')
+                    : 'Sync sessions from disk'}
+                  onClick=${() => syncSessionHistory({ silent: false })}
+                  disabled=${syncingHistory}
+                >
+                  <${Icon} name="refresh" className=${syncingHistory ? 'sm status-running' : 'sm'} />
+                  <span>${syncingHistory ? 'Syncing' : 'Sync'}</span>
+                </button>
+              `}
             </div>
           </div>
           ${isSessionFilterOpen && html`
