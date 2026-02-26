@@ -107,6 +107,7 @@ async def exchange_sdp(sdp_offer: str, ephemeral_token: str, model: str) -> str:
             SDP_EXCHANGE_ENDPOINT,
             content=sdp_offer,
             headers=headers,
+            params={"model": model},
         )
 
     if resp.is_error:
