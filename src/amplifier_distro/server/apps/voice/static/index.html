@@ -1265,7 +1265,8 @@ body {
           const date   = sess.created_at
             ? new Date(sess.created_at).toLocaleString()
             : '';
-          // Allow resume for any session that isn't explicitly ended/completed
+          // Show Resume for any session not explicitly ended/completed;
+          // 'unknown' status is treated as resumable (API may not always set status)
           const canResume = status !== 'ended' && status !== 'completed';
 
           return html`
@@ -1336,7 +1337,7 @@ body {
       <button
         class=${'btn btn-stop' + (cancelling ? ' cancelling' : '')}
         onClick=${handleClick}
-        disabled=${!sessionId || cancelling}
+        disabled=${!sessionId}
         title="Click to stop gracefully · Double-click to stop immediately"
       >
         🛑 ${label}
@@ -1445,9 +1446,6 @@ body {
 
       if (msgHandlerRef.current) msgHandlerRef.current(msg);
     }, []);
-
-    // handleRtcMessage kept as alias for backward compatibility; now routes via stableMsgHandler
-    const handleRtcMessage = stableMsgHandler;
 
     const handleStateChange = useCallback((state) => {
       console.debug('[VoiceApp] RTC state changed:', state);  // Task 5.3
@@ -1560,7 +1558,6 @@ body {
         const sessResp = await fetch('/apps/voice/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: null,
         });
         if (!sessResp.ok) {
           throw new Error(`Failed to create session: ${sessResp.status}`);
