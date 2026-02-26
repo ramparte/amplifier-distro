@@ -390,6 +390,135 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Session Picker  (Task 5.6)                                        */
+/* ------------------------------------------------------------------ */
+.session-picker {
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #111;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-picker-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #aaa;
+  margin-bottom: 4px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  gap: 12px;
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-title {
+  font-size: 13px;
+  color: #e5e5e5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-status {
+  font-size: 11px;
+  color: #666;
+  text-transform: capitalize;
+}
+
+.session-date {
+  font-size: 11px;
+  color: #555;
+}
+
+.btn-resume {
+  background: #7c3aed;
+  color: #fff;
+  padding: 6px 14px;
+  font-size: 13px;
+  flex: none;
+}
+
+.btn-resume:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Stop Button  (Task 5.6)                                           */
+/* ------------------------------------------------------------------ */
+.btn-stop {
+  background: #dc2626;
+  color: #fff;
+}
+
+.btn-stop:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.btn-stop.cancelling {
+  background: #7f1d1d;
+  cursor: wait;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Microphone Controls  (Task 5.6)                                   */
+/* ------------------------------------------------------------------ */
+.mic-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-mic {
+  background: #222;
+  color: #e5e5e5;
+  border: 1px solid #333;
+  flex: 1;
+}
+
+.btn-mic:hover:not(:disabled) {
+  background: #333;
+}
+
+.btn-mic.muted {
+  background: #2a0000;
+  color: #ef4444;
+  border-color: #500000;
+}
+
+.btn-pause {
+  background: #222;
+  color: #e5e5e5;
+  border: 1px solid #333;
+  flex: 1;
+}
+
+.btn-pause:hover:not(:disabled) {
+  background: #333;
+}
+
+.btn-pause.paused {
+  background: #2a1800;
+  color: #f59e0b;
+  border-color: #5a3800;
+}
 </style>
 </head>
 <body>
@@ -1051,6 +1180,198 @@ body {
   }
 
   // -------------------------------------------------------------------------
+  // useAmplifierEvents({ onEvent })   Task 5.6
+  // Opens an SSE stream to /apps/voice/events, logs events with icons,
+  // and calls onEvent(msg) for every non-heartbeat message.
+  // -------------------------------------------------------------------------
+
+  const AMPLIFIER_EVENT_ICONS = {
+    provider_request:  '🔼',
+    provider_response: '🔽',
+    tool_call:         '🔧',
+    tool_result:       '🔧',
+    tool_error:        '❌',
+    session_fork:      '🔀',
+    cancel_requested:  '🛑',
+    cancel_completed:  '✅',
+  };
+
+  function useAmplifierEvents({ onEvent }) {
+    // Use a ref so the EventSource is not recreated when onEvent changes
+    const onEventRef = useRef(onEvent);
+    useEffect(() => { onEventRef.current = onEvent; });
+
+    useEffect(() => {
+      const es = new EventSource('/apps/voice/events');
+
+      es.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch (_) { return; }
+
+        // Skip heartbeat pings — they are not meaningful to the consumer
+        if (msg.type === 'heartbeat') return;
+
+        const icon = AMPLIFIER_EVENT_ICONS[msg.type] || '📨';
+        console.log(
+          `%c[Amplifier] ${icon} ${msg.type}`,
+          'color:#818cf8;font-weight:bold;',
+          msg,
+        );
+
+        if (onEventRef.current) onEventRef.current(msg);
+      };
+
+      es.onerror = (err) => {
+        console.warn('[useAmplifierEvents] SSE connection error:', err);
+      };
+
+      return () => { es.close(); };
+    }, []); // open once on mount, close on unmount
+  }
+
+  // -------------------------------------------------------------------------
+  // SessionPicker({ onResume })   Task 5.6
+  // Fetches /apps/voice/sessions, shows the last 5 with a Resume button
+  // (purple) for sessions that have not ended.
+  // Returns null when there are no sessions.
+  // -------------------------------------------------------------------------
+
+  function SessionPicker({ onResume }) {
+    const [sessions, setSessions] = useState(null);
+
+    useEffect(() => {
+      fetch('/apps/voice/sessions')
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : (data.sessions || []);
+          setSessions(list);
+        })
+        .catch(() => setSessions([]));
+    }, []);
+
+    // Render nothing until loaded, or if empty
+    if (!sessions || sessions.length === 0) return null;
+
+    // Most-recent first, capped at 5
+    const last5 = sessions.slice().reverse().slice(0, 5);
+
+    return html`
+      <div class="session-picker">
+        <div class="session-picker-title">Previous Sessions</div>
+        ${last5.map((sess) => {
+          const sid    = sess.session_id || sess.id;
+          const title  = sess.title || sid;
+          const status = sess.status || 'unknown';
+          const date   = sess.created_at
+            ? new Date(sess.created_at).toLocaleString()
+            : '';
+          // Allow resume for any session that isn't explicitly ended/completed
+          const canResume = status !== 'ended' && status !== 'completed';
+
+          return html`
+            <div key=${sid} class="session-item">
+              <div class="session-info">
+                <span class="session-title">${title}</span>
+                <span class="session-status">${status}</span>
+                ${date && html`<span class="session-date">${date}</span>`}
+              </div>
+              ${canResume && html`
+                <button
+                  class="btn btn-resume"
+                  onClick=${() => onResume && onResume(sid)}
+                >Resume</button>
+              `}
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  // -------------------------------------------------------------------------
+  // StopButton({ sessionId, runningTools, onStop })   Task 5.6
+  // Single click  → graceful cancel (immediate:false)
+  // Double click (<400 ms) → hard cancel  (immediate:true)
+  // Label: 'Stop ({toolName})' while tool is running, 'Stopping...' during cancel.
+  // -------------------------------------------------------------------------
+
+  function StopButton({ sessionId, runningTools, onStop }) {
+    const [cancelling, setCancelling] = useState(false);
+    const lastClickRef = useRef(0);
+
+    const toolName = (runningTools && runningTools.length > 0) ? runningTools[0] : null;
+
+    const handleClick = useCallback(async () => {
+      if (cancelling) return;
+
+      const now = Date.now();
+      const isDoubleClick = (now - lastClickRef.current) < 400;
+      lastClickRef.current = now;
+
+      const immediate = isDoubleClick;
+
+      setCancelling(true);
+      try {
+        await fetch('/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, immediate }),
+        });
+        if (onStop) onStop();
+      } catch (err) {
+        console.error('[StopButton] Cancel request failed:', err);
+      } finally {
+        setCancelling(false);
+      }
+    }, [cancelling, sessionId, onStop]);
+
+    const label = cancelling
+      ? 'Stopping...'
+      : toolName
+        ? `Stop (${toolName})`
+        : 'Stop';
+
+    return html`
+      <button
+        class=${'btn btn-stop' + (cancelling ? ' cancelling' : '')}
+        onClick=${handleClick}
+        disabled=${!sessionId || cancelling}
+        title="Click to stop gracefully · Double-click to stop immediately"
+      >
+        🛑 ${label}
+      </button>
+    `;
+  }
+
+  // -------------------------------------------------------------------------
+  // MicrophoneControls({ muted, pauseReplies, onToggleMute,
+  //                      onPauseReplies, onResumeReplies })   Task 5.6
+  // Two buttons: mic mute toggle (red when muted) and pause/resume toggle
+  // (amber when paused).
+  // -------------------------------------------------------------------------
+
+  function MicrophoneControls({ muted, pauseReplies, onToggleMute, onPauseReplies, onResumeReplies }) {
+    return html`
+      <div class="mic-controls">
+        <button
+          class=${'btn btn-mic' + (muted ? ' muted' : '')}
+          onClick=${onToggleMute}
+          title=${muted ? 'Unmute microphone' : 'Mute microphone'}
+        >
+          ${muted ? '🔇 Muted' : '🎙️ Mic'}
+        </button>
+        <button
+          class=${'btn btn-pause' + (pauseReplies ? ' paused' : '')}
+          onClick=${pauseReplies ? onResumeReplies : onPauseReplies}
+          title=${pauseReplies ? 'Resume replies' : 'Pause replies'}
+        >
+          ${pauseReplies ? '▶️ Resume' : '⏸️ Pause'}
+        </button>
+      </div>
+    `;
+  }
+
+  // -------------------------------------------------------------------------
   // VoiceApp root component
   // -------------------------------------------------------------------------
 
@@ -1066,6 +1387,10 @@ body {
       healthManagerRef.current = new ConnectionHealthManager({ strategy: 'manual' });
     }
     const [healthStrategy, setHealthStrategy] = useState('manual');
+
+    // Task 5.6: track tools currently running (for StopButton label)
+    const [runningTools, setRunningTools] = useState([]);
+    const runningToolsRef = useRef([]);   // shadow ref for sync mutation
 
     // Task 5.4: fetch assistant name on mount (default: 'Amplifier')
     const [assistantName, setAssistantName] = useState('Amplifier');
@@ -1094,16 +1419,29 @@ body {
     // useWebRTC.onMessage → useChatMessages.handleDataChannelEvent → sendDataChannelMessage
     const msgHandlerRef = useRef(null);
 
-    // Task 5.5: wrap stable handler to also call recordEvent on every message
+    // Task 5.5 + 5.6: wrap stable handler to record health events AND track running tools
     const stableMsgHandler = useCallback((msg) => {
       healthManagerRef.current.recordEvent();
-      // Record speech events
+
+      // Record speech events (Task 5.5)
       if (
         msg.type === 'conversation.item.input_audio_transcription.completed' ||
         msg.type === 'response.audio_transcript.done'
       ) {
         healthManagerRef.current.recordSpeech();
       }
+
+      // Task 5.6: track which tools are running for StopButton
+      if (msg.type === 'response.output_item.added' && msg.item && msg.item.type === 'function_call') {
+        const updated = [...runningToolsRef.current, msg.item.name];
+        runningToolsRef.current = updated;
+        setRunningTools(updated);
+      }
+      if (msg.type === 'response.done') {
+        runningToolsRef.current = [];
+        setRunningTools([]);
+      }
+
       if (msgHandlerRef.current) msgHandlerRef.current(msg);
     }, []);
 
@@ -1152,12 +1490,65 @@ body {
     // Wire latest handler into stable ref on every render (ref mutation, no rerender)
     msgHandlerRef.current = handleDataChannelEvent;
 
+    // Task 5.6: SSE consumer — logs Amplifier backend events with icons to the browser console
+    useAmplifierEvents({
+      onEvent: useCallback((msg) => {
+        // Future: could display events in a debug panel
+        console.debug('[VoiceApp] Amplifier event received:', msg.type);
+      }, []),
+    });
+
+    // Task 5.6: shadow ref so beforeunload can read latest messages without stale closure
+    const transcriptRef = useRef([]);
+    useEffect(() => {
+      transcriptRef.current = messages;
+    }, [messages]);
+
+    // Task 5.6: sendBeacon transcript sync on page unload
+    useEffect(() => {
+      if (!sessionId) return;
+
+      const handleBeforeUnload = () => {
+        const entries = transcriptRef.current;
+        if (!entries || entries.length === 0) return;
+        navigator.sendBeacon(
+          `/sessions/${sessionId}/transcript`,
+          JSON.stringify(entries),
+        );
+      };
+
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [sessionId]);
+
     // Scroll transcript to bottom when new messages arrive
     useEffect(() => {
       if (transcriptEndRef.current) {
         transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
     }, [messages]);
+
+    // Task 5.6: resume a previous session — POST /sessions/{id}/resume then start WebRTC
+    const handleResume = useCallback(async (resumeSessionId) => {
+      setError(null);
+      setIsConnecting(true);
+      try {
+        const resp = await fetch(`/sessions/${resumeSessionId}/resume`, { method: 'POST' });
+        if (!resp.ok) throw new Error(`Resume failed: ${resp.status}`);
+        setSessionId(resumeSessionId);
+        console.debug('[VoiceApp] Session resumed:', resumeSessionId);
+
+        await connect();
+        setMicStream(streamRef.current);
+        healthManagerRef.current.startSession();
+      } catch (err) {
+        console.error('[VoiceApp] Resume failed:', err);
+        disconnect();
+        setError(err.message || 'Failed to resume session.');
+      } finally {
+        setIsConnecting(false);
+      }
+    }, [connect, disconnect, setMicStream, streamRef]);
 
     // handleConnect: POST /apps/voice/sessions then initiate WebRTC
     const handleConnect = useCallback(async () => {
@@ -1237,6 +1628,10 @@ body {
           </div>
         `}
 
+        ${(isIdle || rtcState === 'disconnected') && html`
+          <${SessionPicker} onResume=${handleResume} />
+        `}
+
         <div class="transcript-container">
           ${messages.length === 0
             ? html`<div class="transcript-empty">No messages yet. Start a voice chat to begin.</div>`
@@ -1275,11 +1670,23 @@ body {
                 >
                   Disconnect
                 </button>
+                <${StopButton}
+                  sessionId=${sessionId}
+                  runningTools=${runningTools}
+                  onStop=${handleDisconnect}
+                />
               `
           }
         </div>
 
         ${rtcState === 'connected' && html`
+          <${MicrophoneControls}
+            muted=${muted}
+            pauseReplies=${pauseReplies}
+            onToggleMute=${toggleMute}
+            onPauseReplies=${enterPauseReplies}
+            onResumeReplies=${exitPauseReplies}
+          />
           <${ConnectionHealthPanel}
             status=${healthStatus}
             strategy=${healthStrategy}
