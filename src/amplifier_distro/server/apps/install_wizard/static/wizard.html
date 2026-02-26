@@ -1074,31 +1074,20 @@ async function runVerification() {
   state.verifyRunning = true;
   render();
 
-  // Try the backend verification endpoint
   const data = await api('POST', '/steps/verify', {});
-  if (data && !data.error && data.checks) {
-    state.checks = data.checks;
+  if (data && !data.error) {
+    state.checks = [
+      { name: 'Workspace directory', passed: !!data.workspace_root, message: data.workspace_root || 'Not set' },
+      { name: 'Identity (GitHub handle)', passed: !!data.github_handle, message: data.github_handle || 'Not set' },
+      { name: 'API key configured', passed: !!data.has_api_key, message: data.has_api_key ? 'Found' : 'No provider keys detected' },
+      { name: 'Overlay bundle', passed: !!data.overlay_exists, message: data.overlay_exists ? 'Found' : 'Not created yet' },
+      { name: 'CLI installed', passed: !!data.cli_installed, message: data.cli_installed ? 'Found' : 'Not detected' },
+      { name: 'TUI installed', passed: !!data.tui_installed, message: data.tui_installed ? 'Found' : 'Not detected' },
+    ];
   } else {
-    // Fallback: use /api/status (preflight checks)
-    try {
-      const res = await fetch('/api/status');
-      if (res.ok) {
-        const status = await res.json();
-        state.checks = (status.checks || []).map(c => ({
-          name: c.name,
-          passed: c.passed,
-          message: c.message,
-        }));
-      }
-    } catch (_) {
-      // If even that fails, show local-only checks
-      state.checks = [
-        { name: 'Configuration (distro.yaml)', passed: !!state.detected, message: state.detected ? 'Found' : 'Could not verify' },
-        { name: 'Workspace directory', passed: !!state.workspace, message: state.workspace || 'Not set' },
-        { name: 'API key configured', passed: state.keyVerified === 'ok' || !!state.apiKey, message: state.apiKey ? 'Set' : 'Not set' },
-        { name: 'CLI installed', passed: state.cliInstalled, message: state.cliInstalled ? 'Found' : 'Not detected' },
-      ];
-    }
+    state.checks = [
+      { name: 'Verification', passed: false, message: 'Could not reach the server. Check that it is running.' },
+    ];
   }
 
   state.verifyRunning = false;
