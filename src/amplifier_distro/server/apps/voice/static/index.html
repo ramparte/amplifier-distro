@@ -265,6 +265,8 @@ body {
     const pcRef = useRef(null);
     const dcRef = useRef(null);
     const tokenRef = useRef(null);
+    const streamRef = useRef(null);  // holds MediaStream for track cleanup
+    const audioRef = useRef(null);   // holds <audio> element for DOM cleanup
 
     // Helper: update both local state and notify parent
     const updateState = useCallback((state) => {
@@ -308,14 +310,17 @@ body {
         updateState('disconnected');
         throw err;
       }
+      streamRef.current = stream;  // store so disconnect() can stop tracks
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       // Step 4: Play incoming audio tracks from OpenAI
       pc.ontrack = (event) => {
+        if (audioRef.current) audioRef.current.remove(); // replace any prior element
         const audio = document.createElement('audio');
         audio.autoplay = true;
         audio.srcObject = event.streams[0] || new MediaStream([event.track]);
         document.body.appendChild(audio);
+        audioRef.current = audio;
       };
 
       // Step 5: Create data channel for OpenAI events
@@ -431,12 +436,20 @@ body {
     // -----------------------------------------------------------------------
     const disconnect = useCallback(() => {
       if (dcRef.current) {
-        try { dcRef.current.close(); } catch (_) {}
+        try { dcRef.current.close(); } catch (_) { /* ignore: already closed */ }
         dcRef.current = null;
       }
       if (pcRef.current) {
-        try { pcRef.current.close(); } catch (_) {}
+        try { pcRef.current.close(); } catch (_) { /* ignore: already closed */ }
         pcRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (audioRef.current) {
+        audioRef.current.remove();
+        audioRef.current = null;
       }
       tokenRef.current = null;
       updateState('idle');
@@ -479,6 +492,7 @@ body {
       console.debug('[VoiceApp] RTC message:', msg);
     }, []);
 
+    // Will be used by Task 5.3 to trigger UI transitions on specific state events
     const handleStateChange = useCallback((state) => {
       console.debug('[VoiceApp] RTC state changed:', state);
     }, []);
@@ -497,7 +511,7 @@ body {
         const sessResp = await fetch('/apps/voice/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: null,  // no body required until Task 5.3 adds session params
         });
         if (!sessResp.ok) {
           throw new Error(`Failed to create session: ${sessResp.status}`);
