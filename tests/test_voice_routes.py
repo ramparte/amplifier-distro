@@ -171,6 +171,26 @@ class TestStaticRoutes:
         resp = self.client.get("/apps/voice/")
         assert "text/html" in resp.headers.get("content-type", "")
 
+    def test_vendor_js_returns_200(self) -> None:
+        resp = self.client.get("/apps/voice/static/vendor.js")
+        assert resp.status_code == 200
+
+    def test_vendor_js_content_type_is_javascript(self) -> None:
+        resp = self.client.get("/apps/voice/static/vendor.js")
+        assert "javascript" in resp.headers.get("content-type", "")
+
+    def test_vendor_js_contains_preact(self) -> None:
+        resp = self.client.get("/apps/voice/static/vendor.js")
+        assert b"preact" in resp.content
+
+    def test_vendor_js_contains_htm_binding(self) -> None:
+        resp = self.client.get("/apps/voice/static/vendor.js")
+        assert b"window.html" in resp.content
+
+    def test_vendor_js_contains_marked(self) -> None:
+        resp = self.client.get("/apps/voice/static/vendor.js")
+        assert b"marked" in resp.content
+
 
 # ---------------------------------------------------------------------------
 # TestAuthEnforcement
