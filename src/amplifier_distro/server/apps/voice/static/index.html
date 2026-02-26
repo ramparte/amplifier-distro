@@ -271,6 +271,125 @@ body {
   color: #ef4444;
   border: 1px solid #500000;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Connection Health Panel  (Task 5.5)                               */
+/* ------------------------------------------------------------------ */
+.health-panel {
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #111;
+  overflow: hidden;
+}
+
+.health-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #aaa;
+  background: #1a1a1a;
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+
+.health-panel-header:hover {
+  background: #222;
+  color: #ddd;
+}
+
+.health-panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.health-panel-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.health-label {
+  color: #666;
+  width: 130px;
+  flex-shrink: 0;
+}
+
+.health-value {
+  font-variant-numeric: tabular-nums;
+  font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+}
+
+.health-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.warning-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.warning-badge.stale {
+  background: #2a1800;
+  color: #f59e0b;
+  border: 1px solid #5a3800;
+}
+
+.warning-badge.idle {
+  background: #1a1a2a;
+  color: #818cf8;
+  border: 1px solid #3730a3;
+}
+
+.warning-badge.session_limit {
+  background: #2a0000;
+  color: #ef4444;
+  border: 1px solid #500000;
+}
+
+.health-strategy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.health-strategy label {
+  color: #666;
+}
+
+.health-strategy select {
+  background: #222;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -649,6 +768,193 @@ body {
   }
 
   // -------------------------------------------------------------------------
+  // ConnectionHealthManager  (Task 5.5) — pure logic, no UI
+  // -------------------------------------------------------------------------
+
+  class ConnectionHealthManager {
+    /**
+     * @param {{ strategy?: 'manual'|'auto_immediate'|'auto_delayed'|'proactive' }} options
+     */
+    constructor({ strategy = 'manual' } = {}) {
+      this.strategy = strategy;
+      this.reconnectCount = 0;
+      this.disconnectHistory = [];
+      this._sessionStart = null;
+      this._lastEventTime = null;
+      this._lastSpeechTime = null;
+    }
+
+    /** Call when a new session starts (or reconnects). */
+    startSession() {
+      const now = Date.now();
+      this._sessionStart = now;
+      this._lastEventTime = now;
+      this._lastSpeechTime = now;
+    }
+
+    /** Record that a realtime event was received (heartbeat for staleness). */
+    recordEvent() {
+      this._lastEventTime = Date.now();
+    }
+
+    /** Record that the user or assistant produced speech. */
+    recordSpeech() {
+      this._lastSpeechTime = Date.now();
+    }
+
+    /**
+     * Returns a snapshot of current session health.
+     * @returns {{
+     *   sessionAge: number|null,
+     *   timeSinceEvent: number,
+     *   timeSinceSpeech: number,
+     *   warnings: string[],
+     *   reconnectCount: number,
+     * }}
+     */
+    getStatus() {
+      const now = Date.now();
+      const sessionAge =
+        this._sessionStart !== null ? (now - this._sessionStart) / 1000 : null;
+      const timeSinceEvent =
+        this._lastEventTime !== null ? (now - this._lastEventTime) / 1000 : 0;
+      const timeSinceSpeech =
+        this._lastSpeechTime !== null ? (now - this._lastSpeechTime) / 1000 : 0;
+
+      const warnings = [];
+      if (timeSinceEvent > 30) warnings.push('stale');
+      if (timeSinceSpeech > 120) warnings.push('idle');
+      if (sessionAge !== null && sessionAge > 55 * 60) warnings.push('session_limit');
+
+      return { sessionAge, timeSinceEvent, timeSinceSpeech, warnings, reconnectCount: this.reconnectCount };
+    }
+
+    /**
+     * Infer why the session disconnected.
+     * @param {number} sessionAge  Age in seconds at time of disconnect.
+     * @returns {'session_limit'|'idle_timeout'|'network_error'}
+     */
+    inferDisconnectReason(sessionAge) {
+      if (sessionAge >= 58 * 60) return 'session_limit';
+      const timeSinceSpeech =
+        this._lastSpeechTime !== null
+          ? (Date.now() - this._lastSpeechTime) / 1000
+          : Infinity;
+      if (timeSinceSpeech >= 120) return 'idle_timeout';
+      return 'network_error';
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // useConnectionHealth({ manager, onProactiveReconnect })   Task 5.5
+  // -------------------------------------------------------------------------
+
+  function useConnectionHealth({ manager, onProactiveReconnect }) {
+    const [status, setStatus] = useState(null);
+    const onProactiveRef = useRef(onProactiveReconnect);
+
+    // Keep ref current on every render so the interval callback sees latest fn
+    useEffect(() => {
+      onProactiveRef.current = onProactiveReconnect;
+    });
+
+    useEffect(() => {
+      if (!manager) return;
+
+      const tick = () => {
+        const s = manager.getStatus();
+        setStatus(s);
+
+        // Proactive strategy: trigger reconnect before the 60-min session limit
+        if (
+          s.warnings.includes('session_limit') &&
+          manager.strategy === 'proactive' &&
+          onProactiveRef.current
+        ) {
+          onProactiveRef.current();
+        }
+      };
+
+      // Immediate snapshot, then every 5 s
+      tick();
+      const id = setInterval(tick, 5000);
+      return () => clearInterval(id);
+    }, [manager]);
+
+    return status;
+  }
+
+  // -------------------------------------------------------------------------
+  // ConnectionHealthPanel({ status, strategy, onStrategyChange })   Task 5.5
+  // -------------------------------------------------------------------------
+
+  /** Format seconds as "Xm Ys" */
+  function fmtDuration(seconds) {
+    if (seconds == null) return '—';
+    const s = Math.floor(seconds);
+    const m = Math.floor(s / 60);
+    return `${m}m ${s % 60}s`;
+  }
+
+  function ConnectionHealthPanel({ status, strategy, onStrategyChange }) {
+    const [expanded, setExpanded] = useState(false);
+
+    if (!status) return null;
+
+    const { sessionAge, timeSinceEvent, reconnectCount, warnings } = status;
+
+    return html`
+      <div class="health-panel">
+        <button
+          class="health-panel-header"
+          onClick=${() => setExpanded((e) => !e)}
+          aria-expanded=${expanded}
+        >
+          <span class="health-panel-header-left">
+            <span>🩺 Connection Health</span>
+            ${warnings.length > 0 && html`
+              <span class="health-badges">
+                ${warnings.map((w) => html`<span key=${w} class=${'warning-badge ' + w}>${w.replace('_', ' ')}</span>`)}
+              </span>
+            `}
+          </span>
+          <span>${expanded ? '▲' : '▼'}</span>
+        </button>
+
+        ${expanded && html`
+          <div class="health-panel-body">
+            <div class="health-row">
+              <span class="health-label">Session age</span>
+              <span class="health-value">${fmtDuration(sessionAge)}</span>
+            </div>
+            <div class="health-row">
+              <span class="health-label">Last event</span>
+              <span class="health-value">${fmtDuration(timeSinceEvent)} ago</span>
+            </div>
+            <div class="health-row">
+              <span class="health-label">Reconnects</span>
+              <span class="health-value">${reconnectCount}</span>
+            </div>
+            <div class="health-strategy">
+              <label for="health-strategy-select">Strategy</label>
+              <select
+                id="health-strategy-select"
+                value=${strategy}
+                onChange=${(e) => onStrategyChange && onStrategyChange(e.target.value)}
+              >
+                <option value="manual">Manual</option>
+                <option value="auto_immediate">Auto immediate</option>
+                <option value="auto_delayed">Auto delayed (3s)</option>
+                <option value="proactive">Proactive (55min)</option>
+              </select>
+            </div>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  // -------------------------------------------------------------------------
   // useMicrophoneControl({ sendDataChannelMessage })   Task 5.4
   // -------------------------------------------------------------------------
 
@@ -754,6 +1060,13 @@ body {
     const [sessionId, setSessionId] = useState(null);  // Task 5.3: session state
     const transcriptEndRef = useRef(null);
 
+    // Task 5.5: connection health manager (stable across renders)
+    const healthManagerRef = useRef(null);
+    if (!healthManagerRef.current) {
+      healthManagerRef.current = new ConnectionHealthManager({ strategy: 'manual' });
+    }
+    const [healthStrategy, setHealthStrategy] = useState('manual');
+
     // Task 5.4: fetch assistant name on mount (default: 'Amplifier')
     const [assistantName, setAssistantName] = useState('Amplifier');
     useEffect(() => {
@@ -763,10 +1076,34 @@ body {
         .catch(() => { /* silent — keep default 'Amplifier' */ });
     }, []);
 
+    // Task 5.5: poll connection health every 5s
+    const healthStatus = useConnectionHealth({
+      manager: healthManagerRef.current,
+      onProactiveReconnect: useCallback(() => {
+        console.debug('[VoiceApp] Proactive reconnect triggered by session_limit warning');
+        // TODO: implement proactive reconnect flow
+      }, []),
+    });
+
+    // Task 5.5: sync strategy state → manager whenever it changes
+    useEffect(() => {
+      healthManagerRef.current.strategy = healthStrategy;
+    }, [healthStrategy]);
+
     // Stable message handler ref — breaks the circular hook dependency:
     // useWebRTC.onMessage → useChatMessages.handleDataChannelEvent → sendDataChannelMessage
     const msgHandlerRef = useRef(null);
+
+    // Task 5.5: wrap stable handler to also call recordEvent on every message
     const stableMsgHandler = useCallback((msg) => {
+      healthManagerRef.current.recordEvent();
+      // Record speech events
+      if (
+        msg.type === 'conversation.item.input_audio_transcription.completed' ||
+        msg.type === 'response.audio_transcript.done'
+      ) {
+        healthManagerRef.current.recordSpeech();
+      }
       if (msgHandlerRef.current) msgHandlerRef.current(msg);
     }, []);
 
@@ -845,6 +1182,9 @@ body {
 
         // Task 5.4: wire mic stream into useMicrophoneControl for mute support
         setMicStream(streamRef.current);
+
+        // Task 5.5: start session health tracking
+        healthManagerRef.current.startSession();
       } catch (err) {
         console.error('[VoiceApp] Connection failed:', err);
         disconnect(); // ensure full cleanup on any partial failure
@@ -938,6 +1278,14 @@ body {
               `
           }
         </div>
+
+        ${rtcState === 'connected' && html`
+          <${ConnectionHealthPanel}
+            status=${healthStatus}
+            strategy=${healthStrategy}
+            onStrategyChange=${setHealthStrategy}
+          />
+        `}
       </div>
     `;
   }
