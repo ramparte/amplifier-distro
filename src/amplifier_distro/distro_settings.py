@@ -77,6 +77,8 @@ class VoiceSettings:
     model: str = "gpt-4o-realtime-preview"
     instructions: str = ""
     tools_enabled: bool = False
+    # Wake word prefix and TTS persona name
+    assistant_name: str = "Amplifier"
 
 
 @dataclass
@@ -201,6 +203,7 @@ _VOICE_ENV_MAP: dict[str, str] = {
     "model": "AMPLIFIER_VOICE_MODEL",
     "instructions": "AMPLIFIER_VOICE_INSTRUCTIONS",
     "tools_enabled": "AMPLIFIER_VOICE_TOOLS_ENABLED",
+    "assistant_name": "AMPLIFIER_VOICE_ASSISTANT_NAME",
 }
 
 
