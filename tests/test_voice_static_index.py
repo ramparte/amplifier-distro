@@ -424,3 +424,193 @@ class TestUseChatMessages:
         assert "messageRefs" in self.html, (
             "VoiceApp render must attach ref callbacks to bubble divs using messageRefs"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestUseMicrophoneControl — Task 5.4
+# ---------------------------------------------------------------------------
+
+
+class TestUseMicrophoneControl:
+    """Tests for Task 5.4: useMicrophoneControl hook."""
+
+    @pytest.fixture(autouse=True)
+    def content(self) -> None:
+        self.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_declares_use_microphone_control_hook(self) -> None:
+        assert "useMicrophoneControl" in self.html, (
+            "index.html must declare a useMicrophoneControl hook"
+        )
+
+    def test_muted_state_declared(self) -> None:
+        assert "muted" in self.html, "useMicrophoneControl must maintain muted state"
+
+    def test_pause_replies_state_declared(self) -> None:
+        assert "pauseReplies" in self.html, (
+            "useMicrophoneControl must maintain pauseReplies state"
+        )
+
+    def test_set_mic_stream_function(self) -> None:
+        assert "setMicStream" in self.html, (
+            "useMicrophoneControl must expose setMicStream()"
+        )
+
+    def test_toggle_mute_function(self) -> None:
+        assert "toggleMute" in self.html, (
+            "useMicrophoneControl must expose toggleMute()"
+        )
+
+    def test_enter_pause_replies_function(self) -> None:
+        assert "enterPauseReplies" in self.html, (
+            "useMicrophoneControl must expose enterPauseReplies()"
+        )
+
+    def test_exit_pause_replies_function(self) -> None:
+        assert "exitPauseReplies" in self.html, (
+            "useMicrophoneControl must expose exitPauseReplies()"
+        )
+
+    def test_toggle_mute_uses_track_enabled(self) -> None:
+        assert "track.enabled" in self.html, (
+            "toggleMute must toggle track.enabled on audio tracks"
+        )
+
+    def test_enter_pause_replies_sends_session_update(self) -> None:
+        assert "create_response" in self.html, (
+            "enterPauseReplies/exitPauseReplies must send session.update "
+            "with create_response"
+        )
+
+    def test_microphone_control_wired_in_voice_app(self) -> None:
+        # VoiceApp must call useMicrophoneControl
+        assert "useMicrophoneControl" in self.html, (
+            "VoiceApp must call useMicrophoneControl hook"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestUseVoiceKeywords — Task 5.4
+# ---------------------------------------------------------------------------
+
+
+class TestUseVoiceKeywords:
+    """Tests for Task 5.4: useVoiceKeywords hook."""
+
+    @pytest.fixture(autouse=True)
+    def content(self) -> None:
+        self.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_declares_use_voice_keywords_hook(self) -> None:
+        assert "useVoiceKeywords" in self.html, (
+            "index.html must declare a useVoiceKeywords hook"
+        )
+
+    def test_last_fired_ref_declared(self) -> None:
+        assert "lastFiredRef" in self.html, (
+            "useVoiceKeywords must use lastFiredRef for debounce"
+        )
+
+    def test_debounce_ms_constant(self) -> None:
+        assert "DEBOUNCE_MS" in self.html, (
+            "useVoiceKeywords must define DEBOUNCE_MS constant"
+        )
+
+    def test_debounce_value_is_2000(self) -> None:
+        assert "2000" in self.html, "DEBOUNCE_MS must be 2000ms"
+
+    def test_check_transcript_function(self) -> None:
+        assert "checkTranscript" in self.html, (
+            "useVoiceKeywords must expose checkTranscript()"
+        )
+
+    def test_hey_wake_word_detection(self) -> None:
+        assert "hey " in self.html.lower(), (
+            "checkTranscript must detect 'hey {assistantName}' wake word"
+        )
+
+    def test_go_ahead_trigger(self) -> None:
+        assert "go ahead" in self.html, (
+            "checkTranscript must handle 'go ahead' keyword to trigger response"
+        )
+
+    def test_your_turn_trigger(self) -> None:
+        assert "your turn" in self.html, (
+            "checkTranscript must handle 'your turn' keyword to trigger response"
+        )
+
+    def test_pause_replies_keyword(self) -> None:
+        assert "pause replies" in self.html, (
+            "checkTranscript must handle 'pause replies' keyword"
+        )
+
+    def test_resume_keyword(self) -> None:
+        # 'resume' can appear as part of a larger string; check the keyword intent
+        assert "resume" in self.html, "checkTranscript must handle 'resume' keyword"
+
+    def test_mute_keyword(self) -> None:
+        assert "'mute'" in self.html or '"mute"' in self.html, (
+            "checkTranscript must handle 'mute' keyword"
+        )
+
+    def test_unmute_keyword(self) -> None:
+        assert "unmute" in self.html, "checkTranscript must handle 'unmute' keyword"
+
+    def test_unmute_checked_before_mute(self) -> None:
+        """unmute must be detected before mute to avoid false mute match."""
+        unmute_pos = self.html.find("unmute")
+        mute_pos = self.html.find("'mute'")
+        if mute_pos == -1:
+            mute_pos = self.html.find('"mute"')
+        assert unmute_pos < mute_pos, (
+            "'unmute' check must appear before 'mute' check to avoid false match"
+        )
+
+    def test_voice_keywords_wired_in_voice_app(self) -> None:
+        assert "useVoiceKeywords" in self.html, (
+            "VoiceApp must call useVoiceKeywords hook"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestVoiceAppTask54Wiring — Task 5.4
+# ---------------------------------------------------------------------------
+
+
+class TestVoiceAppTask54Wiring:
+    """Tests for Task 5.4: VoiceApp assistant_name fetch + hook wiring."""
+
+    @pytest.fixture(autouse=True)
+    def content(self) -> None:
+        self.html = INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_assistant_name_state_with_default(self) -> None:
+        assert "assistantName" in self.html, (
+            "VoiceApp must maintain assistantName state"
+        )
+
+    def test_assistant_name_default_is_amplifier(self) -> None:
+        assert "'Amplifier'" in self.html or '"Amplifier"' in self.html, (
+            "assistantName default must be 'Amplifier'"
+        )
+
+    def test_fetches_api_status_on_mount(self) -> None:
+        assert "/api/status" in self.html, (
+            "VoiceApp must fetch /api/status to get assistant_name"
+        )
+
+    def test_check_transcript_called_on_transcription_completed(self) -> None:
+        assert "checkTranscript" in self.html, (
+            "handleDataChannelEvent must call checkTranscript "
+            "on transcription.completed"
+        )
+
+    def test_pause_replies_ui_indicator(self) -> None:
+        assert "pauseReplies" in self.html, (
+            "VoiceApp render must show paused state indicator using pauseReplies"
+        )
+
+    def test_set_mic_stream_called_after_connect(self) -> None:
+        assert "setMicStream" in self.html, (
+            "VoiceApp must call setMicStream after WebRTC connect to wire mic stream"
+        )

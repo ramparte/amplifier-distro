@@ -242,6 +242,35 @@ body {
 .btn-disconnect:hover:not(:disabled) {
   background: #b91c1c;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Pause-replies banner / muted badge  (Task 5.4)                    */
+/* ------------------------------------------------------------------ */
+.pause-banner {
+  background: #2a1800;
+  border: 1px solid #5a3800;
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: #f59e0b;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.muted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #2a0000;
+  color: #ef4444;
+  border: 1px solid #500000;
+}
 </style>
 </head>
 <body>
@@ -467,14 +496,14 @@ body {
       }
     }, []);
 
-    return { rtcState, connect, disconnect, sendDataChannelMessage, dcRef };
+    return { rtcState, connect, disconnect, sendDataChannelMessage, dcRef, streamRef };
   }
 
   // -------------------------------------------------------------------------
   // useChatMessages({ sendDataChannelMessage, sessionId })   Task 5.3
   // -------------------------------------------------------------------------
 
-  function useChatMessages({ sendDataChannelMessage, sessionId }) {
+  function useChatMessages({ sendDataChannelMessage, sessionId, checkTranscript }) {
     const [messages, setMessages] = useState([]);
     const [responseInProgress, setResponseInProgress] = useState(false);
 
@@ -521,9 +550,12 @@ body {
       // VAD speech detection — no UI change needed
       if (type === 'input_audio_buffer.speech_started') return;
 
-      // User finished speaking — show transcription, trigger reply if idle
+      // User finished speaking — show transcription, wake-word check, trigger reply if idle
       if (type === 'conversation.item.input_audio_transcription.completed') {
-        addUserMessage(event.transcript || '', event.item_id);
+        const transcript = event.transcript || '';
+        addUserMessage(transcript, event.item_id);
+        // Task 5.4: run wake-word detection before auto-respond decision
+        if (checkTranscript) checkTranscript(transcript);
         if (!responseInProgressRef.current) {
           sendDataChannelMessage({ type: 'response.create' });
         }
@@ -617,6 +649,102 @@ body {
   }
 
   // -------------------------------------------------------------------------
+  // useMicrophoneControl({ sendDataChannelMessage })   Task 5.4
+  // -------------------------------------------------------------------------
+
+  function useMicrophoneControl({ sendDataChannelMessage }) {
+    const [muted, setMuted] = useState(false);
+    const [pauseReplies, setPauseReplies] = useState(false);
+    const streamRef = useRef(null);
+
+    // Store the mic MediaStream reference so toggleMute can reach audio tracks
+    const setMicStream = useCallback((stream) => {
+      streamRef.current = stream;
+    }, []);
+
+    // Toggle track.enabled on all audio tracks — hardware mic stays open,
+    // but audio is silenced at the track level
+    const toggleMute = useCallback(() => {
+      const stream = streamRef.current;
+      if (!stream) return;
+      const nextMuted = !muted;
+      stream.getAudioTracks().forEach((track) => { track.enabled = !nextMuted; });
+      setMuted(nextMuted);
+    }, [muted]);
+
+    // Pause: prevent the model from auto-responding (disable create_response)
+    const enterPauseReplies = useCallback(() => {
+      setPauseReplies(true);
+      sendDataChannelMessage({
+        type: 'session.update',
+        session: {
+          turn_detection: { type: 'semantic_vad', create_response: false },
+        },
+      });
+    }, [sendDataChannelMessage]);
+
+    // Resume: re-enable auto-responses
+    const exitPauseReplies = useCallback(() => {
+      setPauseReplies(false);
+      sendDataChannelMessage({
+        type: 'session.update',
+        session: {
+          turn_detection: { type: 'semantic_vad', create_response: true },
+        },
+      });
+    }, [sendDataChannelMessage]);
+
+    return { muted, pauseReplies, toggleMute, enterPauseReplies, exitPauseReplies, setMicStream };
+  }
+
+  // -------------------------------------------------------------------------
+  // useVoiceKeywords({ assistantName, onTriggerResponse, onPauseReplies,
+  //                    onResumeReplies, onMute, onUnmute })   Task 5.4
+  // -------------------------------------------------------------------------
+
+  function useVoiceKeywords({
+    assistantName,
+    onTriggerResponse,
+    onPauseReplies,
+    onResumeReplies,
+    onMute,
+    onUnmute,
+  }) {
+    const lastFiredRef = useRef(0);
+    const DEBOUNCE_MS = 2000;
+
+    const checkTranscript = useCallback((transcript) => {
+      const lower = transcript.toLowerCase();
+      const wakeWord = 'hey ' + (assistantName || 'amplifier').toLowerCase();
+      if (!lower.includes(wakeWord)) return;
+
+      // Debounce: ignore rapid repeat triggers within DEBOUNCE_MS
+      const now = Date.now();
+      if (now - lastFiredRef.current < DEBOUNCE_MS) return;
+
+      if (lower.includes('go ahead') || lower.includes('your turn')) {
+        lastFiredRef.current = now;
+        if (onTriggerResponse) onTriggerResponse();
+      } else if (lower.includes('pause replies')) {
+        lastFiredRef.current = now;
+        if (onPauseReplies) onPauseReplies();
+      } else if (lower.includes('resume')) {
+        lastFiredRef.current = now;
+        if (onResumeReplies) onResumeReplies();
+      } else if (lower.includes('unmute')) {
+        // 'unmute' must be checked before 'mute' to avoid false match
+        lastFiredRef.current = now;
+        if (onUnmute) onUnmute();
+      } else if (lower.includes('mute')) {
+        lastFiredRef.current = now;
+        if (onMute) onMute();
+      }
+    }, [assistantName, onTriggerResponse, onPauseReplies, onResumeReplies, onMute, onUnmute]);
+
+    return { checkTranscript };
+  }
+
+  // -------------------------------------------------------------------------
   // VoiceApp root component
   // -------------------------------------------------------------------------
 
@@ -625,6 +753,15 @@ body {
     const [isConnecting, setIsConnecting] = useState(false);
     const [sessionId, setSessionId] = useState(null);  // Task 5.3: session state
     const transcriptEndRef = useRef(null);
+
+    // Task 5.4: fetch assistant name on mount (default: 'Amplifier')
+    const [assistantName, setAssistantName] = useState('Amplifier');
+    useEffect(() => {
+      fetch('/api/status')
+        .then((r) => r.json())
+        .then((data) => { if (data.assistant_name) setAssistantName(data.assistant_name); })
+        .catch(() => { /* silent — keep default 'Amplifier' */ });
+    }, []);
 
     // Stable message handler ref — breaks the circular hook dependency:
     // useWebRTC.onMessage → useChatMessages.handleDataChannelEvent → sendDataChannelMessage
@@ -637,12 +774,35 @@ body {
     const handleRtcMessage = stableMsgHandler;
 
     const handleStateChange = useCallback((state) => {
-      console.debug('[VoiceApp] RTC state changed:', state);
+      console.debug('[VoiceApp] RTC state changed:', state);  // Task 5.3
     }, []);
 
-    const { rtcState, connect, disconnect, sendDataChannelMessage } = useWebRTC({
+    const { rtcState, connect, disconnect, sendDataChannelMessage, streamRef } = useWebRTC({
       onMessage: stableMsgHandler,
       onStateChange: handleStateChange,
+    });
+
+    // Task 5.4: microphone mute + pause-replies control
+    const {
+      muted,
+      pauseReplies,
+      toggleMute,
+      enterPauseReplies,
+      exitPauseReplies,
+      setMicStream,
+    } = useMicrophoneControl({ sendDataChannelMessage });
+
+    // Task 5.4: keyword detection — wire actions to microphone/pause hooks
+    const { checkTranscript } = useVoiceKeywords({
+      assistantName,
+      onTriggerResponse: useCallback(
+        () => sendDataChannelMessage({ type: 'response.create' }),
+        [sendDataChannelMessage],
+      ),
+      onPauseReplies: enterPauseReplies,
+      onResumeReplies: exitPauseReplies,
+      onMute: toggleMute,
+      onUnmute: toggleMute,
     });
 
     const {
@@ -650,7 +810,7 @@ body {
       messageRefs,
       handleDataChannelEvent,
       clearMessages,
-    } = useChatMessages({ sendDataChannelMessage, sessionId });
+    } = useChatMessages({ sendDataChannelMessage, sessionId, checkTranscript });
 
     // Wire latest handler into stable ref on every render (ref mutation, no rerender)
     msgHandlerRef.current = handleDataChannelEvent;
@@ -682,6 +842,9 @@ body {
 
         // Now initiate WebRTC connection
         await connect();
+
+        // Task 5.4: wire mic stream into useMicrophoneControl for mute support
+        setMicStream(streamRef.current);
       } catch (err) {
         console.error('[VoiceApp] Connection failed:', err);
         disconnect(); // ensure full cleanup on any partial failure
@@ -689,7 +852,7 @@ body {
       } finally {
         setIsConnecting(false);
       }
-    }, [connect, disconnect]);
+    }, [connect, disconnect, setMicStream, streamRef]);
 
     const handleDisconnect = useCallback(() => {
       disconnect();
@@ -711,11 +874,21 @@ body {
       <div id="app">
         <div class="app-header">
           <div class="app-title">Amplifier Voice</div>
-          <div class=${'status-badge ' + rtcState}>
-            <div class="status-dot"></div>
-            ${statusLabel}
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${muted && html`<span class="muted-badge">🎙 Muted</span>`}
+            <div class=${'status-badge ' + rtcState}>
+              <div class="status-dot"></div>
+              ${statusLabel}
+            </div>
           </div>
         </div>
+
+        ${pauseReplies && html`
+          <div class="pause-banner">
+            <span>⏸</span>
+            <span>Replies paused — say "Hey ${assistantName}, resume" to continue</span>
+          </div>
+        `}
 
         ${error && html`
           <div class="error-banner">
