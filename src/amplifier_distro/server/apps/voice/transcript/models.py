@@ -29,13 +29,12 @@ class DisconnectEvent:
     reconnected: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict, omitting None values."""
-        result: dict[str, Any] = {
+        """Serialize to dict."""
+        return {
             "timestamp": self.timestamp,
             "reason": self.reason,
             "reconnected": self.reconnected,
         }
-        return {k: v for k, v in result.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DisconnectEvent:
@@ -60,9 +59,8 @@ class VoiceConversation:
     created_at: datetime
     updated_at: datetime
     ended_at: datetime | None = None
-    end_reason: str | None = (
-        None  # session_limit | network_error | user_ended | idle_timeout | error
-    )
+    # Valid values: session_limit | network_error | user_ended | idle_timeout | error
+    end_reason: str | None = None
     duration_seconds: float | None = None
     first_message: str | None = None
     last_message: str | None = None

@@ -1,32 +1,36 @@
-"""Tests for voice transcript models: VoiceConversation, TranscriptEntry, DisconnectEvent."""
+"""Tests for voice transcript models: VoiceConversation, TranscriptEntry,
+DisconnectEvent."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from amplifier_distro.server.apps.voice.transcript.models import (
+    DisconnectEvent,
+    TranscriptEntry,
+    VoiceConversation,
+    new_entry_id,
+)
 
 
 class TestVoiceConversation:
     """Tests for VoiceConversation dataclass."""
 
     def _make_conversation(self, **kwargs):
-        from amplifier_distro.server.apps.voice.transcript.models import VoiceConversation
-
         defaults = {
             "id": "session-abc-123",
             "title": "Test Conversation",
             "status": "active",
-            "created_at": datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-            "updated_at": datetime(2024, 1, 15, 10, 5, 0, tzinfo=timezone.utc),
+            "created_at": datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
+            "updated_at": datetime(2024, 1, 15, 10, 5, 0, tzinfo=UTC),
         }
         defaults.update(kwargs)
         return VoiceConversation(**defaults)
 
     def test_round_trip_to_dict_from_dict(self) -> None:
         """VoiceConversation survives to_dict/from_dict round-trip."""
-        from amplifier_distro.server.apps.voice.transcript.models import VoiceConversation
-
         conv = self._make_conversation(
-            ended_at=datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+            ended_at=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
             end_reason="user_ended",
             duration_seconds=1800.5,
             first_message="Hello",
@@ -49,7 +53,7 @@ class TestVoiceConversation:
         assert restored.reconnect_count == conv.reconnect_count
 
     def test_omits_none_values_in_to_dict(self) -> None:
-        """to_dict() omits keys with None values (ended_at, end_reason, duration_seconds)."""
+        """to_dict() omits ended_at, end_reason, duration_seconds when None."""
         conv = self._make_conversation()  # no ended_at, end_reason, duration_seconds
 
         d = conv.to_dict()
@@ -64,8 +68,6 @@ class TestVoiceConversation:
 
     def test_from_dict_ignores_unknown_keys(self) -> None:
         """from_dict() silently ignores unknown keys."""
-        from amplifier_distro.server.apps.voice.transcript.models import VoiceConversation
-
         data = {
             "id": "session-xyz",
             "title": "Test",
@@ -98,22 +100,18 @@ class TestTranscriptEntry:
     """Tests for TranscriptEntry dataclass."""
 
     def _make_entry(self, **kwargs):
-        from amplifier_distro.server.apps.voice.transcript.models import TranscriptEntry
-
         defaults = {
             "id": "entry-001",
             "conversation_id": "session-abc-123",
             "role": "user",
             "content": "Hello, how are you?",
-            "created_at": datetime(2024, 1, 15, 10, 1, 0, tzinfo=timezone.utc),
+            "created_at": datetime(2024, 1, 15, 10, 1, 0, tzinfo=UTC),
         }
         defaults.update(kwargs)
         return TranscriptEntry(**defaults)
 
     def test_round_trip_to_dict_from_dict(self) -> None:
         """TranscriptEntry survives to_dict/from_dict round-trip."""
-        from amplifier_distro.server.apps.voice.transcript.models import TranscriptEntry
-
         entry = self._make_entry(
             role="assistant",
             content="I am doing well, thank you!",
@@ -133,8 +131,6 @@ class TestTranscriptEntry:
 
     def test_from_dict_ignores_unknown_keys(self) -> None:
         """from_dict() silently ignores unknown keys."""
-        from amplifier_distro.server.apps.voice.transcript.models import TranscriptEntry
-
         data = {
             "id": "entry-002",
             "conversation_id": "session-xyz",
@@ -163,8 +159,6 @@ class TestTranscriptEntry:
         assert d["tool_name"] == "web_search"
 
         # Verify round-trip preserves these
-        from amplifier_distro.server.apps.voice.transcript.models import TranscriptEntry
-
         restored = TranscriptEntry.from_dict(d)
         assert restored.call_id == "call-xyz-789"
         assert restored.tool_name == "web_search"
@@ -174,14 +168,10 @@ class TestNewEntryId:
     """Tests for new_entry_id() helper function."""
 
     def test_returns_string(self) -> None:
-        from amplifier_distro.server.apps.voice.transcript.models import new_entry_id
-
         result = new_entry_id()
         assert isinstance(result, str)
 
     def test_returns_unique_values(self) -> None:
-        from amplifier_distro.server.apps.voice.transcript.models import new_entry_id
-
         ids = {new_entry_id() for _ in range(10)}
         assert len(ids) == 10
 
@@ -190,9 +180,11 @@ class TestDisconnectEvent:
     """Tests for DisconnectEvent dataclass."""
 
     def test_round_trip_to_dict_from_dict(self) -> None:
-        from amplifier_distro.server.apps.voice.transcript.models import DisconnectEvent
-
-        event = DisconnectEvent(timestamp="2024-01-15T10:10:00Z", reason="network_error", reconnected=True)
+        event = DisconnectEvent(
+            timestamp="2024-01-15T10:10:00Z",
+            reason="network_error",
+            reconnected=True,
+        )
         d = event.to_dict()
         restored = DisconnectEvent.from_dict(d)
 
@@ -201,7 +193,5 @@ class TestDisconnectEvent:
         assert restored.reconnected == event.reconnected
 
     def test_default_reconnected_is_false(self) -> None:
-        from amplifier_distro.server.apps.voice.transcript.models import DisconnectEvent
-
         event = DisconnectEvent(timestamp="2024-01-15T10:10:00Z", reason="idle_timeout")
         assert event.reconnected is False
