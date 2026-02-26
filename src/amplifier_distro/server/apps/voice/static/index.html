@@ -471,36 +471,196 @@ body {
   }
 
   // -------------------------------------------------------------------------
+  // useChatMessages({ sendDataChannelMessage, sessionId })   Task 5.3
+  // -------------------------------------------------------------------------
+
+  function useChatMessages({ sendDataChannelMessage, sessionId }) {
+    const [messages, setMessages] = useState([]);
+    const [responseInProgress, setResponseInProgress] = useState(false);
+
+    // Refs — mutations without triggering rerenders
+    const pendingAnnouncements = useRef([]);
+    const messageRefs = useRef({});
+    const currentStreamingId = useRef(null);
+    // Shadow ref so async callbacks always see the current responseInProgress value
+    const responseInProgressRef = useRef(false);
+
+    // Keep state and ref in sync together
+    const setRip = useCallback((val) => {
+      responseInProgressRef.current = val;
+      setResponseInProgress(val);
+    }, []);
+
+    // addUserMessage(transcript, itemId): add a user bubble
+    const addUserMessage = useCallback((transcript, itemId) => {
+      const id = itemId || ('user-' + Date.now());
+      setMessages((prev) => [...prev, { id, role: 'user', content: transcript }]);
+    }, []);
+
+    // startAssistantMessage(): add an empty assistant bubble, set currentStreamingId
+    const startAssistantMessage = useCallback(() => {
+      const id = 'asst-' + Date.now();
+      currentStreamingId.current = id;
+      setMessages((prev) => [...prev, { id, role: 'assistant', content: '' }]);
+    }, []);
+
+    // clearMessages(): reset all chat state (called on disconnect)
+    const clearMessages = useCallback(() => {
+      setMessages([]);
+      setRip(false);
+      pendingAnnouncements.current = [];
+      currentStreamingId.current = null;
+      messageRefs.current = {};
+    }, [setRip]);
+
+    // handleDataChannelEvent(event) async — main OpenAI Realtime event dispatcher
+    const handleDataChannelEvent = useCallback(async (event) => {
+      const { type } = event;
+      console.debug('[useChatMessages] event:', type);
+
+      // VAD speech detection — no UI change needed
+      if (type === 'input_audio_buffer.speech_started') return;
+
+      // User finished speaking — show transcription, trigger reply if idle
+      if (type === 'conversation.item.input_audio_transcription.completed') {
+        addUserMessage(event.transcript || '', event.item_id);
+        if (!responseInProgressRef.current) {
+          sendDataChannelMessage({ type: 'response.create' });
+        }
+        return;
+      }
+
+      // Streaming assistant text — DIRECT DOM mutation, zero Preact rerenders
+      if (type === 'response.audio_transcript.delta') {
+        const id = currentStreamingId.current;
+        if (id && messageRefs.current[id]) {
+          messageRefs.current[id].textContent += event.delta || '';
+        }
+        return;
+      }
+
+      // Streaming finished — commit final transcript to state
+      if (type === 'response.audio_transcript.done') {
+        const id = currentStreamingId.current;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, content: event.transcript || '' } : m))
+        );
+        currentStreamingId.current = null;
+        return;
+      }
+
+      // Response cycle started
+      if (type === 'response.created') {
+        setRip(true);
+        startAssistantMessage();
+        return;
+      }
+
+      // Response cycle completed — flush any queued follow-ups
+      if (type === 'response.done') {
+        setRip(false);
+        const pending = pendingAnnouncements.current.splice(0);
+        if (pending.length > 0) {
+          sendDataChannelMessage({ type: 'response.create' });
+        }
+        return;
+      }
+
+      // Tool call from the model
+      if (type === 'response.output_item.added') {
+        const item = event.item;
+        if (!item || item.type !== 'function_call') return;
+
+        const toolName = item.name;
+        const callId = item.call_id;
+        const args = item.arguments || '{}';
+
+        // Browser-side tools — TODO 5.4: handle pause_replies / resume_replies
+        if (toolName === 'pause_replies' || toolName === 'resume_replies') return;
+
+        // Execute tool on the server
+        let output;
+        try {
+          const resp = await fetch('/apps/voice/tools/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tool_name: toolName,
+              arguments: args,
+              call_id: callId,
+              session_id: sessionId,
+            }),
+          });
+          const data = await resp.json();
+          output = JSON.stringify(data);
+        } catch (err) {
+          console.error('[useChatMessages] Tool execution failed:', err);
+          output = JSON.stringify({ error: String(err) });
+        }
+
+        // Return the tool result to the model via function_call_output
+        sendDataChannelMessage({
+          type: 'conversation.item.create',
+          item: { type: 'function_call_output', call_id: callId, output },
+        });
+
+        // Trigger the next assistant turn, or queue it until response.done
+        if (!responseInProgressRef.current) {
+          sendDataChannelMessage({ type: 'response.create' });
+        } else {
+          pendingAnnouncements.current.push({ type: 'response.create' });
+        }
+      }
+    }, [sendDataChannelMessage, sessionId, addUserMessage, startAssistantMessage, setRip]);
+
+    return { messages, responseInProgress, messageRefs, handleDataChannelEvent, clearMessages };
+  }
+
+  // -------------------------------------------------------------------------
   // VoiceApp root component
   // -------------------------------------------------------------------------
 
   function VoiceApp() {
-    const [transcript, setTranscript] = useState([]);
     const [error, setError] = useState(null);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [sessionId, setSessionId] = useState(null);  // Task 5.3: session state
     const transcriptEndRef = useRef(null);
+
+    // Stable message handler ref — breaks the circular hook dependency:
+    // useWebRTC.onMessage → useChatMessages.handleDataChannelEvent → sendDataChannelMessage
+    const msgHandlerRef = useRef(null);
+    const stableMsgHandler = useCallback((msg) => {
+      if (msgHandlerRef.current) msgHandlerRef.current(msg);
+    }, []);
+
+    // handleRtcMessage kept as alias for backward compatibility; now routes via stableMsgHandler
+    const handleRtcMessage = stableMsgHandler;
+
+    const handleStateChange = useCallback((state) => {
+      console.debug('[VoiceApp] RTC state changed:', state);
+    }, []);
+
+    const { rtcState, connect, disconnect, sendDataChannelMessage } = useWebRTC({
+      onMessage: stableMsgHandler,
+      onStateChange: handleStateChange,
+    });
+
+    const {
+      messages,
+      messageRefs,
+      handleDataChannelEvent,
+      clearMessages,
+    } = useChatMessages({ sendDataChannelMessage, sessionId });
+
+    // Wire latest handler into stable ref on every render (ref mutation, no rerender)
+    msgHandlerRef.current = handleDataChannelEvent;
 
     // Scroll transcript to bottom when new messages arrive
     useEffect(() => {
       if (transcriptEndRef.current) {
         transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
-    }, [transcript]);
-
-    // handleRtcMessage — placeholder for Task 5.3
-    const handleRtcMessage = useCallback((msg) => {
-      console.debug('[VoiceApp] RTC message:', msg);
-    }, []);
-
-    // Will be used by Task 5.3 to trigger UI transitions on specific state events
-    const handleStateChange = useCallback((state) => {
-      console.debug('[VoiceApp] RTC state changed:', state);
-    }, []);
-
-    const { rtcState, connect, disconnect, sendDataChannelMessage, dcRef } = useWebRTC({
-      onMessage: handleRtcMessage,
-      onStateChange: handleStateChange,
-    });
+    }, [messages]);
 
     // handleConnect: POST /apps/voice/sessions then initiate WebRTC
     const handleConnect = useCallback(async () => {
@@ -511,12 +671,13 @@ body {
         const sessResp = await fetch('/apps/voice/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: null,  // no body required until Task 5.3 adds session params
+          body: null,
         });
         if (!sessResp.ok) {
           throw new Error(`Failed to create session: ${sessResp.status}`);
         }
         const sessData = await sessResp.json();
+        setSessionId(sessData.session_id);
         console.debug('[VoiceApp] Session created:', sessData.session_id);
 
         // Now initiate WebRTC connection
@@ -532,13 +693,13 @@ body {
 
     const handleDisconnect = useCallback(() => {
       disconnect();
-      setTranscript([]);
+      clearMessages();
+      setSessionId(null);
       setError(null);
-    }, [disconnect]);
+    }, [disconnect, clearMessages]);
 
     // Derive display state
     const isIdle = rtcState === 'idle';
-    const isConnected = rtcState === 'connected';
     const statusLabel = {
       idle: 'Disconnected',
       connecting: 'Connecting…',
@@ -564,12 +725,18 @@ body {
         `}
 
         <div class="transcript-container">
-          ${transcript.length === 0
+          ${messages.length === 0
             ? html`<div class="transcript-empty">No messages yet. Start a voice chat to begin.</div>`
-            : transcript.map((msg, i) => html`
-                <div key=${i} class=${'message-bubble ' + msg.role}>
+            : messages.map((msg) => html`
+                <div key=${msg.id} class=${'message-bubble ' + msg.role}>
                   <div class="bubble-label">${msg.role}</div>
-                  <div class="bubble-text">${msg.content}</div>
+                  <div
+                    class="bubble-text"
+                    ref=${(el) => {
+                      if (el) messageRefs.current[msg.id] = el;
+                      else delete messageRefs.current[msg.id];
+                    }}
+                  >${msg.content}</div>
                 </div>
               `)
           }
