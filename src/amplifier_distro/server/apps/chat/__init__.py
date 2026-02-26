@@ -13,8 +13,6 @@ Routes:
     POST /api/sessions/revisions   - Diff revisions vs client-known state
     GET  /api/sessions             - List sessions (Task 11)
     GET  /api/sessions/{id}/transcript  - Transcript (Task 12)
-    GET  /api/preferences          - User preferences (Task 13)
-    PUT  /api/preferences          - Update preferences (Task 13)
 """
 
 from __future__ import annotations
@@ -38,10 +36,6 @@ from amplifier_distro.conventions import (
     TRANSCRIPT_FILENAME,
 )
 from amplifier_distro.server.app import AppManifest
-from amplifier_distro.server.apps.chat.preferences import (
-    load_preferences,
-    save_preferences,
-)
 from amplifier_distro.server.apps.chat.session_history import (
     scan_session_revisions,
     scan_sessions,
@@ -367,38 +361,6 @@ async def get_transcript(session_id: str) -> JSONResponse:
             content={"error": f"Session {session_id!r} not found"},
         )
     return JSONResponse(content=payload)
-
-
-@router.get("/api/preferences")
-async def get_preferences() -> dict:
-    """Return current user preferences."""
-    return load_preferences()
-
-
-@router.put("/api/preferences", dependencies=[Depends(_require_api_key)])
-async def put_preferences(request: Request) -> dict:
-    """Apply partial preference updates."""
-    raw = await request.body()
-    if not raw:
-        return save_preferences({})
-    try:
-        body = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400, detail="Request body must be valid JSON"
-        ) from exc
-    if not isinstance(body, dict):
-        raise HTTPException(
-            status_code=400, detail="Request body must be a JSON object"
-        )
-    try:
-        return save_preferences(body)
-    except OSError as exc:
-        logger.warning("Failed to persist preferences", exc_info=True)
-        raise HTTPException(
-            status_code=503,
-            detail="Preferences could not be saved. Check disk/permissions.",
-        ) from exc
 
 
 manifest = AppManifest(

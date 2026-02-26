@@ -553,21 +553,24 @@
     }
     .new-content-pill {
       pointer-events: auto;
-      border: 1px solid rgba(37, 99, 235, 0.5);
-      background: rgba(37, 99, 235, 0.18);
-      color: #dbeafe;
+      border: 1px solid rgba(30, 64, 175, 0.92);
+      background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+      color: #ffffff;
       border-radius: 999px;
       padding: 6px 14px;
       font-size: 12px;
       font-weight: 600;
+      letter-spacing: 0.01em;
       cursor: pointer;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
-      backdrop-filter: blur(3px);
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+      box-shadow:
+        0 6px 20px rgba(37, 99, 235, 0.38),
+        0 2px 10px rgba(0, 0, 0, 0.35);
       transition: background 0.15s, border-color 0.15s, transform 0.15s;
     }
     .new-content-pill:hover {
-      background: rgba(37, 99, 235, 0.28);
-      border-color: rgba(37, 99, 235, 0.7);
+      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+      border-color: rgba(29, 78, 216, 0.96);
       transform: translateY(-1px);
     }
 
@@ -1797,6 +1800,21 @@
     useEffect(() => {
       defaultCwdRef.current = defaultCwd;
     }, [defaultCwd]);
+
+    // Load workspace_root from distro settings as initial default CWD
+    useEffect(() => {
+      fetch('/apps/settings/distro-settings')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          const root = data?.settings?.workspace_root;
+          if (root && typeof root === 'string') {
+            defaultCwdRef.current = root;
+            setDefaultCwd(root);
+            setCwd(root);
+          }
+        })
+        .catch(() => {});
+    }, []);
 
     useEffect(() => {
       return () => {
@@ -3239,19 +3257,18 @@
     }, [activeKey, sessions, executing, refreshSessionFromDisk]);
 
     const persistDefaultCwd = useCallback((value) => {
-      const payload = { default_cwd: value };
-      fetch('/apps/chat/api/preferences', {
-        method: 'PUT',
+      fetch('/apps/settings/distro-settings', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ workspace_root: value }),
       })
         .then(r => {
           if (!r.ok && r.status !== 401) {
-            console.warn('[chat] failed to persist default_cwd', r.status);
+            console.warn('[chat] failed to persist workspace_root', r.status);
           }
         })
         .catch(err => {
-          console.warn('[chat] failed to persist default_cwd', err);
+          console.warn('[chat] failed to persist workspace_root', err);
         });
     }, []);
 
