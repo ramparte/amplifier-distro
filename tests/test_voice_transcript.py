@@ -1,15 +1,23 @@
 """Tests for voice transcript models: VoiceConversation, TranscriptEntry,
-DisconnectEvent."""
+DisconnectEvent, and VoiceConversationRepository."""
 
 from __future__ import annotations
 
+import json
+import time
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from amplifier_distro.server.apps.voice.transcript.models import (
     DisconnectEvent,
     TranscriptEntry,
     VoiceConversation,
     new_entry_id,
+)
+from amplifier_distro.server.apps.voice.transcript.repository import (
+    VoiceConversationRepository,
 )
 
 
@@ -195,3 +203,207 @@ class TestDisconnectEvent:
     def test_default_reconnected_is_false(self) -> None:
         event = DisconnectEvent(timestamp="2024-01-15T10:10:00Z", reason="idle_timeout")
         assert event.reconnected is False
+
+
+class TestVoiceConversationRepository:
+    """Tests for VoiceConversationRepository disk-backed persistence."""
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> VoiceConversationRepository:
+        return VoiceConversationRepository(base_dir=tmp_path)
+
+    def _make_conversation(self, session_id: str = "sess-001") -> VoiceConversation:
+        now = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
+        return VoiceConversation(
+            id=session_id,
+            title="Test Session",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+
+    def _make_entry(
+        self,
+        session_id: str = "sess-001",
+        role: str = "user",
+        content: str = "Hello",
+        tool_name: str | None = None,
+        call_id: str | None = None,
+        item_id: str | None = None,
+        audio_duration_ms: int | None = None,
+    ) -> TranscriptEntry:
+        return TranscriptEntry(
+            id=new_entry_id(),
+            conversation_id=session_id,
+            role=role,
+            content=content,
+            created_at=datetime(2024, 1, 15, 10, 1, 0, tzinfo=UTC),
+            tool_name=tool_name,
+            call_id=call_id,
+            item_id=item_id,
+            audio_duration_ms=audio_duration_ms,
+        )
+
+    def test_create_conversation_writes_files(
+        self, repo: VoiceConversationRepository, tmp_path: Path
+    ) -> None:
+        """create_conversation() writes conversation.json and updates index.json."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        conv_json = tmp_path / "sess-001" / "conversation.json"
+        index_json = tmp_path / "index.json"
+
+        assert conv_json.exists(), "conversation.json must be created"
+        assert index_json.exists(), "index.json must be created"
+
+        # conversation.json must contain valid data
+        data = json.loads(conv_json.read_text())
+        assert data["id"] == "sess-001"
+        assert data["status"] == "active"
+
+        # index.json must contain the conversation
+        index = json.loads(index_json.read_text())
+        assert len(index) == 1
+        assert index[0]["id"] == "sess-001"
+
+    def test_get_conversation_returns_correct_data(
+        self, repo: VoiceConversationRepository
+    ) -> None:
+        """get_conversation() returns the stored VoiceConversation."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        result = repo.get_conversation("sess-001")
+
+        assert result is not None
+        assert result.id == "sess-001"
+        assert result.title == "Test Session"
+        assert result.status == "active"
+
+    def test_get_conversation_returns_none_if_not_found(
+        self, repo: VoiceConversationRepository
+    ) -> None:
+        """get_conversation() returns None for unknown session_id."""
+        result = repo.get_conversation("nonexistent")
+        assert result is None
+
+    def test_add_entry_does_not_touch_index_json(
+        self, repo: VoiceConversationRepository, tmp_path: Path
+    ) -> None:
+        """add_entry() must NOT modify index.json (mtime unchanged)."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        index_json = tmp_path / "index.json"
+        mtime_before = index_json.stat().st_mtime
+
+        # Small sleep to ensure mtime would differ if file were written
+        time.sleep(0.05)
+
+        entry = self._make_entry()
+        repo.add_entry("sess-001", entry)
+
+        mtime_after = index_json.stat().st_mtime
+        assert mtime_before == mtime_after, "add_entry() must NOT touch index.json"
+
+    def test_add_entry_appends_to_jsonl(
+        self, repo: VoiceConversationRepository, tmp_path: Path
+    ) -> None:
+        """add_entry() appends lines; 3 entries = 3 non-empty lines in jsonl."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        for i in range(3):
+            entry = self._make_entry(content=f"message {i}")
+            repo.add_entry("sess-001", entry)
+
+        jsonl_path = tmp_path / "sess-001" / "transcript.jsonl"
+        lines = [ln for ln in jsonl_path.read_text().splitlines() if ln.strip()]
+        assert len(lines) == 3, f"Expected 3 lines, got {len(lines)}"
+
+        # Each line must be valid JSON
+        for line in lines:
+            parsed = json.loads(line)
+            assert "role" in parsed
+
+    def test_end_conversation_updates_index(
+        self, repo: VoiceConversationRepository, tmp_path: Path
+    ) -> None:
+        """end_conversation() sets status='ended' in index.json and end_reason."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        repo.end_conversation("sess-001", reason="user_ended")
+
+        index = json.loads((tmp_path / "index.json").read_text())
+        assert len(index) == 1
+        assert index[0]["status"] == "ended"
+        assert index[0]["end_reason"] == "user_ended"
+
+        # conversation.json must also reflect ended status
+        result = repo.get_conversation("sess-001")
+        assert result is not None
+        assert result.status == "ended"
+        assert result.end_reason == "user_ended"
+        assert result.ended_at is not None
+        assert result.duration_seconds is not None
+
+    def test_get_resumption_context_includes_tool_calls(
+        self, repo: VoiceConversationRepository
+    ) -> None:
+        """get_resumption_context() maps tool_call->function_call and
+        tool_result->function_call_output."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        entries = [
+            self._make_entry(role="user", content="What is the weather?"),
+            self._make_entry(
+                role="tool_call",
+                content='{"location": "NYC"}',
+                tool_name="get_weather",
+                call_id="call-abc-123",
+            ),
+            self._make_entry(
+                role="tool_result",
+                content='{"temp": "72F"}',
+                call_id="call-abc-123",
+            ),
+            self._make_entry(role="assistant", content="It is 72F in NYC."),
+        ]
+        repo.add_entries("sess-001", entries)
+
+        context = repo.get_resumption_context("sess-001")
+
+        assert len(context) == 4
+
+        # user message
+        assert context[0]["type"] == "message"
+        assert context[0]["role"] == "user"
+        assert context[0]["content"][0]["type"] == "input_text"
+        assert context[0]["content"][0]["text"] == "What is the weather?"
+
+        # tool_call -> function_call
+        assert context[1]["type"] == "function_call"
+        assert context[1]["name"] == "get_weather"
+        assert context[1]["call_id"] == "call-abc-123"
+
+        # tool_result -> function_call_output
+        assert context[2]["type"] == "function_call_output"
+        assert context[2]["call_id"] == "call-abc-123"
+
+        # assistant message
+        assert context[3]["type"] == "message"
+        assert context[3]["role"] == "assistant"
+        assert context[3]["content"][0]["type"] == "output_text"
+
+    def test_conversation_json_written_atomically(
+        self, repo: VoiceConversationRepository, tmp_path: Path
+    ) -> None:
+        """create_conversation() leaves no .tmp files behind."""
+        conv = self._make_conversation()
+        repo.create_conversation(conv)
+
+        tmp_files = list(tmp_path.rglob("*.tmp"))
+        assert len(tmp_files) == 0, f"Leftover .tmp files: {tmp_files}"
