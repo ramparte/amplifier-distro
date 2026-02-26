@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+# Async-only callback: callers must pass a coroutine function, not a plain callable.
+MessageCallback = Callable[["VoiceDisplayMessage"], Awaitable[None]]
 
 
 class DisplayLevel(Enum):
@@ -41,7 +44,7 @@ class VoiceDisplayMessage:
 class VoiceDisplaySystem:
     """Formats and filters display messages for speech output."""
 
-    def __init__(self, message_callback: Callable | None = None) -> None:
+    def __init__(self, message_callback: MessageCallback | None = None) -> None:
         self._callback = message_callback
         self.suppressed_patterns: list[str] = ["debug:", "trace:", "[internal]"]
 
@@ -49,7 +52,7 @@ class VoiceDisplaySystem:
         self,
         message: str,
         level: str = "info",
-        nesting: int = 0,
+        nesting: int = 0,  # reserved for future depth-based filtering; not yet used
     ) -> VoiceDisplayMessage:
         """Format a message and optionally speak it via the callback."""
         parsed_level = self._parse_level(level)
@@ -84,10 +87,7 @@ class VoiceDisplaySystem:
         if len(message) < 3:
             return False
         lower = message.lower()
-        for pattern in self.suppressed_patterns:
-            if pattern.lower() in lower:
-                return False
-        return True
+        return not any(pattern.lower() in lower for pattern in self.suppressed_patterns)
 
     def _to_spoken_format(self, message: str, level: DisplayLevel) -> str:
         """Convert a display message to a speech-friendly format."""
@@ -101,12 +101,14 @@ class VoiceDisplaySystem:
 
         # Add level-appropriate prefix if needed
         lower = text.lower()
-        if level == DisplayLevel.ERROR:
-            if not any(kw in lower for kw in ("error", "failed", "problem")):
-                text = f"Error: {text}"
-        elif level == DisplayLevel.WARNING:
-            if not any(kw in lower for kw in ("warning", "caution", "note")):
-                text = f"Note: {text}"
+        if level == DisplayLevel.ERROR and not any(
+            kw in lower for kw in ("error", "failed", "problem")
+        ):
+            text = f"Error: {text}"
+        elif level == DisplayLevel.WARNING and not any(
+            kw in lower for kw in ("warning", "caution", "note")
+        ):
+            text = f"Note: {text}"
 
         # Truncate at 200 chars at sentence boundary
         if len(text) > 200:
@@ -131,11 +133,11 @@ class VoiceDisplaySystem:
                 result = result + "."
             return result
 
-        # Fallback: truncate at last word boundary
+        # Fallback: truncate at last word boundary and add terminal period
         truncated = text[:max_len].rsplit(" ", 1)[0]
-        return truncated
+        return truncated if truncated.endswith(".") else truncated + "."
 
-    def set_callback(self, callback: Callable) -> None:
+    def set_callback(self, callback: MessageCallback) -> None:
         """Set the message callback."""
         self._callback = callback
 
