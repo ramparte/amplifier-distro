@@ -1,8 +1,8 @@
-"""Tests for voice protocol event streaming hook.
+"""Tests for voice protocol event streaming hook and voice display system.
 
 Verifies EventStreamingHook maps Amplifier canonical events to SSE wire dicts.
 
-Exit criteria:
+Exit criteria (EventStreamingHook):
 1. tool:pre maps to tool_call with status='pending'
 2. tool:post maps to tool_result with output
 3. content_block:start tracks block_type in _current_blocks
@@ -12,6 +12,16 @@ Exit criteria:
 7. session:fork maps correctly with agent
 8. large base64 data (>1000 chars) is stripped to '[image data omitted]'
 9. small base64 data (<1000 chars) passes through unchanged
+
+Exit criteria (VoiceDisplaySystem):
+1. strips '=>' and '->'
+2. strips '|' and '...'
+3. truncates at sentence boundary at 200 chars, ends with '.'
+4. adds 'Error:' prefix for error level
+5. debug messages not spoken (should_speak=False)
+6. suppressed pattern 'debug:' not spoken
+7. normal info message is spoken
+8. very short message ('ok', len<3) not spoken
 """
 
 from __future__ import annotations
@@ -22,6 +32,9 @@ import pytest
 
 from amplifier_distro.server.apps.voice.protocols.event_streaming import (
     EventStreamingHook,
+)
+from amplifier_distro.server.apps.voice.protocols.voice_display import (
+    VoiceDisplaySystem,
 )
 
 
@@ -207,3 +220,93 @@ class TestEventStreamingHook:
 
         msg = queue.get_nowait()
         assert msg["output"] == small_base64
+
+
+class TestVoiceDisplaySystem:
+    """Verify VoiceDisplaySystem formats messages for speech output."""
+
+    # ------------------------------------------------------------------ #
+    #  Text Formatting — stripping symbols                                #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_strips_arrow_symbols(self) -> None:
+        """spoken_text has '=>' and '->' stripped and whitespace collapsed."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("Loading => result -> done", level="info")
+        assert "=>" not in msg.spoken_text
+        assert "->" not in msg.spoken_text
+        assert "Loading" in msg.spoken_text
+        assert "result" in msg.spoken_text
+        assert "done" in msg.spoken_text
+
+    @pytest.mark.asyncio
+    async def test_strips_pipe_and_ellipsis(self) -> None:
+        """spoken_text has '|' and '...' stripped and whitespace collapsed."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("Step 1 | Step 2 ... Step 3", level="info")
+        assert "|" not in msg.spoken_text
+        assert "..." not in msg.spoken_text
+        assert "Step 1" in msg.spoken_text
+        assert "Step 2" in msg.spoken_text
+        assert "Step 3" in msg.spoken_text
+
+    # ------------------------------------------------------------------ #
+    #  Text Formatting — truncation                                       #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_truncates_at_sentence_boundary_within_200_chars(self) -> None:
+        """Long messages are truncated at a sentence boundary and end with '.'."""
+        system = VoiceDisplaySystem()
+        # Build a message with 5 sentences of ~48 chars each (~250+ chars total)
+        sentence = "This is a complete sentence for testing purposes"  # 48 chars
+        long_msg = ". ".join([sentence] * 5) + "."
+        assert len(long_msg) > 200
+
+        msg = await system.display(long_msg, level="info")
+        assert len(msg.spoken_text) <= 200
+        assert msg.spoken_text.endswith(".")
+
+    # ------------------------------------------------------------------ #
+    #  Prefix injection                                                   #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_adds_error_prefix_for_error_level(self) -> None:
+        """spoken_text gets 'Error:' prefix when level=error and no error word present."""  # noqa: E501
+        system = VoiceDisplaySystem()
+        msg = await system.display("Something went wrong here", level="error")
+        assert msg.spoken_text.startswith("Error:")
+
+    # ------------------------------------------------------------------ #
+    #  should_speak filtering                                             #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_debug_messages_not_spoken(self) -> None:
+        """Messages at DEBUG level have should_speak=False."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("Some debug information here", level="debug")
+        assert msg.should_speak is False
+
+    @pytest.mark.asyncio
+    async def test_suppressed_pattern_not_spoken(self) -> None:
+        """Messages matching suppressed pattern 'debug:' have should_speak=False."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("debug: internal trace info", level="info")
+        assert msg.should_speak is False
+
+    @pytest.mark.asyncio
+    async def test_normal_info_message_is_spoken(self) -> None:
+        """Normal info messages have should_speak=True."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("Task completed successfully", level="info")
+        assert msg.should_speak is True
+
+    @pytest.mark.asyncio
+    async def test_very_short_message_not_spoken(self) -> None:
+        """Messages shorter than 3 chars (like 'ok') have should_speak=False."""
+        system = VoiceDisplaySystem()
+        msg = await system.display("ok", level="info")
+        assert msg.should_speak is False
