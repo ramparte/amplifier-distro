@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amplifier Voice</title>
+<script src="/apps/voice/static/vendor.js"></script>
+<style>
+/* ------------------------------------------------------------------ */
+/*  CSS: dark theme, system-ui font, flex column layout, 900px max     */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a1a;
+  color: #f0f0f0;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  App container                                                       */
+/* ------------------------------------------------------------------ */
+#app {
+  width: 100%;
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Header                                                             */
+/* ------------------------------------------------------------------ */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-bottom: 1px solid #333;
+}
+
+.app-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0f0f0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status badge                                                       */
+/* ------------------------------------------------------------------ */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.status-badge.idle {
+  background: #2a2a2a;
+  color: #888;
+  border-color: #333;
+}
+
+.status-badge.connecting {
+  background: #2a2200;
+  color: #f59e0b;
+  border-color: #5a4000;
+}
+
+.status-badge.connected {
+  background: #002a12;
+  color: #22c55e;
+  border-color: #005025;
+}
+
+.status-badge.disconnected {
+  background: #2a0000;
+  color: #ef4444;
+  border-color: #500000;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-badge.connecting .status-dot {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Error banner                                                       */
+/* ------------------------------------------------------------------ */
+.error-banner {
+  background: #2a0000;
+  border: 1px solid #500000;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #ef4444;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Transcript                                                         */
+/* ------------------------------------------------------------------ */
+.transcript-container {
+  flex: 1;
+  min-height: 300px;
+  max-height: 500px;
+  overflow-y: auto;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.transcript-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #555;
+  font-size: 14px;
+  font-style: italic;
+}
+
+.message-bubble {
+  display: flex;
+  flex-direction: column;
+  max-width: 72%;
+}
+
+.message-bubble.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.message-bubble.assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.bubble-label {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 4px;
+  text-transform: capitalize;
+}
+
+.bubble-text {
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.message-bubble.user .bubble-text {
+  background: #1d4ed8;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.message-bubble.assistant .bubble-text {
+  background: #222;
+  color: #e5e5e5;
+  border: 1px solid #333;
+  border-bottom-left-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Controls                                                           */
+/* ------------------------------------------------------------------ */
+.controls {
+  display: flex;
+  gap: 12px;
+}
+
+.btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  flex: 1;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-start {
+  background: #2563eb;
+  color: #fff;
+}
+
+.btn-start:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.btn-disconnect {
+  background: #dc2626;
+  color: #fff;
+}
+
+.btn-disconnect:hover:not(:disabled) {
+  background: #b91c1c;
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Pull globals from vendor.js
+  const { h, render, Fragment } = window.preact;
+  const { useState, useEffect, useRef, useCallback } = window.preactHooks;
+  const html = window.html;
+
+  // -------------------------------------------------------------------------
+  // useWebRTC({ onMessage, onStateChange })
+  // -------------------------------------------------------------------------
+
+  function useWebRTC({ onMessage, onStateChange }) {
+    const [rtcState, setRtcState] = useState('idle');
+    const pcRef = useRef(null);
+    const dcRef = useRef(null);
+    const tokenRef = useRef(null);
+
+    // Helper: update both local state and notify parent
+    const updateState = useCallback((state) => {
+      setRtcState(state);
+      if (onStateChange) onStateChange(state);
+    }, [onStateChange]);
+
+    // -----------------------------------------------------------------------
+    // connect()
+    // -----------------------------------------------------------------------
+    const connect = useCallback(async () => {
+      updateState('connecting');
+
+      // Step 1: Fetch ephemeral token from backend
+      let token;
+      try {
+        const resp = await fetch('/apps/voice/session');
+        if (!resp.ok) throw new Error(`Session token fetch failed: ${resp.status}`);
+        const data = await resp.json();
+        token = data.value;
+      } catch (err) {
+        console.error('[useWebRTC] Failed to fetch session token:', err);
+        updateState('disconnected');
+        throw err;
+      }
+      tokenRef.current = token;
+
+      // Step 2: Create RTCPeerConnection with STUN
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      });
+      pcRef.current = pc;
+
+      // Step 3: Get user microphone audio and add track
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        console.error('[useWebRTC] getUserMedia failed:', err);
+        pc.close();
+        updateState('disconnected');
+        throw err;
+      }
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      // Step 4: Play incoming audio tracks from OpenAI
+      pc.ontrack = (event) => {
+        const audio = document.createElement('audio');
+        audio.autoplay = true;
+        audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+        document.body.appendChild(audio);
+      };
+
+      // Step 5: Create data channel for OpenAI events
+      const dc = pc.createDataChannel('oai-events');
+      dcRef.current = dc;
+
+      // Step 6 & 7: On data channel open — two-stage VAD setup
+      dc.onopen = () => {
+        // Stage 1: server_vad with noise reduction + transcription
+        const stage1 = {
+          type: 'session.update',
+          session: {
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+            },
+            noise_reduction: { type: 'near_field' },
+            input_audio_transcription: {
+              model: 'gpt-4o-transcribe',
+            },
+          },
+        };
+        dc.send(JSON.stringify(stage1));
+
+        // Stage 2: semantic_vad — must be sent AFTER initial server_vad
+        // (GA API constraint: semantic_vad cannot be the initial type)
+        setTimeout(() => {
+          if (dc.readyState !== 'open') return;
+          const stage2 = {
+            type: 'session.update',
+            session: {
+              turn_detection: {
+                type: 'semantic_vad',
+                eagerness: 'low',
+                create_response: false,
+                interrupt_response: true,
+              },
+            },
+          };
+          dc.send(JSON.stringify(stage2));
+        }, 100);
+      };
+
+      // Step 8: Forward data channel messages to caller
+      dc.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (onMessage) onMessage(msg);
+        } catch (err) {
+          console.warn('[useWebRTC] Failed to parse data channel message:', err);
+        }
+      };
+
+      // Step 9: Track ICE connection state changes
+      pc.oniceconnectionstatechange = () => {
+        const iceState = pc.iceConnectionState;
+        console.debug('[useWebRTC] ICE connection state:', iceState);
+        if (iceState === 'connected' || iceState === 'completed') {
+          updateState('connected');
+        } else if (iceState === 'disconnected' || iceState === 'failed' || iceState === 'closed') {
+          updateState('disconnected');
+        }
+      };
+
+      // Step 10: SDP exchange
+      // Create offer and set as local description
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Wait for ICE gathering to complete (max 2 seconds)
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(resolve, 2000);
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+      });
+
+      // POST SDP offer to backend, get SDP answer
+      let sdpAnswer;
+      try {
+        const sdpResp = await fetch('/apps/voice/sdp', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/sdp',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: pc.localDescription.sdp,
+        });
+        if (!sdpResp.ok) throw new Error(`SDP exchange failed: ${sdpResp.status}`);
+        sdpAnswer = await sdpResp.text();
+      } catch (err) {
+        console.error('[useWebRTC] SDP exchange failed:', err);
+        pc.close();
+        updateState('disconnected');
+        throw err;
+      }
+
+      // Set remote description with the SDP answer
+      await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
+    }, [onMessage, updateState]);
+
+    // -----------------------------------------------------------------------
+    // disconnect()
+    // -----------------------------------------------------------------------
+    const disconnect = useCallback(() => {
+      if (dcRef.current) {
+        try { dcRef.current.close(); } catch (_) {}
+        dcRef.current = null;
+      }
+      if (pcRef.current) {
+        try { pcRef.current.close(); } catch (_) {}
+        pcRef.current = null;
+      }
+      tokenRef.current = null;
+      updateState('idle');
+    }, [updateState]);
+
+    // -----------------------------------------------------------------------
+    // sendDataChannelMessage(msg)
+    // -----------------------------------------------------------------------
+    const sendDataChannelMessage = useCallback((msg) => {
+      const dc = dcRef.current;
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify(msg));
+      } else {
+        console.warn('[useWebRTC] Data channel not open, cannot send message');
+      }
+    }, []);
+
+    return { rtcState, connect, disconnect, sendDataChannelMessage, dcRef };
+  }
+
+  // -------------------------------------------------------------------------
+  // VoiceApp root component
+  // -------------------------------------------------------------------------
+
+  function VoiceApp() {
+    const [transcript, setTranscript] = useState([]);
+    const [error, setError] = useState(null);
+    const [isConnecting, setIsConnecting] = useState(false);
+    const transcriptEndRef = useRef(null);
+
+    // Scroll transcript to bottom when new messages arrive
+    useEffect(() => {
+      if (transcriptEndRef.current) {
+        transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, [transcript]);
+
+    // handleRtcMessage — placeholder for Task 5.3
+    const handleRtcMessage = useCallback((msg) => {
+      console.debug('[VoiceApp] RTC message:', msg);
+    }, []);
+
+    const handleStateChange = useCallback((state) => {
+      console.debug('[VoiceApp] RTC state changed:', state);
+    }, []);
+
+    const { rtcState, connect, disconnect, sendDataChannelMessage, dcRef } = useWebRTC({
+      onMessage: handleRtcMessage,
+      onStateChange: handleStateChange,
+    });
+
+    // handleConnect: POST /apps/voice/sessions then initiate WebRTC
+    const handleConnect = useCallback(async () => {
+      setError(null);
+      setIsConnecting(true);
+      try {
+        // Create Amplifier session on the server
+        const sessResp = await fetch('/apps/voice/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (!sessResp.ok) {
+          throw new Error(`Failed to create session: ${sessResp.status}`);
+        }
+        const sessData = await sessResp.json();
+        console.debug('[VoiceApp] Session created:', sessData.session_id);
+
+        // Now initiate WebRTC connection
+        await connect();
+      } catch (err) {
+        console.error('[VoiceApp] Connection failed:', err);
+        setError(err.message || 'Connection failed. Please try again.');
+      } finally {
+        setIsConnecting(false);
+      }
+    }, [connect]);
+
+    const handleDisconnect = useCallback(() => {
+      disconnect();
+      setTranscript([]);
+      setError(null);
+    }, [disconnect]);
+
+    // Derive display state
+    const isIdle = rtcState === 'idle';
+    const isConnected = rtcState === 'connected';
+    const statusLabel = {
+      idle: 'Disconnected',
+      connecting: 'Connecting…',
+      connected: 'Connected',
+      disconnected: 'Disconnected',
+    }[rtcState] || 'Disconnected';
+
+    return html`
+      <div id="app">
+        <div class="app-header">
+          <div class="app-title">Amplifier Voice</div>
+          <div class=${'status-badge ' + rtcState}>
+            <div class="status-dot"></div>
+            ${statusLabel}
+          </div>
+        </div>
+
+        ${error && html`
+          <div class="error-banner">
+            <span>⚠</span>
+            <span>${error}</span>
+          </div>
+        `}
+
+        <div class="transcript-container">
+          ${transcript.length === 0
+            ? html`<div class="transcript-empty">No messages yet. Start a voice chat to begin.</div>`
+            : transcript.map((msg, i) => html`
+                <div key=${i} class=${'message-bubble ' + msg.role}>
+                  <div class="bubble-label">${msg.role}</div>
+                  <div class="bubble-text">${msg.content}</div>
+                </div>
+              `)
+          }
+          <div ref=${transcriptEndRef}></div>
+        </div>
+
+        <div class="controls">
+          ${isIdle || rtcState === 'disconnected'
+            ? html`
+                <button
+                  class="btn btn-start"
+                  onClick=${handleConnect}
+                  disabled=${isConnecting}
+                >
+                  ${isConnecting ? 'Connecting…' : 'Start Voice Chat'}
+                </button>
+              `
+            : html`
+                <button
+                  class="btn btn-disconnect"
+                  onClick=${handleDisconnect}
+                  disabled=${rtcState === 'connecting'}
+                >
+                  Disconnect
+                </button>
+              `
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  // -------------------------------------------------------------------------
+  // Mount app
+  // -------------------------------------------------------------------------
+  render(h(VoiceApp, null), document.getElementById('app'));
+
+})();
+</script>
+</body>
+</html>
