@@ -1,16 +1,14 @@
-"""Install Wizard App - Quickstart setup flow.
+"""Install Wizard App - Multi-step setup wizard.
 
 Handles initial Amplifier setup only. Post-setup configuration
 management (features, tiers, provider changes) lives in the
 settings app.
 
 Routes:
-    GET  /             - Quickstart page (paste API key)
-    GET  /wizard       - Full multi-step setup wizard
+    GET  /             - Setup wizard
     GET  /detect       - Auto-detect environment
     GET  /modules      - Feature/module catalog
     GET  /providers    - Provider catalog with config status
-    POST /quickstart   - Fast-path API key setup
     POST /steps/welcome   - Save identity + workspace
     POST /steps/config    - Save cache/preflight
     POST /steps/modules   - Toggle features in overlay
@@ -27,7 +25,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -55,12 +53,6 @@ _static_dir = Path(__file__).parent / "static"
 # --- Pydantic Models ---
 
 
-class QuickstartRequest(BaseModel):
-    api_key: str
-    workspace_root: str = ""
-    github_handle: str = ""
-
-
 class WelcomeData(BaseModel):
     workspace_root: str = ""
     github_handle: str = ""
@@ -80,20 +72,8 @@ class ProviderData(BaseModel):
 
 
 @router.get("/", response_class=HTMLResponse)
-async def quickstart_page() -> HTMLResponse:
-    """Serve the quickstart page (fast-path API key entry)."""
-    html_file = _static_dir / "quickstart.html"
-    if html_file.exists():
-        return HTMLResponse(content=html_file.read_text())
-    return HTMLResponse(
-        content="<h1>Install Wizard</h1><p>quickstart.html not found.</p>",
-        status_code=500,
-    )
-
-
-@router.get("/wizard", response_class=HTMLResponse)
 async def wizard_page() -> HTMLResponse:
-    """Serve the full multi-step setup wizard."""
+    """Serve the setup wizard."""
     html_file = _static_dir / "wizard.html"
     if html_file.exists():
         return HTMLResponse(content=html_file.read_text())
@@ -268,43 +248,6 @@ async def get_providers() -> dict[str, Any]:
             }
         )
     return {"providers": providers}
-
-
-@router.post("/quickstart")
-async def quickstart(req: QuickstartRequest) -> dict[str, Any]:
-    """Fast path: paste one API key, get a working setup.
-
-    1. Detect provider from key prefix
-    2. Write key to keys.env (chmod 600)
-    3. Add provider config to settings.yaml (additive)
-    4. Create local overlay bundle (includes amplifier-start + provider)
-    """
-    if not req.api_key.strip():
-        raise HTTPException(status_code=400, detail="API key is required")
-
-    provider_id = detect_provider(req.api_key)
-    if provider_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Unknown API key format."
-                " Expected sk-ant-... (Anthropic) or sk-... (OpenAI)"
-            ),
-        )
-
-    reg = register_provider(provider_id, req.api_key)
-
-    # Persist identity and workspace to distro settings
-    if req.github_handle:
-        distro_settings.update("identity", github_handle=req.github_handle)
-    if req.workspace_root:
-        distro_settings.update(workspace_root=req.workspace_root)
-
-    return {
-        "status": "ready",
-        "provider": reg.provider_id,
-        "model": reg.default_model,
-    }
 
 
 # --- Step Handlers ---
@@ -504,7 +447,7 @@ router.include_router(steps_router)
 
 manifest = AppManifest(
     name="install-wizard",
-    description="Quickstart setup for Amplifier",
+    description="Setup wizard for Amplifier",
     version="0.1.0",
     router=router,
 )
