@@ -1302,11 +1302,12 @@ body {
     const toolName = (runningTools && runningTools.length > 0) ? runningTools[0] : null;
 
     const handleClick = useCallback(async () => {
-      if (cancelling) return;
-
       const now = Date.now();
       const isDoubleClick = (now - lastClickRef.current) < 400;
       lastClickRef.current = now;
+
+      // Allow double-click escalation even if already cancelling
+      if (cancelling && !isDoubleClick) return;
 
       const immediate = isDoubleClick;
 
