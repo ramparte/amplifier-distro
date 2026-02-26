@@ -22,6 +22,16 @@ Exit criteria (VoiceDisplaySystem):
 6. suppressed pattern 'debug:' not spoken
 7. normal info message is spoken
 8. very short message ('ok', len<3) not spoken
+
+Exit criteria (VoiceApprovalSystem):
+1. safe tool (read_file) auto-approved
+2. web_search auto-approved
+3. dangerous tool (bash) pushes SSE approval_request event, returns True when approved
+4. dangerous tool (write_file) returns False when denied
+5. spoken prompt for bash includes command text
+6. spoken prompt for write_file includes path
+7. SAFE_TOOLS contains read_file, web_search, glob
+8. DANGEROUS_TOOLS contains bash, write_file, git_push
 """
 
 from __future__ import annotations
@@ -32,6 +42,9 @@ import pytest
 
 from amplifier_distro.server.apps.voice.protocols.event_streaming import (
     EventStreamingHook,
+)
+from amplifier_distro.server.apps.voice.protocols.voice_approval import (
+    VoiceApprovalSystem,
 )
 from amplifier_distro.server.apps.voice.protocols.voice_display import (
     VoiceDisplaySystem,
@@ -310,3 +323,117 @@ class TestVoiceDisplaySystem:
         system = VoiceDisplaySystem()
         msg = await system.display("ok", level="info")
         assert msg.should_speak is False
+
+
+class TestVoiceApprovalSystem:
+    """Verify VoiceApprovalSystem approves/denies tool calls with SSE events."""
+
+    def _make_system(self) -> tuple[VoiceApprovalSystem, asyncio.Queue]:
+        queue: asyncio.Queue = asyncio.Queue()
+        system = VoiceApprovalSystem(queue)
+        return system, queue
+
+    # ------------------------------------------------------------------ #
+    #  Auto-approval for safe tools                                       #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_safe_tool_read_file_auto_approved(self) -> None:
+        """Safe tool read_file is auto-approved without pushing any event."""
+        system, queue = self._make_system()
+        result = await system.request_approval("read_file", {"path": "/tmp/test.txt"})
+        assert result is True
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_safe_tool_web_search_auto_approved(self) -> None:
+        """Safe tool web_search is auto-approved without pushing any event."""
+        system, queue = self._make_system()
+        result = await system.request_approval("web_search", {"query": "python"})
+        assert result is True
+        assert queue.empty()
+
+    # ------------------------------------------------------------------ #
+    #  Dangerous tools require approval                                   #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_dangerous_tool_bash_pushes_event_and_returns_true_when_approved(
+        self,
+    ) -> None:
+        """bash pushes approval_request SSE event, returns True when approved."""
+        system, queue = self._make_system()
+
+        task = asyncio.create_task(
+            system.request_approval("bash", {"command": "ls -la /tmp"})
+        )
+
+        # Yield to event loop so the task runs up to its await point
+        await asyncio.sleep(0)
+
+        event = queue.get_nowait()
+        assert event["type"] == "approval_request"
+        assert event["tool_name"] == "bash"
+        assert event["is_dangerous"] is True
+        assert "request_id" in event
+        assert "spoken_prompt" in event
+
+        # Approve and collect result
+        system.handle_response(True)
+        result = await task
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_dangerous_tool_write_file_returns_false_when_denied(
+        self,
+    ) -> None:
+        """write_file pushes approval_request SSE event, returns False when denied."""
+        system, queue = self._make_system()
+
+        task = asyncio.create_task(
+            system.request_approval("write_file", {"path": "/tmp/output.txt"})
+        )
+
+        await asyncio.sleep(0)
+
+        event = queue.get_nowait()
+        assert event["type"] == "approval_request"
+        assert event["tool_name"] == "write_file"
+
+        system.handle_response(False)
+        result = await task
+        assert result is False
+
+    # ------------------------------------------------------------------ #
+    #  Spoken prompt generation                                           #
+    # ------------------------------------------------------------------ #
+
+    def test_spoken_prompt_bash_includes_command_text(self) -> None:
+        """Spoken prompt for bash contains the command being executed."""
+        system, _ = self._make_system()
+        prompt = system.generate_spoken_prompt("bash", {"command": "rm -rf /tmp/old"})
+        assert "rm -rf /tmp/old" in prompt
+
+    def test_spoken_prompt_write_file_includes_path(self) -> None:
+        """Spoken prompt for write_file contains the target path."""
+        system, _ = self._make_system()
+        prompt = system.generate_spoken_prompt(
+            "write_file", {"path": "/etc/config.yml"}
+        )
+        assert "/etc/config.yml" in prompt
+
+    # ------------------------------------------------------------------ #
+    #  Class variable membership                                          #
+    # ------------------------------------------------------------------ #
+
+    def test_safe_tools_contains_expected_members(self) -> None:
+        """SAFE_TOOLS contains read_file, web_search, and glob."""
+        assert "read_file" in VoiceApprovalSystem.SAFE_TOOLS
+        assert "web_search" in VoiceApprovalSystem.SAFE_TOOLS
+        assert "glob" in VoiceApprovalSystem.SAFE_TOOLS
+
+    def test_dangerous_tools_contains_expected_members(self) -> None:
+        """DANGEROUS_TOOLS contains bash, write_file, and git_push."""
+        assert "bash" in VoiceApprovalSystem.DANGEROUS_TOOLS
+        assert "write_file" in VoiceApprovalSystem.DANGEROUS_TOOLS
+        assert "git_push" in VoiceApprovalSystem.DANGEROUS_TOOLS
