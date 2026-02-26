@@ -16,7 +16,7 @@ from amplifier_distro.server.apps.voice.transcript.models import (
 class TestVoiceConversation:
     """Tests for VoiceConversation dataclass."""
 
-    def _make_conversation(self, **kwargs):
+    def _make_conversation(self, **kwargs) -> VoiceConversation:
         defaults = {
             "id": "session-abc-123",
             "title": "Test Conversation",
@@ -99,7 +99,7 @@ class TestVoiceConversation:
 class TestTranscriptEntry:
     """Tests for TranscriptEntry dataclass."""
 
-    def _make_entry(self, **kwargs):
+    def _make_entry(self, **kwargs) -> TranscriptEntry:
         defaults = {
             "id": "entry-001",
             "conversation_id": "session-abc-123",

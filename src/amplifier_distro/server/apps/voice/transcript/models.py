@@ -20,6 +20,11 @@ def _parse_datetime(value: Any) -> datetime:
     return datetime.fromisoformat(str(value))
 
 
+def _omit_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of d with all None-valued keys removed."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
 @dataclass
 class DisconnectEvent:
     """Records a single disconnect event during a voice conversation."""
@@ -87,7 +92,7 @@ class VoiceConversation:
             "reconnect_count": self.reconnect_count,
             "disconnect_history": [e.to_dict() for e in self.disconnect_history],
         }
-        return {k: v for k, v in result.items() if v is not None}
+        return _omit_none(result)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VoiceConversation:
@@ -141,7 +146,7 @@ class TranscriptEntry:
             "tool_name": self.tool_name,
             "call_id": self.call_id,
         }
-        return {k: v for k, v in result.items() if v is not None}
+        return _omit_none(result)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TranscriptEntry:
