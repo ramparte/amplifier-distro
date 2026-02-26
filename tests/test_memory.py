@@ -363,127 +363,6 @@ class TestMemoryAPIEndpoints:
         assert data["items"][0]["task"] == "Roundtrip"
 
 
-# --- T3.3: Web Chat Memory Integration ---
-
-
-class TestWebChatMemoryIntegration:
-    """Test memory pattern detection and routing in web chat."""
-
-    def test_check_memory_intent_remember_this(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("remember this: tabs over spaces")
-        assert result is not None
-        assert result[0] == "remember"
-        assert result[1] == "tabs over spaces"
-
-    def test_check_memory_intent_remember_that(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("remember that the sky is blue")
-        assert result is not None
-        assert result[0] == "remember"
-        assert result[1] == "the sky is blue"
-
-    def test_check_memory_intent_remember_colon(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("remember: important thing")
-        assert result is not None
-        assert result[0] == "remember"
-        assert result[1] == "important thing"
-
-    def test_check_memory_intent_recall(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("what do you remember about architecture")
-        assert result is not None
-        assert result[0] == "recall"
-        assert result[1] == "architecture"
-
-    def test_check_memory_intent_recall_shortcut(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("recall git branching")
-        assert result is not None
-        assert result[0] == "recall"
-        assert result[1] == "git branching"
-
-    def test_check_memory_intent_search_memory(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("search memory for preferences")
-        assert result is not None
-        assert result[0] == "recall"
-        assert result[1] == "preferences"
-
-    def test_check_memory_intent_not_memory(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("How do I write a function?")
-        assert result is None
-
-    def test_check_memory_intent_case_insensitive(self):
-        from amplifier_distro.server.apps.web_chat import check_memory_intent
-
-        result = check_memory_intent("REMEMBER THIS: loud memory")
-        assert result is not None
-        assert result[0] == "remember"
-
-    @pytest.fixture
-    def webchat_memory_client(self, memory_dir: Path) -> TestClient:
-        """Create a web-chat TestClient with memory service."""
-        import amplifier_distro.server.apps.web_chat as wc
-        from amplifier_distro.server.app import DistroServer
-        from amplifier_distro.server.apps.web_chat import manifest
-        from amplifier_distro.server.memory import (
-            get_memory_service,
-            reset_memory_service,
-        )
-        from amplifier_distro.server.services import init_services, reset_services
-
-        reset_services()
-        reset_memory_service()
-        wc._active_session_id = None
-
-        init_services(dev_mode=True)
-        get_memory_service(memory_dir=memory_dir)
-
-        server = DistroServer()
-        server.register_app(manifest)
-        return TestClient(server.app)
-
-    def test_webchat_remember_via_chat(self, webchat_memory_client: TestClient):
-        """Memory commands work even without a session."""
-        response = webchat_memory_client.post(
-            "/apps/web-chat/api/chat",
-            json={"message": "remember this: always use type hints"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "Remembered" in data["response"]
-        assert "memory_action" in data
-        assert data["memory_action"] == "remember"
-
-    def test_webchat_recall_via_chat(self, webchat_memory_client: TestClient):
-        """Recall searches the memory store."""
-        # First store a memory
-        webchat_memory_client.post(
-            "/apps/web-chat/api/chat",
-            json={"message": "remember this: use pytest for testing"},
-        )
-        # Now recall
-        response = webchat_memory_client.post(
-            "/apps/web-chat/api/chat",
-            json={"message": "what do you remember about pytest"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "memory_action" in data
-        assert data["memory_action"] == "recall"
-        assert "pytest" in data["response"]
-
-
 # --- T3.4: Slack Memory Commands ---
 
 
@@ -594,7 +473,7 @@ class TestSlackMemoryCommands:
 
     def test_command_parse_work_status_alias(self, slack_command_handler):
         """Verify 'work-status' is aliased to 'work_status'."""
-        cmd, args = slack_command_handler.parse_command("work-status")
+        cmd, _args = slack_command_handler.parse_command("work-status")
         assert cmd == "work_status"
 
 

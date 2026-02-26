@@ -1,6 +1,6 @@
 """Server-level session backend - shared across all apps.
 
-The SessionBackend protocol defines how any server app (web-chat, Slack,
+The SessionBackend protocol defines how any server app (chat, Slack,
 voice, etc.) creates and interacts with Amplifier sessions. The server
 owns ONE backend instance and shares it with all apps.
 
@@ -34,7 +34,7 @@ class SessionInfo:
     project_id: str = ""
     working_dir: str = ""
     is_active: bool = True
-    # Which app created this session (e.g., "web-chat", "slack", "voice")
+    # Which app created this session (e.g., "chat", "slack", "voice")
     created_by_app: str = ""
     description: str = ""
 
