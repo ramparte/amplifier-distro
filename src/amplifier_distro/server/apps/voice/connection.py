@@ -56,21 +56,21 @@ class VoiceConnection:
         """Create an Amplifier session for this voice connection.
 
         1. Creates EventStreamingHook wired to the event queue
-        2. Calls backend.create_session(app_name='voice', working_dir=...,
-           event_queue=...)
+        2. Calls backend.create_session(description='voice', working_dir=...,
+           event_queue=...) — hook wiring happens automatically inside create_session
+           when event_queue is passed
         3. Stores session_id and session_obj
-        4. Calls backend.register_hooks(session_id, hook) -> stores unregister callable
-        5. Registers 'spawn' capability on session.coordinator so delegate tool
+        4. Registers 'spawn' capability on session.coordinator so delegate tool
            sub-sessions use the shared backend (hooks, observability, tracking)
-        6. Returns session_id
+        5. Returns session_id
         """
         # 1. Create the streaming hook wired to our event queue
         hook = EventStreamingHook(event_queue=self._event_queue)
         self._hook = hook
 
-        # 2. Create session via backend
+        # 2. Create session via backend — event_queue wires the hook internally
         session = await self._backend.create_session(
-            app_name="voice",
+            description="voice",
             working_dir=workspace_root,
             event_queue=self._event_queue,
         )
@@ -79,11 +79,7 @@ class VoiceConnection:
         self._session_obj = session
         self._session_id = session.session_id
 
-        # 4. Register hooks via backend and store the unregister callable
-        unregister = self._backend.register_hooks(self._session_id, hook)
-        self._hook_unregister = unregister
-
-        # 5. Register 'spawn' capability so delegate tool sub-sessions route through
+        # 4. Register 'spawn' capability so delegate tool sub-sessions route through
         #    shared backend (ensures hooks, observability, and session tracking)
         coordinator = getattr(session, "coordinator", None)
         if coordinator is not None:
@@ -136,7 +132,9 @@ class VoiceConnection:
     async def cancel(self, immediate: bool = False) -> None:
         """Cancel the running session."""
         if self._session_id is not None:
-            await self._backend.cancel_session(self._session_id, immediate=immediate)
+            await self._backend.cancel_session(
+                self._session_id, level="immediate" if immediate else "graceful"
+            )
 
     def _cleanup_hook(self) -> None:
         """Unregister the hook if one is registered. Always safe to call."""

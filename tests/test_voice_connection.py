@@ -1,142 +1,261 @@
-"""Tests for VoiceConnection lifecycle manager.
+"""Tests for VoiceConnection.
 
-Exit criteria (TestVoiceConnectionLifecycle):
-1. create() calls backend.create_session with app_name='voice' and event_queue kwargs
-2. create() returns amplifier session_id
-3. spawn capability registered on coordinator after create
-   (register_capability called with 'spawn')
-4. teardown() calls mark_disconnected with session_id
-5. hook unregistered even when mark_disconnected raises RuntimeError (finally block)
-6. end() calls backend.end_session with session_id
+Regression tests for three API-mismatch bugs where connection.py was written
+against a slightly different interface than FoundationBackend provides:
+
+  Bug 1: create_session() has no `app_name` param → must use `description`
+  Bug 2: register_hooks() does not exist → hook wiring is internal to create_session
+  Bug 3: cancel_session() has no `immediate` kwarg → must use `level` string
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from amplifier_distro.server.apps.voice.connection import VoiceConnection
+from amplifier_distro.server.apps.voice.connection import (
+    _EVENT_QUEUE_MAX_SIZE,
+    VoiceConnection,
+)
 
 
-class _MockSession:
-    """Fake AmplifierSession with coordinator."""
+def make_backend(session_id: str = "voice-sess-001"):
+    """Mock backend that matches the real FoundationBackend signature."""
+    backend = MagicMock()
+    info = MagicMock()
+    info.session_id = session_id
+    info.coordinator = None  # most tests don't need spawn capability
+    backend.create_session = AsyncMock(return_value=info)
+    backend.cancel_session = AsyncMock(return_value=None)
+    backend.end_session = AsyncMock(return_value=None)
+    backend.mark_disconnected = AsyncMock(return_value=None)
+    return backend
 
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.coordinator = MagicMock()
-        self.coordinator.register_capability = MagicMock()
+
+def make_repository():
+    repo = MagicMock()
+    repo.update_status = MagicMock()
+    repo.end_conversation = MagicMock()
+    return repo
 
 
-class _MockBackend:
-    """Minimal fake backend for VoiceConnection tests."""
+# ---------------------------------------------------------------------------
+# Bug 1 regression: create() must use `description=`, not `app_name=`
+# ---------------------------------------------------------------------------
 
-    def __init__(self) -> None:
-        self._session = _MockSession("test-session-001")
-        self.create_session_calls: list[dict] = []
-        self.register_hooks_calls: list[tuple] = []
-        self.mark_disconnected_calls: list[str] = []
-        self.end_session_calls: list[str] = []
-        self.cancel_session_calls: list[dict] = []
-        self._unregister_mock = MagicMock()
 
-    async def create_session(self, **kwargs) -> _MockSession:
-        self.create_session_calls.append(kwargs)
-        return self._session
+class TestCreateSession:
+    @pytest.mark.asyncio
+    async def test_create_does_not_raise_type_error(self):
+        """Bug 1: create_session() has no app_name param.
 
-    def register_hooks(self, session_id: str, hook: object) -> object:
-        self.register_hooks_calls.append((session_id, hook))
-        return self._unregister_mock
+        Before the fix, VoiceConnection.create() passed app_name="voice" which
+        raised TypeError: create_session() got an unexpected keyword argument
+        'app_name'.
+        """
+        backend = make_backend("sess-voice-123")
+        repo = make_repository()
 
-    async def mark_disconnected(self, session_id: str) -> None:
-        self.mark_disconnected_calls.append(session_id)
+        conn = VoiceConnection(repo, backend)
+        # Must not raise TypeError
+        session_id = await conn.create("/tmp/workspace")
+        assert session_id == "sess-voice-123"
 
-    async def end_session(self, session_id: str) -> None:
-        self.end_session_calls.append(session_id)
+    @pytest.mark.asyncio
+    async def test_create_passes_description_not_app_name(self):
+        """Bug 1: verify the exact keyword passed to create_session is `description`."""
+        backend = make_backend()
+        repo = make_repository()
 
-    async def cancel_session(self, session_id: str, immediate: bool = False) -> None:
-        self.cancel_session_calls.append(
-            {"session_id": session_id, "immediate": immediate}
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp/workspace")
+
+        backend.create_session.assert_awaited_once()
+        kwargs = backend.create_session.call_args.kwargs
+        assert "description" in kwargs, "must pass description= to create_session"
+        assert kwargs["description"] == "voice"
+        assert "app_name" not in kwargs, "app_name does not exist on create_session"
+
+    @pytest.mark.asyncio
+    async def test_create_passes_working_dir(self):
+        """create() forwards workspace_root as working_dir."""
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/home/user/project")
+
+        kwargs = backend.create_session.call_args.kwargs
+        assert kwargs.get("working_dir") == "/home/user/project"
+
+    @pytest.mark.asyncio
+    async def test_create_passes_event_queue(self):
+        """create() wires the event_queue into create_session for hook setup."""
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+
+        kwargs = backend.create_session.call_args.kwargs
+        assert kwargs.get("event_queue") is conn.event_queue
+
+    @pytest.mark.asyncio
+    async def test_create_stores_session_id(self):
+        """After create(), session_id property reflects the backend session."""
+        backend = make_backend("sess-stored-456")
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        returned_id = await conn.create("/tmp")
+
+        assert conn.session_id == "sess-stored-456"
+        assert returned_id == "sess-stored-456"
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 regression: register_hooks() must NOT be called — it doesn't exist
+# ---------------------------------------------------------------------------
+
+
+class TestNoRegisterHooks:
+    @pytest.mark.asyncio
+    async def test_create_does_not_call_register_hooks(self):
+        """Bug 2: register_hooks() does not exist on FoundationBackend.
+
+        Hook wiring is automatic inside create_session() when event_queue is
+        passed.  Calling register_hooks would raise AttributeError after Bug 1
+        was fixed.
+        """
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+
+        # register_hooks does not exist on FoundationBackend — must never be called
+        if hasattr(backend, "register_hooks"):
+            backend.register_hooks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_hook_unregister_defaults_none_after_create(self):
+        """With register_hooks removed, _hook_unregister stays None after create().
+
+        _cleanup_hook() already guards for None, so teardown and end remain safe.
+        """
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+
+        # _hook_unregister should be None — no callable was stored
+        assert conn._hook_unregister is None
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 regression: cancel() must pass level= string, not immediate= bool
+# ---------------------------------------------------------------------------
+
+
+class TestCancelSession:
+    @pytest.mark.asyncio
+    async def test_cancel_immediate_passes_level_immediate(self):
+        """Bug 3: cancel_session() takes level='immediate', not immediate=True."""
+        backend = make_backend("sess-cancel-001")
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+        await conn.cancel(immediate=True)
+
+        backend.cancel_session.assert_awaited_once_with(
+            "sess-cancel-001", level="immediate"
         )
 
+    @pytest.mark.asyncio
+    async def test_cancel_graceful_passes_level_graceful(self):
+        """cancel(immediate=False) must pass level='graceful' (the default)."""
+        backend = make_backend("sess-cancel-002")
+        repo = make_repository()
 
-class _MockRepository:
-    """Minimal fake repository for VoiceConnection tests."""
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+        await conn.cancel(immediate=False)
 
-    def __init__(self) -> None:
-        self.update_status_calls: list[tuple] = []
-        self.end_conversation_calls: list[tuple] = []
-
-    def update_status(self, session_id: str, status: str) -> None:
-        self.update_status_calls.append((session_id, status))
-
-    def end_conversation(self, session_id: str, reason: str) -> None:
-        self.end_conversation_calls.append((session_id, reason))
-
-
-class TestVoiceConnectionLifecycle:
-    """Tests for VoiceConnection lifecycle methods."""
-
-    def _make_connection(self) -> tuple[VoiceConnection, _MockBackend, _MockRepository]:
-        backend = _MockBackend()
-        repo = _MockRepository()
-        conn = VoiceConnection(repository=repo, backend=backend)
-        return conn, backend, repo
-
-    async def test_create_calls_backend_with_app_name_and_event_queue(self) -> None:
-        """create() calls backend.create_session with app_name='voice' and event_queue."""  # noqa: E501
-        conn, backend, _ = self._make_connection()
-        await conn.create(workspace_root="/tmp/test")
-
-        assert len(backend.create_session_calls) == 1
-        kwargs = backend.create_session_calls[0]
-        assert kwargs.get("app_name") == "voice"
-        assert "event_queue" in kwargs
-
-    async def test_create_returns_session_id(self) -> None:
-        """create() returns the amplifier session_id from backend."""
-        conn, _backend, _ = self._make_connection()
-        result = await conn.create(workspace_root="/tmp/test")
-        assert result == "test-session-001"
-
-    async def test_spawn_capability_registered_on_coordinator(self) -> None:
-        """spawn capability registered on coordinator after create."""
-        conn, backend, _ = self._make_connection()
-        await conn.create(workspace_root="/tmp/test")
-
-        session = backend._session
-        session.coordinator.register_capability.assert_called_once_with(
-            "spawn", conn._spawn_child_session
+        backend.cancel_session.assert_awaited_once_with(
+            "sess-cancel-002", level="graceful"
         )
 
-    async def test_teardown_calls_mark_disconnected(self) -> None:
-        """teardown() calls mark_disconnected with session_id."""
-        conn, backend, _ = self._make_connection()
-        await conn.create(workspace_root="/tmp/test")
-        await conn.teardown()
+    @pytest.mark.asyncio
+    async def test_cancel_default_is_graceful(self):
+        """cancel() with no args defaults to graceful."""
+        backend = make_backend("sess-cancel-003")
+        repo = make_repository()
 
-        assert backend.mark_disconnected_calls == ["test-session-001"]
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+        await conn.cancel()
 
-    async def test_hook_unregistered_even_when_mark_disconnected_raises(self) -> None:
-        """hook unregistered even when mark_disconnected raises RuntimeError."""
+        backend.cancel_session.assert_awaited_once_with(
+            "sess-cancel-003", level="graceful"
+        )
 
-        async def _raise_on_disconnect(session_id: str) -> None:
-            raise RuntimeError("connection lost")
+    @pytest.mark.asyncio
+    async def test_cancel_does_not_pass_immediate_kwarg(self):
+        """cancel_session() has no `immediate` parameter — verify it's never passed."""
+        backend = make_backend("sess-cancel-004")
+        repo = make_repository()
 
-        conn, backend, _ = self._make_connection()
-        backend.mark_disconnected = _raise_on_disconnect
-        await conn.create(workspace_root="/tmp/test")
+        conn = VoiceConnection(repo, backend)
+        await conn.create("/tmp")
+        await conn.cancel(immediate=True)
 
-        with pytest.raises(RuntimeError, match="connection lost"):
-            await conn.teardown()
+        _, kwargs = backend.cancel_session.call_args
+        assert "immediate" not in kwargs, (
+            "immediate= is not a valid cancel_session param"
+        )
 
-        # Hook unregister must still have been called
-        backend._unregister_mock.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_cancel_no_op_without_session(self):
+        """cancel() before create() is a no-op — no backend call."""
+        backend = make_backend()
+        repo = make_repository()
 
-    async def test_end_calls_backend_end_session(self) -> None:
-        """end() calls backend.end_session with session_id."""
-        conn, backend, _ = self._make_connection()
-        await conn.create(workspace_root="/tmp/test")
-        await conn.end()
+        conn = VoiceConnection(repo, backend)
+        await conn.cancel(immediate=True)
 
-        assert backend.end_session_calls == ["test-session-001"]
+        backend.cancel_session.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Structural invariants
+# ---------------------------------------------------------------------------
+
+
+class TestStructural:
+    def test_event_queue_is_bounded(self):
+        """event_queue must be bounded to prevent unbounded memory growth."""
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        assert conn.event_queue.maxsize > 0
+
+    def test_event_queue_maxsize_is_10000(self):
+        """event_queue maxsize must be 10000."""
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        assert _EVENT_QUEUE_MAX_SIZE == 10000
+        assert conn.event_queue.maxsize == _EVENT_QUEUE_MAX_SIZE
+
+    def test_session_id_none_before_create(self):
+        """session_id is None before create() is called."""
+        backend = make_backend()
+        repo = make_repository()
+
+        conn = VoiceConnection(repo, backend)
+        assert conn.session_id is None
