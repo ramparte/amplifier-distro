@@ -230,6 +230,11 @@ def stub_voice_session() -> dict[str, Any]:
     }
 
 
+def stub_voice_client_secret() -> str:
+    """Canned ephemeral client secret token for GA Realtime API (stub mode)."""
+    return "ek_test_stub_token_not_real"
+
+
 def stub_voice_sdp() -> str:
     """Canned SDP answer for /apps/voice/sdp."""
     return (
