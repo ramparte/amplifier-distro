@@ -301,6 +301,80 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Provider Cards                                                     */
+/* ------------------------------------------------------------------ */
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.provider-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.provider-card:hover { border-color: var(--accent); }
+.provider-card.configured { border-color: var(--success); }
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.provider-card-header h4 { margin: 0; font-size: 14px; font-weight: 600; }
+.provider-card p { margin: 0; font-size: 12px; color: var(--text-secondary); }
+.provider-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.provider-badge.configured { background: rgba(34,197,94,0.15); color: var(--success); }
+.provider-badge.detected { background: rgba(59,130,246,0.15); color: var(--accent); }
+.provider-env-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.env-hint { font-size: 12px; color: var(--text-secondary); }
+.provider-key-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.provider-key-row input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+}
+.provider-key-row input:focus { outline: none; border-color: var(--accent); }
+.provider-save-msg { font-size: 12px; margin-top: 8px; }
+.provider-save-msg.ok { color: var(--success); }
+.provider-save-msg.fail { color: var(--error); }
+.provider-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Feature Rows                                                       */
 /* ------------------------------------------------------------------ */
 .feature-list {
@@ -667,6 +741,12 @@ const state = {
   workStatus: null,
   serverStatus: null,
   loaded: false,
+  // Providers
+  providers: [],
+  selectedProvider: null,
+  providerKeyInput: '',
+  savingProvider: null,
+  providerSaveResult: null,
 };
 
 const API = '/apps/settings';
@@ -708,7 +788,7 @@ async function coreApi(method, path, body) {
 /*  Load Data                                                          */
 /* ================================================================== */
 async function loadAll() {
-  const [statusData, detectData, configData, integrationsData, memoryData, workData, serverData] = await Promise.all([
+  const [statusData, detectData, configData, integrationsData, memoryData, workData, serverData, provData] = await Promise.all([
     api('GET', '/status'),
     fetch('/apps/install-wizard/detect').then(r => r.ok ? r.json() : { error: 'HTTP ' + r.status }).catch(() => ({ error: true })),
     api('GET', '/distro-settings'),
@@ -716,6 +796,7 @@ async function loadAll() {
     coreApi('GET', '/memory/recall?q=*').catch(() => ({ error: true })),
     coreApi('GET', '/memory/work-status'),
     coreApi('GET', '/status'),
+    api('GET', '/providers'),
   ]);
   state.status = statusData.error ? null : statusData;
   state.detect = detectData.error ? null : detectData;
@@ -724,6 +805,7 @@ async function loadAll() {
   state.memoryCount = (memoryData && !memoryData.error && memoryData.count != null) ? memoryData.count : null;
   state.workStatus = (workData && !workData.error) ? workData : null;
   state.serverStatus = (serverData && !serverData.error) ? serverData : null;
+  if (provData && !provData.error && provData.providers) state.providers = provData.providers;
   state.loaded = true;
   render();
 }
@@ -869,16 +951,12 @@ function render() {
   const tier1 = features.filter(f => f.tier === 1);
   const tier2 = features.filter(f => f.tier === 2);
 
-  const provider = status.provider || 'unknown';
-  const model = status.model || '';
-  const connected = status.phase === 'ready' || !!status.provider;
-
   card.innerHTML = renderHeader()
     + renderServerInfo()
     + '<hr class="section-divider">'
     + renderConfigSection(config)
     + '<hr class="section-divider">'
-    + renderProvider(provider, model, connected)
+    + renderProviders()
     + '<hr class="section-divider">'
     + renderFeatureSection('Recommended', tier1, features.length > 0)
     + renderTierAction(1, tier1)
@@ -976,39 +1054,83 @@ function renderConfigSection(config) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Provider                                                           */
+/*  Providers                                                          */
 /* ------------------------------------------------------------------ */
-function renderProvider(provider, model, connected) {
-  const providerLabel = provider === 'anthropic' ? 'Anthropic'
-    : provider === 'openai' ? 'OpenAI'
-    : provider.charAt(0).toUpperCase() + provider.slice(1);
-  const iconClass = provider === 'anthropic' ? 'anthropic'
-    : provider === 'openai' ? 'openai' : 'unknown';
-  const iconLetter = provider === 'anthropic' ? 'A'
-    : provider === 'openai' ? 'O' : '?';
-  const statusClass = connected ? 'connected' : 'disconnected';
-  const statusLabel = connected ? 'Connected' : 'Not configured';
+function renderProviders() {
+  const providers = state.providers || [];
+  if (providers.length === 0) {
+    return '<div class="section">'
+      + '<div class="section-title">Providers</div>'
+      + '<div style="color: var(--text-secondary); font-size: 13px; padding: 20px 0;">'
+      + 'Provider information not available.'
+      + '</div></div>';
+  }
 
-  return '<div class="section">'
-    + '<div class="section-title">Provider</div>'
-    + '<div class="provider-status">'
-    +   '<div class="provider-info">'
-    +     '<div class="provider-icon ' + iconClass + '">' + esc(iconLetter) + '</div>'
-    +     '<div class="provider-details">'
-    +       '<div class="provider-name">' + esc(providerLabel) + '</div>'
-    +       (model ? '<div class="provider-model">' + esc(model) + '</div>' : '')
-    +     '</div>'
-    +   '</div>'
-    +   '<div class="provider-actions">'
-    +     (connected && provider !== 'unknown'
-           ? '<button class="btn-test" id="btn-test-' + esc(provider) + '" onclick="testProvider(\'' + esc(provider) + '\')">Test</button>'
-           : '')
-    +     '<span class="status-badge ' + statusClass + '">'
-    +       '<span class="status-dot"></span> ' + statusLabel
-    +     '</span>'
-    +   '</div>'
-    + '</div>'
-    + '</div>';
+  let html = '<div class="section">'
+    + '<div class="section-title">Providers</div>'
+    + '<div class="provider-grid">';
+
+  providers.forEach(p => {
+    const isSelected = state.selectedProvider === p.id;
+    const saveResult = state.providerSaveResult && state.providerSaveResult.id === p.id
+      ? state.providerSaveResult : null;
+    const placeholder = p.key_prefix ? p.key_prefix + '...' : 'Paste API key';
+
+    html += '<div class="provider-card' + (p.configured ? ' configured' : '') + '" data-settings-provider="' + esc(p.id) + '">'
+      + '<div class="provider-card-header">'
+      +   '<h4>' + esc(p.name) + '</h4>'
+      +   (p.configured ? '<span class="provider-badge configured">Connected</span>'
+           : p.has_key ? '<span class="provider-badge detected">Key Detected</span>' : '')
+      + '</div>'
+      + '<p>' + esc(p.description) + '</p>';
+
+    // "Use This Key" for detected but not configured
+    if (p.has_key && !p.configured) {
+      html += '<div class="provider-env-row">'
+        + '<span class="env-hint">Key found in environment</span>'
+        + '<button class="btn-sm btn-secondary" data-provider-use="' + esc(p.id) + '"'
+        +   (state.savingProvider === p.id ? ' disabled' : '') + '>'
+        +   (state.savingProvider === p.id ? 'Setting up...' : 'Use This Key')
+        + '</button></div>';
+    }
+
+    // "Get an API key" link for unconfigured providers without a key
+    if (!p.configured && !p.has_key) {
+      html += '<div style="margin-top: 8px;">'
+        + '<a href="' + esc(p.console_url) + '" target="_blank" rel="noopener" '
+        + 'style="font-size: 12px; color: var(--accent);">Get an API key</a></div>';
+    }
+
+    // Key input row (when card is expanded)
+    if (isSelected) {
+      html += '<div class="provider-key-row">'
+        + '<input type="password" data-provider-key="' + esc(p.id) + '"'
+        +   ' placeholder="' + esc(placeholder) + '" value="' + esc(state.providerKeyInput) + '">'
+        + '<button class="btn-sm btn-secondary" data-provider-save="' + esc(p.id) + '"'
+        +   (state.savingProvider === p.id ? ' disabled' : '') + '>'
+        +   (state.savingProvider === p.id ? 'Saving...' : p.configured ? 'Update' : 'Add Key')
+        + '</button></div>';
+    }
+
+    // Test button for configured providers
+    if (p.configured) {
+      html += '<div class="provider-card-actions">'
+        + '<button class="btn-test" id="btn-test-' + esc(p.id) + '" onclick="testProvider(\'' + esc(p.id) + '\')">Test</button>'
+        + '<span class="status-badge connected"><span class="status-dot"></span> Connected</span>'
+        + '</div>';
+    }
+
+    // Save result message
+    if (saveResult) {
+      html += '<div class="provider-save-msg ' + (saveResult.ok ? 'ok' : 'fail') + '">'
+        + esc(saveResult.message) + '</div>';
+    }
+
+    html += '</div>';
+  });
+
+  html += '</div></div>';
+  return html;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1220,11 +1342,92 @@ function renderFooter() {
 /*  Event Binding                                                      */
 /* ================================================================== */
 function bindEvents() {
+  // Feature toggles
   document.querySelectorAll('[data-toggle]').forEach(toggle => {
     toggle.addEventListener('click', () => {
       const featureId = toggle.dataset.toggle;
       const isOn = toggle.classList.contains('on');
       toggleFeature(featureId, !isOn);
+    });
+  });
+
+  // Provider card selection (expand key input)
+  document.querySelectorAll('[data-settings-provider]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') return;
+      if (e.target.closest('.provider-key-row')) return;
+      if (e.target.closest('.provider-env-row')) return;
+      if (e.target.closest('.provider-card-actions')) return;
+      const pid = card.dataset.settingsProvider;
+      if (state.selectedProvider === pid) {
+        state.selectedProvider = null;
+      } else {
+        state.selectedProvider = pid;
+        state.providerKeyInput = '';
+        state.providerSaveResult = null;
+      }
+      render();
+    });
+  });
+
+  // Provider key input binding
+  document.querySelectorAll('[data-provider-key]').forEach(el => {
+    el.addEventListener('input', () => {
+      state.providerKeyInput = el.value;
+    });
+  });
+
+  // "Use This Key" buttons
+  document.querySelectorAll('[data-provider-use]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.providerUse;
+      state.savingProvider = pid;
+      state.providerSaveResult = null;
+      render();
+      const res = await api('POST', '/provider', { provider: pid });
+      state.savingProvider = null;
+      if (res && !res.error && res.verified) {
+        const prov = state.providers.find(p => p.id === (res.provider || pid));
+        if (prov) prov.configured = true;
+        let msg = res.provider_name + ' configured using existing key';
+        if (res.overlay_error) msg += ' (overlay not updated: ' + res.overlay_error + ')';
+        state.providerSaveResult = { id: res.provider || pid, ok: !res.overlay_error, message: msg };
+      } else {
+        const detail = (res && res.detail) || 'Failed to register provider.';
+        state.providerSaveResult = { id: pid, ok: false, message: detail };
+      }
+      render();
+    });
+  });
+
+  // Provider save key buttons
+  document.querySelectorAll('[data-provider-save]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.providerSave;
+      if (!state.providerKeyInput.trim()) return;
+      state.savingProvider = pid;
+      state.providerSaveResult = null;
+      render();
+      const res = await api('POST', '/provider', {
+        provider: pid,
+        api_key: state.providerKeyInput,
+      });
+      state.savingProvider = null;
+      if (res && !res.error && res.verified) {
+        const prov = state.providers.find(p => p.id === (res.provider || pid));
+        if (prov) prov.configured = true;
+        let msg = res.provider_name + ' configured';
+        if (res.overlay_error) msg += ' (overlay not updated: ' + res.overlay_error + ')';
+        state.providerSaveResult = { id: res.provider || pid, ok: !res.overlay_error, message: msg };
+        state.providerKeyInput = '';
+        if (!res.overlay_error) state.selectedProvider = null;
+      } else {
+        const detail = (res && res.detail) || 'Failed to save key.';
+        state.providerSaveResult = { id: pid, ok: false, message: detail };
+      }
+      render();
     });
   });
 }

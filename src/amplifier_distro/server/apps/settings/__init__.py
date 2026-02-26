@@ -6,9 +6,10 @@ providers, tiers, and bridges after initial setup is complete.
 Routes:
     GET  /          - Settings dashboard page
     GET  /status    - Current setup state (phase, features, provider, bridges)
+    GET  /providers - Provider catalog with configuration status
     POST /features  - Toggle a feature on/off
     POST /tier      - Set feature tier level
-    POST /provider  - Change provider (write key + update bundle)
+    POST /provider  - Add/update provider (key entry or use existing key)
     GET  /bridges   - Bridge configuration status
 """
 
@@ -33,9 +34,9 @@ from amplifier_distro.conventions import (
 from amplifier_distro.features import (
     FEATURES,
     PROVIDERS,
-    detect_provider,
+    get_provider_catalog,
+    handle_provider_request,
     provider_bundle_uri,
-    register_provider,
 )
 from amplifier_distro.server.app import AppManifest
 
@@ -75,7 +76,8 @@ class TierRequest(BaseModel):
 
 
 class ProviderRequest(BaseModel):
-    api_key: str
+    provider: str = ""
+    api_key: str = ""
 
 
 # --- Helpers ---
@@ -361,29 +363,25 @@ async def set_tier(req: TierRequest) -> dict[str, Any]:
     return _build_status()
 
 
+@router.get("/providers")
+async def get_providers() -> dict[str, Any]:
+    """Provider catalog with configuration status."""
+    return {"providers": get_provider_catalog()}
+
+
 @router.post("/provider")
 async def change_provider(req: ProviderRequest) -> dict[str, Any]:
-    """Change provider (write key + update overlay + update settings)."""
-    if not req.api_key.strip():
-        raise HTTPException(status_code=400, detail="API key is required")
+    """Add or update a provider configuration.
 
-    provider_id = detect_provider(req.api_key)
-    if provider_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Unknown API key format."
-                " Expected sk-ant-... (Anthropic) or sk-... (OpenAI)"
-            ),
-        )
-
-    reg = register_provider(provider_id, req.api_key)
-
-    return {
-        "status": "ok",
-        "provider": reg.provider_id,
-        "model": reg.default_model,
-    }
+    Two modes:
+    - **Explicit key**: ``api_key`` provided — register that provider.
+    - **Use existing key**: ``provider`` set, no ``api_key`` — look up key
+      from environment or keys.env and register.
+    """
+    result = handle_provider_request(provider=req.provider, api_key=req.api_key)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=str(result["detail"]))
+    return result
 
 
 @router.get("/bridges")

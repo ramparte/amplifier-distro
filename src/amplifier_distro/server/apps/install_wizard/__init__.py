@@ -34,9 +34,8 @@ from amplifier_distro import distro_settings, overlay
 from amplifier_distro.features import (
     FEATURES,
     PROVIDERS,
-    check_provider_status,
-    detect_provider,
-    register_provider,
+    get_provider_catalog,
+    handle_provider_request,
     sync_providers,
 )
 from amplifier_distro.server.app import AppManifest
@@ -227,28 +226,8 @@ async def get_modules() -> dict[str, Any]:
 
 @router.get("/providers")
 async def get_providers() -> dict[str, Any]:
-    """Return all supported providers with their current configuration status.
-
-    A provider is ``configured`` only when all three sources are set:
-    keys.env, settings.yaml, and the overlay bundle.
-    """
-    providers = []
-    for pid, p in PROVIDERS.items():
-        status = check_provider_status(pid)
-        providers.append(
-            {
-                "id": pid,
-                "name": p.name,
-                "description": p.description,
-                "console_url": p.console_url,
-                "key_prefix": p.key_prefix,
-                "has_key": status["has_key"],
-                "in_settings": status["in_settings"],
-                "in_overlay": status["in_overlay"],
-                "configured": status["configured"],
-            }
-        )
-    return {"providers": providers}
+    """Return all supported providers with their current configuration status."""
+    return {"providers": get_provider_catalog()}
 
 
 # --- Step Handlers ---
@@ -353,58 +332,15 @@ async def step_interfaces(req: InterfacesData) -> dict[str, Any]:
 async def step_provider(req: ProviderData) -> dict[str, Any]:
     """Save API key and provider configuration.
 
-    Two modes:
-    - **Explicit**: ``api_key`` provided - register that single provider.
-    - **Sync**: ``api_key`` empty - auto-register every provider that has
-      a key in ``os.environ`` or ``keys.env`` but isn't fully configured.
+    Three modes:
+    - **Explicit key**: ``api_key`` provided — register that provider.
+    - **Use existing key**: ``provider`` set, no ``api_key`` — look up key
+      from environment or keys.env and register.
+    - **Sync** (from "Next" button): both empty — auto-register all
+      providers that have keys but aren't fully configured.
     """
-    if req.api_key.strip():
-        # Explicit key entry (from "Add Key" button)
-        provider_id = detect_provider(req.api_key) or req.provider
-        if not provider_id or provider_id not in PROVIDERS:
-            return {"status": "error", "detail": "Unknown provider or key format"}
-
-        reg = register_provider(provider_id, req.api_key)
-
-        result: dict[str, Any] = {
-            "status": "ok",
-            "verified": True,
-            "provider": reg.provider_id,
-            "provider_name": reg.provider_name,
-            "model": reg.default_model,
-            "overlay_updated": reg.overlay_updated,
-        }
-        if reg.overlay_error:
-            result["overlay_error"] = reg.overlay_error
-        return result
-
-    if req.provider and req.provider in PROVIDERS:
-        # Use existing env/keys.env key for a specific provider
-        from amplifier_distro.server.apps.settings import load_keys
-
-        provider = PROVIDERS[req.provider]
-        key = os.environ.get(provider.env_var) or load_keys().get(provider.env_var)
-        if not key:
-            return {
-                "status": "error",
-                "detail": (
-                    f"No key found for {provider.name} in environment or keys.env"
-                ),
-            }
-
-        reg = register_provider(req.provider, key)
-
-        result = {
-            "status": "ok",
-            "verified": True,
-            "provider": reg.provider_id,
-            "provider_name": reg.provider_name,
-            "model": reg.default_model,
-            "overlay_updated": reg.overlay_updated,
-        }
-        if reg.overlay_error:
-            result["overlay_error"] = reg.overlay_error
-        return result
+    if req.api_key.strip() or req.provider:
+        return handle_provider_request(provider=req.provider, api_key=req.api_key)
 
     # Sync mode (from "Next" button) - auto-register incomplete providers
     synced = sync_providers()

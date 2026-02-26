@@ -272,6 +272,86 @@ class ProviderRegistrationResult:
         return self.key_saved and self.settings_updated and self.overlay_updated
 
 
+def get_provider_catalog() -> list[dict[str, object]]:
+    """Build the full provider catalog with configuration status.
+
+    Used by both the install wizard and settings app ``GET /providers``.
+    """
+    providers: list[dict[str, object]] = []
+    for pid, p in PROVIDERS.items():
+        status = check_provider_status(pid)
+        providers.append(
+            {
+                "id": pid,
+                "name": p.name,
+                "description": p.description,
+                "console_url": p.console_url,
+                "key_prefix": p.key_prefix,
+                "has_key": status["has_key"],
+                "in_settings": status["in_settings"],
+                "in_overlay": status["in_overlay"],
+                "configured": status["configured"],
+            }
+        )
+    return providers
+
+
+def handle_provider_request(
+    *, provider: str = "", api_key: str = ""
+) -> dict[str, object]:
+    """Shared handler for provider add/update requests.
+
+    Supports two modes:
+    - **Explicit key**: *api_key* provided — detect provider and register.
+    - **Use existing key**: *provider* set, no *api_key* — look up key from
+      environment or ``keys.env`` and register.
+
+    Returns a result dict suitable for JSON serialisation.  The caller
+    (route handler) can raise HTTP errors based on ``status``.
+    """
+    import os
+
+    from amplifier_distro.server.apps.settings import load_keys
+
+    if api_key.strip():
+        provider_id = detect_provider(api_key) or provider
+        if not provider_id or provider_id not in PROVIDERS:
+            return {"status": "error", "detail": "Unknown provider or key format"}
+        reg = register_provider(provider_id, api_key)
+        result: dict[str, object] = {
+            "status": "ok",
+            "verified": True,
+            "provider": reg.provider_id,
+            "provider_name": reg.provider_name,
+            "model": reg.default_model,
+        }
+        if reg.overlay_error:
+            result["overlay_error"] = reg.overlay_error
+        return result
+
+    if provider and provider in PROVIDERS:
+        prov = PROVIDERS[provider]
+        key = os.environ.get(prov.env_var) or load_keys().get(prov.env_var)
+        if not key:
+            return {
+                "status": "error",
+                "detail": f"No key found for {prov.name} in environment or keys.env",
+            }
+        reg = register_provider(provider, key)
+        result = {
+            "status": "ok",
+            "verified": True,
+            "provider": reg.provider_id,
+            "provider_name": reg.provider_name,
+            "model": reg.default_model,
+        }
+        if reg.overlay_error:
+            result["overlay_error"] = reg.overlay_error
+        return result
+
+    return {"status": "error", "detail": "Provide api_key or provider ID"}
+
+
 def check_provider_status(provider_id: str) -> dict[str, bool]:
     """Check whether a provider is fully configured across all three sources.
 
