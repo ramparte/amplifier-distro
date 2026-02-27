@@ -142,7 +142,15 @@ class SlackSessionManager:
         # unrelated sessions and is the root cause of issue #54.
         if thread_ts:
             key = f"{channel_id}:{thread_ts}"
-            return self._mappings.get(key)
+            mapping = self._mappings.get(key)
+            if mapping is None:
+                logger.warning(
+                    "get_mapping: no mapping for composite key %r "
+                    "(available keys: %s)",
+                    key,
+                    list(self._mappings.keys()),
+                )
+            return mapping
 
         # Bare-channel lookup (breakout channels and top-level sessions).
         if channel_id in self._mappings:

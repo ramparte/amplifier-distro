@@ -340,13 +340,19 @@ class SlackEventHandler:
         else:
             logger.debug(f"Unhandled action: {action_id}")
 
-    async def handle_slash_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def handle_slash_command(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Handle a Slack slash command payload.
 
         Slack sends slash commands (e.g. ``/amp list``) as a flat dict with
         ``command``, ``text``, ``user_id``, ``channel_id``, etc.  We parse the
         text the same way we parse @-mention commands and return a Slack
         response payload (``response_type`` + ``text``/``blocks``).
+
+        Returns None when the response was posted directly via the Slack API
+        (e.g. session creation that needs thread rekeying).  Callers should
+        skip posting via response_url when None is returned.
         """
         command_text = payload.get("text", "").strip()
         user_id = payload.get("user_id", "")
@@ -364,7 +370,57 @@ class SlackEventHandler:
 
         result = await self._commands.handle(command, args, ctx)
 
-        # Build Slack slash-command response
+        # When a new thread is needed (e.g. /amp new), post the response
+        # directly via the Slack API so we capture the posted_ts and can
+        # rekey the session mapping from bare channel_id to channel:thread_ts.
+        # Without this, thread replies silently fail to route because
+        # get_mapping() looks up the composite key which was never created.
+        if result.create_thread:
+            posted_ts: str | None = None
+            try:
+                if result.blocks:
+                    posted_ts = await self._client.post_message(
+                        channel_id,
+                        text=result.text or "Amplifier",
+                        blocks=result.blocks,
+                    )
+                elif result.text:
+                    for chunk in SlackFormatter.split_message(result.text):
+                        ts = await self._client.post_message(
+                            channel_id,
+                            text=chunk,
+                        )
+                        if posted_ts is None:
+                            posted_ts = ts
+            except Exception:
+                logger.exception(
+                    "Failed to post slash command response directly; "
+                    "falling back to response_url"
+                )
+                return self._build_slash_response(result)
+
+            if posted_ts is not None:
+                self._sessions.rekey_mapping(channel_id, posted_ts)
+                logger.info(
+                    "Slash command: posted and rekeyed session in %s:%s",
+                    channel_id,
+                    posted_ts,
+                )
+            else:
+                logger.warning(
+                    "Slash command: create_thread but no posted_ts captured "
+                    "for channel %s -- session may not route correctly",
+                    channel_id,
+                )
+
+            return None  # Already posted; caller should skip response_url
+
+        # Build standard Slack slash-command response
+        return self._build_slash_response(result)
+
+    @staticmethod
+    def _build_slash_response(result: Any) -> dict[str, Any]:
+        """Build a Slack slash-command response dict from a CommandResult."""
         response: dict[str, Any] = {
             "response_type": "in_channel",
         }
@@ -373,7 +429,6 @@ class SlackEventHandler:
             response["text"] = result.text or "Amplifier"
         elif result.text:
             response["text"] = result.text
-
         return response
 
     async def _safe_react(self, channel: str, ts: str, emoji: str) -> None:

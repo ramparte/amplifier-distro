@@ -132,7 +132,7 @@ class SocketModeAdapter:
 
                 session = aiohttp.ClientSession()
                 self._session = session
-                self._ws = await session.ws_connect(url)
+                self._ws = await session.ws_connect(url, heartbeat=30)
                 logger.info("WebSocket connected")
 
                 # Reset backoff on successful connection
@@ -254,7 +254,35 @@ class SocketModeAdapter:
             await self._handle_interactive(frame)
 
         elif frame_type == "slash_commands":
-            await self._handle_slash_command(frame)
+            # ACK immediately so Slack doesn't disconnect (3 s deadline).
+            # Slow commands (/amp new, /amp connect) take 5-15 s for session
+            # creation and would exceed the deadline if we waited.
+            await self._ack(frame)
+            _payload = frame.get("payload", {})
+            _ctx = {
+                "command": _payload.get("command", "?"),
+                "text": _payload.get("text", ""),
+                "user": _payload.get("user_name", "?"),
+            }
+            task = asyncio.create_task(self._handle_slash_command(frame))
+            self._pending_tasks.add(task)
+
+            def _slash_done_cb(t: asyncio.Task, ctx: dict = _ctx) -> None:
+                self._pending_tasks.discard(t)
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc:
+                        logger.error(
+                            "[socket] Slash command task failed "
+                            "command=%s text=%r user=%s: %s",
+                            ctx["command"],
+                            ctx["text"],
+                            ctx["user"],
+                            exc,
+                            exc_info=exc,
+                        )
+
+            task.add_done_callback(_slash_done_cb)
 
         # Ignore pings -- aiohttp handles pong automatically
 
@@ -327,21 +355,50 @@ class SocketModeAdapter:
             logger.exception("[socket] Error in interactive handler")
 
     async def _handle_slash_command(self, frame: dict[str, Any]) -> None:
-        """Process a slash command frame (e.g. /amp list)."""
+        """Process a slash command frame (e.g. /amp list).
+
+        NOTE: ACK is already sent by ``_handle_frame`` before this task
+        starts.  The result is posted via Slack's ``response_url`` (a
+        per-invocation webhook that stays valid for 30 minutes).
+
+        When handle_slash_command() returns None, the response was already
+        posted directly via the Slack API (e.g. session creation with
+        thread rekeying).  We skip the response_url post in that case.
+        """
         payload = frame.get("payload", {})
         command_name = payload.get("command", "?")
         text = payload.get("text", "")
         user = payload.get("user_name", "?")
+        response_url = payload.get("response_url", "")
 
         logger.info(f"[socket] Slash command: {command_name} text={text!r} user={user}")
 
         try:
             response = await self._event_handler.handle_slash_command(payload)
-            # Ack with the response payload so Slack displays it inline
-            await self._ack(frame, response=response)
         except Exception:
             logger.exception("[socket] Error in slash command handler")
-            await self._ack(frame, response={"text": "Error processing command."})
+            response = {"text": "Error processing command."}
+
+        # None means the handler already posted the response directly
+        # (e.g. session creation that needed thread rekeying).
+        if response is None:
+            logger.info("[socket] Slash command response already posted directly")
+            return
+
+        # Post the result via response_url so it appears in the channel.
+        if response_url:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(response_url, json=response)
+            except Exception:
+                logger.exception(
+                    "[socket] Failed to post slash command response via response_url"
+                )
+        else:
+            logger.warning(
+                "[socket] No response_url for slash command %s; response dropped",
+                command_name,
+            )
 
     def _is_duplicate(self, key: str) -> bool:
         """Check if this event key was recently seen. Records it if not.

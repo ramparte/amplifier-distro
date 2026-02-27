@@ -240,46 +240,30 @@ async def slack_events(request: Request) -> Response:
 async def slack_command(command: str, request: Request) -> Response:
     """Slack slash command endpoint.
 
-    Handles /amp <command> slash commands.
+    Handles /amp <command> slash commands.  Routes through the event
+    handler so session-creating commands get proper thread rekeying.
     """
     state = _get_state()
-    cmd_handler: CommandHandler = state["command_handler"]
+    event_handler: SlackEventHandler = state["event_handler"]
 
     form = await request.form()
-    text = str(form.get("text", ""))
-    user_id = str(form.get("user_id", ""))
-    user_name = str(form.get("user_name", ""))
-    channel_id = str(form.get("channel_id", ""))
+    # Build the same payload format that Socket Mode sends
+    payload = {
+        "text": str(form.get("text", "")),
+        "user_id": str(form.get("user_id", "")),
+        "user_name": str(form.get("user_name", "")),
+        "channel_id": str(form.get("channel_id", "")),
+    }
 
-    from .commands import CommandContext
+    result = await event_handler.handle_slash_command(payload)
 
-    ctx = CommandContext(
-        channel_id=channel_id,
-        user_id=user_id,
-        user_name=user_name,
-        raw_text=text,
-    )
-
-    # Parse command args from the text
-    parts = text.split() if text else []
-    sub_command = parts[0] if parts else command
-    args = parts[1:] if len(parts) > 1 else []
-
-    result = await cmd_handler.handle(sub_command, args, ctx)
-
-    # Slack expects a JSON response for slash commands
-    response_data: dict[str, Any] = {}
-    if result.blocks:
-        response_data["blocks"] = result.blocks
-    if result.text:
-        response_data["text"] = result.text
-    if result.ephemeral:
-        response_data["response_type"] = "ephemeral"
-    else:
-        response_data["response_type"] = "in_channel"
+    if result is None:
+        # Response was already posted directly (e.g. session creation
+        # with thread rekeying).  Return empty response to Slack.
+        return Response(content="{}", media_type="application/json")
 
     return Response(
-        content=json.dumps(response_data),
+        content=json.dumps(result),
         media_type="application/json",
     )
 
