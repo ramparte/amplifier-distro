@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,7 @@ class DistroServer:
                     continue
 
                 module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
                 spec.loader.exec_module(module)
 
                 if hasattr(module, "manifest"):
