@@ -2249,6 +2249,48 @@ class TestZombieSessionFix:
 class TestProjectCommands:
     """Tests for /amp newproject and /amp new <projectname>."""
 
+    def test_cmd_projects_shows_registered_projects(self, command_handler):
+        """/amp projects lists projects registered in distro.yaml."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig, ProjectEntry
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        cfg = DistroConfig()
+        cfg.projects = [
+            ProjectEntry(name="api", path="/opt/workspace/api"),
+            ProjectEntry(name="frontend", path="/opt/workspace/frontend"),
+        ]
+
+        with patch(
+            "amplifier_distro.server.apps.slack.commands.load_config"
+        ) as mock_load:
+            mock_load.return_value = cfg
+            result = asyncio.run(command_handler.handle("projects", [], ctx))
+
+        assert "api" in result.text
+        assert "/opt/workspace/api" in result.text
+        assert "frontend" in result.text
+        assert "/opt/workspace/frontend" in result.text
+
+    def test_cmd_projects_empty_shows_hint(self, command_handler):
+        """/amp projects with no registered projects shows a helpful hint."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+
+        with patch(
+            "amplifier_distro.server.apps.slack.commands.load_config"
+        ) as mock_load:
+            mock_load.return_value = DistroConfig()  # empty projects
+            result = asyncio.run(command_handler.handle("projects", [], ctx))
+
+        assert "newproject" in result.text  # hint to register one
+
     def test_cmd_newproject_no_args_returns_error(self, command_handler):
         from amplifier_distro.server.apps.slack.commands import CommandContext
 

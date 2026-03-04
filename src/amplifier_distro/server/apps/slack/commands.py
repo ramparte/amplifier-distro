@@ -179,21 +179,20 @@ class CommandHandler:
 
     async def cmd_projects(self, args: list[str], ctx: CommandContext) -> CommandResult:
         """List known projects."""
-        projects = self._discovery.list_projects()
+        with contextlib.suppress(Exception):
+            cfg = load_config()
+            if cfg.projects:
+                lines = [
+                    "*Registered Projects:*\n",
+                    *[f"• *{p.name}* → `{p.path}`" for p in cfg.projects],
+                    "\n_Use `new <name>` to start a session in that project._",
+                ]
+                return CommandResult(text="\n".join(lines))
 
-        if not projects:
-            return CommandResult(text="_No projects found._")
-
-        lines = [
-            "*Known Projects:*\n",
-            *[
-                f"• *{p.project_name}* - {p.session_count} sessions"
-                f" (last: {p.last_active})"
-                for p in projects
-            ],
-        ]
-
-        return CommandResult(text="\n".join(lines))
+        return CommandResult(
+            text="_No registered projects._\n"
+            "Use `newproject <name>` to register one."
+        )
 
     async def cmd_newproject(
         self, args: list[str], ctx: CommandContext
