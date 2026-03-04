@@ -283,3 +283,102 @@ CLI uses `click.Group` with individual commands. Each command:
 2. Performs its action
 3. Outputs via `click.echo()` with Rich formatting where appropriate
 4. Returns exit code 0 on success, 1 on failure
+
+---
+
+## Markdown Document Catalog
+
+44 markdown files across the project. Quick reference for what lives where.
+
+### Root (`/`) — 6 files
+
+| File | Contents |
+|------|----------|
+| `README.md` | Project overview: 4 commands, install methods, Ring 1/2/3 orientation |
+| `OPINIONS.md` | 11 opinionated conventions the distro enforces, with rationale for each |
+| `ROADMAP.md` | 5-phase build plan, component inventory, risk register, success metrics |
+| `IMPLEMENTATION.md` | Deep technical design: all interfaces, machine-independence, update model, UX flows |
+| `INSTRUCTIONS.md` | Contributor guide: `src/` boundary, Docker Compose, API keys, commit conventions |
+| `TASKS.md` | Task tracker: DISTRO-001–018, ownership map, backlog, completed history |
+
+### `.amplifier/` — 2 files
+
+| File | Contents |
+|------|----------|
+| `AGENTS.md` | This file. Agent notes, dev environment, module inventory, workflow, architecture |
+| `recipes/README.md` | E2E browser-test recipe system: pattern, available recipes, approval gates |
+
+### `context/` — 5 files
+
+| File | Contents |
+|------|----------|
+| `DISTRO-PROJECT-CONTEXT.md` | **Primary session-resumption file** — team roster, repos, architecture, build status, what to work on next |
+| `OVERNIGHT-BUILD.md` | Orchestrator instructions for the Feb 9 autonomous build (tasks T1–T9) |
+| `OVERNIGHT-BUILD-STATUS.md` | Live log from that build — all 10 tasks DONE, test count 469→755, commit hashes |
+| `OVERNIGHT-BUILD-RESUME.md` | Auto-generated resume instructions after restart #3 at 03:53 AM |
+| `SLACK-BRIDGE-CONTEXT.md` | Slack bridge reference: 3 operating modes, architecture diagram, all 13 source files, open issues |
+
+### `docs/` — 1 file
+
+| File | Contents |
+|------|----------|
+| `SLACK_SETUP.md` | Step-by-step guide for creating and configuring a Slack app |
+
+### `docs/plans/` — 11 files
+
+All TDD implementation plans (failing-test-first, exact file paths, verification commands):
+
+| File | Contents |
+|------|----------|
+| `2026-02-23-distro-refactor.md` | Slim the distro: delete dead modules, shrink `distro.yaml`, clean public API |
+| `2026-02-19-web-chat-session-list.md` | Add session list & resume to web chat UI |
+| `2026-02-19-web-chat-resume-llm-context.md` | Fix session resume so LLM gets full transcript after restart |
+| `2026-02-19-server-concurrency.md` | Fix 3 concurrency hazards (issue #57): lock narrowing, ACK-before-task, per-session queues |
+| `2026-02-18-slack-session-working-dir.md` | Wire `default_working_dir` from `distro.yaml` into Slack sessions (issue #34) |
+| `2026-02-18-session-cwd-persistence.md` | Persist `working_dir` in `session-info.json` to prevent duplicate dirs on resume (issue #53) |
+| `2026-02-18-fix-zombie-sessions-and-test-gaps.md` | Fix Slack zombie session bug (issue #31) |
+| `2026-02-18-fix-thread-routing-issue-54.md` | Fix thread routing cross-contamination with `rekey_mapping()` (issue #54) |
+| `2026-02-17-transcript-persistence.md` | Write `transcript.jsonl` incrementally for session resume after restart |
+
+### `notes/` — 1 file
+
+| File | Contents |
+|------|----------|
+| `2026-02-06-workflow-techniques.md` | Field notes from AI practitioner groups: durable specs, commit-time review, multi-agent patterns |
+
+### `planning/` — 14 files
+
+Original Feb 6 research corpus plus later strategic documents:
+
+| File | Contents |
+|------|----------|
+| `00-research-index.md` | Navigation index for the series; core thesis, key numbers |
+| `01-friction-analysis.md` | 91-session analysis: 6 friction categories ranked by severity |
+| `02-current-landscape.md` | Team inventory (17 accounts), all 8 interfaces, maturity assessments |
+| `03-architecture-vision.md` | Three-ring architecture: Ring 1 (Foundation), Ring 2 (Interfaces), Ring 3 (Workflows) |
+| `04-pieces-and-priorities.md` | Component maturity matrix: working vs. partial vs. needs building |
+| `05-self-improving-loop.md` | Observe→Diagnose→Act→Verify loop for self-improving environment |
+| `06-anthropic-patterns.md` | Lessons from Carlini's parallel-Claude C compiler: harness loop, task locking, etc. |
+| `07-ring1-deep-dive.md` | Technical gap analysis for Ring 1: bundle validation, memory, session handoff, pre-flight |
+| `08-ring2-deep-dive.md` | Technical gap analysis for Ring 2: per-interface session creation gaps |
+| `09-setup-tool.md` | UX spec for `amp env init` / `amp env validate` with terminal mockups |
+| `10-project-structure.md` | How to structure the project itself; original bundle directory design intent |
+| `11-task-list.md` | Full ordered task list: Tier 0–3, status, effort, owner for each |
+| `12-nexus-synthesis.md` | Reconciliation of `amplifier-nexus` vision with the distro model |
+| `13-agent-shaped-os.md` | Strategic essay: "Agent-Shaped OS" — a parallel OS layer optimized for LLM agents |
+| `TEAM-AND-ARCHITECTURE.md` | Living team/arch doc: 3-layer architecture, component inventory, decision record, per-member guidance |
+| `contents.md` | Early scratchpad of what the distro should contain |
+| `research-anthropic-compiler.md` | Raw saved text of the Anthropic engineering blog post about parallel Claudes |
+
+### `responses/` — 2 files
+
+| File | Contents |
+|------|----------|
+| `going-forward.md` | Post-analysis redesign: monolithic server → 3 ecosystem-native deliverables (decisions confirmed Feb 20) |
+| `bundle-drift.md` | Precise analysis of how implementation drifted from the original bundle design intent |
+
+### `specs/` — 1 file
+
+| File | Contents |
+|------|----------|
+| `watchdog-and-service-spec.md` | 2,463-line TDD spec for Watchdog (process monitor/restart) and Platform Service (systemd/launchd boot services) |
