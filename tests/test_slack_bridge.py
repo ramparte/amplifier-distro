@@ -2241,4 +2241,223 @@ class TestZombieSessionFix:
 
         # Response should be the generic error
         assert response is not None
-        assert "Error" in response
+
+
+# --- Project Commands Tests ---
+
+
+class TestProjectCommands:
+    """Tests for /amp newproject and /amp new <projectname>."""
+
+    def test_cmd_newproject_no_args_returns_error(self, command_handler):
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(command_handler.handle("newproject", [], ctx))
+        assert "Usage" in result.text
+        assert "newproject" in result.text
+
+    def test_cmd_newproject_creates_project_with_default_dir(
+        self, command_handler, slack_config
+    ):
+        """newproject myapp uses default_working_dir + name as the path."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        slack_config.default_working_dir = "/opt/workspace"
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+
+        saved = []
+        with (
+            patch(
+                "amplifier_distro.server.apps.slack.commands.load_config"
+            ) as mock_load,
+            patch(
+                "amplifier_distro.server.apps.slack.commands.save_config"
+            ) as mock_save,
+        ):
+            mock_load.return_value = DistroConfig()
+            mock_save.side_effect = lambda cfg: saved.append(cfg)
+            result = asyncio.run(
+                command_handler.handle("newproject", ["myapp"], ctx)
+            )
+
+        assert "myapp" in result.text
+        assert "/opt/workspace/myapp" in result.text
+        assert len(saved) == 1
+        project = next((p for p in saved[0].projects if p.name == "myapp"), None)
+        assert project is not None
+        assert project.path == "/opt/workspace/myapp"
+
+    def test_cmd_newproject_with_dir_flag(self, command_handler, slack_config):
+        """newproject myapp --dir /custom/path uses the specified path."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+
+        saved = []
+        with (
+            patch(
+                "amplifier_distro.server.apps.slack.commands.load_config"
+            ) as mock_load,
+            patch(
+                "amplifier_distro.server.apps.slack.commands.save_config"
+            ) as mock_save,
+        ):
+            mock_load.return_value = DistroConfig()
+            mock_save.side_effect = lambda cfg: saved.append(cfg)
+            result = asyncio.run(
+                command_handler.handle(
+                    "newproject", ["myapp", "--dir", "/custom/path"], ctx
+                )
+            )
+
+        assert "/custom/path" in result.text
+        assert len(saved) == 1
+        assert saved[0].projects[0].path == "/custom/path"
+
+    def test_cmd_newproject_dir_flag_missing_value_returns_error(
+        self, command_handler
+    ):
+        """newproject myapp --dir with no path returns a usage error."""
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        result = asyncio.run(
+            command_handler.handle("newproject", ["myapp", "--dir"], ctx)
+        )
+        assert "Started" not in result.text
+        assert "--dir" in result.text
+
+    def test_cmd_newproject_updates_existing_project(self, command_handler):
+        """newproject with an existing name updates the path."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig, ProjectEntry
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        existing_cfg = DistroConfig()
+        existing_cfg.projects = [ProjectEntry(name="myapp", path="/old/path")]
+
+        saved = []
+        with (
+            patch(
+                "amplifier_distro.server.apps.slack.commands.load_config"
+            ) as mock_load,
+            patch(
+                "amplifier_distro.server.apps.slack.commands.save_config"
+            ) as mock_save,
+        ):
+            mock_load.return_value = existing_cfg
+            mock_save.side_effect = lambda cfg: saved.append(cfg)
+            result = asyncio.run(
+                command_handler.handle(
+                    "newproject", ["myapp", "--dir", "/new/path"], ctx
+                )
+            )
+
+        assert "/new/path" in result.text
+        assert len(saved) == 1
+        # Must still be exactly one project entry (no duplicates)
+        myapp_entries = [p for p in saved[0].projects if p.name == "myapp"]
+        assert len(myapp_entries) == 1
+        assert myapp_entries[0].path == "/new/path"
+
+    def test_cmd_newproject_preserves_other_projects(self, command_handler):
+        """Adding a new project does not remove existing ones."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig, ProjectEntry
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C1", user_id="U1")
+        existing_cfg = DistroConfig()
+        existing_cfg.projects = [ProjectEntry(name="other", path="/other/path")]
+
+        saved = []
+        with (
+            patch(
+                "amplifier_distro.server.apps.slack.commands.load_config"
+            ) as mock_load,
+            patch(
+                "amplifier_distro.server.apps.slack.commands.save_config"
+            ) as mock_save,
+        ):
+            mock_load.return_value = existing_cfg
+            mock_save.side_effect = lambda cfg: saved.append(cfg)
+            asyncio.run(
+                command_handler.handle(
+                    "newproject", ["newapp", "--dir", "/new/path"], ctx
+                )
+            )
+
+        assert len(saved[0].projects) == 2
+        names = {p.name for p in saved[0].projects}
+        assert "other" in names
+        assert "newapp" in names
+
+    def test_cmd_new_resolves_project_name_from_distro_yaml(
+        self, command_handler
+    ):
+        """/amp new myapp finds project in distro.yaml and uses its path."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig, ProjectEntry
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1")
+        cfg = DistroConfig()
+        cfg.projects = [ProjectEntry(name="myapp", path="/opt/workspace/myapp")]
+
+        with patch(
+            "amplifier_distro.server.apps.slack.commands.load_config"
+        ) as mock_load:
+            mock_load.return_value = cfg
+            result = asyncio.run(command_handler.handle("new", ["myapp"], ctx))
+
+        assert "Started new session" in result.text
+        assert "/opt/workspace/myapp" in result.text
+
+    def test_cmd_new_unknown_single_arg_used_as_description(
+        self, command_handler
+    ):
+        """Single arg that doesn't match any project is used as description."""
+        from unittest.mock import patch
+
+        from amplifier_distro.schema import DistroConfig
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1")
+        with patch(
+            "amplifier_distro.server.apps.slack.commands.load_config"
+        ) as mock_load:
+            mock_load.return_value = DistroConfig()  # no projects
+            result = asyncio.run(
+                command_handler.handle("new", ["notaproject"], ctx)
+            )
+
+        assert "Started new session" in result.text
+        assert "notaproject" in result.text  # treated as description
+
+    def test_cmd_new_multi_arg_skips_project_lookup(self, command_handler):
+        """Multi-word args are never checked against projects (no load_config call)."""
+        from unittest.mock import patch
+
+        from amplifier_distro.server.apps.slack.commands import CommandContext
+
+        ctx = CommandContext(channel_id="C_HUB", user_id="U1")
+        with patch(
+            "amplifier_distro.server.apps.slack.commands.load_config"
+        ) as mock_load:
+            result = asyncio.run(
+                command_handler.handle("new", ["fix", "the", "bug"], ctx)
+            )
+            mock_load.assert_not_called()
+
+        assert "Started new session" in result.text

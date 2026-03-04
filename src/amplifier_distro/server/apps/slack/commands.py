@@ -16,6 +16,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from amplifier_distro.config import load_config, save_config
+from amplifier_distro.schema import ProjectEntry
+
 from .config import SlackConfig
 from .discovery import AmplifierDiscovery
 from .formatter import SlackFormatter
@@ -58,7 +61,8 @@ class CommandHandler:
         "list": "List recent Amplifier sessions",
         "sessions": "List active bridge sessions",
         "projects": "List known projects",
-        "new": "Start a new Amplifier session",
+        "new": "Start a new session (`new`, `new --dir <path>`, or `new <projectname>`)",
+        "newproject": "Register a project: `newproject <name> [--dir <path>]`",
         "connect": "Connect to an existing session",
         "disconnect": "Disconnect from the current session",
         "status": "Show current session status",
@@ -191,6 +195,63 @@ class CommandHandler:
 
         return CommandResult(text="\n".join(lines))
 
+    async def cmd_newproject(
+        self, args: list[str], ctx: CommandContext
+    ) -> CommandResult:
+        """Register or update a named project in distro.yaml."""
+        if not args:
+            return CommandResult(
+                text="Usage: `newproject <name> [--dir <path>]`\n"
+                "Registers a project so you can start sessions with `new <name>`."
+            )
+
+        # Parse optional --dir flag
+        path: str | None = None
+        if "--dir" in args:
+            idx = args.index("--dir")
+            if idx + 1 >= len(args):
+                return CommandResult(
+                    text="Missing value for `--dir`. "
+                    "Usage: `newproject <name> [--dir <path>]`"
+                )
+            path = args[idx + 1]
+            args = args[:idx] + args[idx + 2 :]
+
+        if not args:
+            return CommandResult(text="Usage: `newproject <name> [--dir <path>]`")
+
+        name = args[0]
+
+        # Default path: default_working_dir / name
+        if path is None:
+            base = (self._config.default_working_dir or "~").rstrip("/")
+            path = f"{base}/{name}"
+
+        # Load, update, and save distro.yaml
+        try:
+            cfg = load_config()
+            new_projects = []
+            updated = False
+            for p in cfg.projects:
+                if p.name == name:
+                    new_projects.append(ProjectEntry(name=name, path=path))
+                    updated = True
+                else:
+                    new_projects.append(p)
+            if not updated:
+                new_projects.append(ProjectEntry(name=name, path=path))
+            cfg.projects = new_projects
+            save_config(cfg)
+        except Exception as e:
+            logger.exception("Failed to save project to distro.yaml")
+            return CommandResult(text=f"Failed to save project: {e}")
+
+        action = "updated" if updated else "registered"
+        return CommandResult(
+            text=f"Project `{name}` {action} at `{path}`.\n"
+            f"Use `new {name}` to start a session there."
+        )
+
     async def cmd_new(self, args: list[str], ctx: CommandContext) -> CommandResult:
         """Start a new Amplifier session."""
         working_dir: str | None = None
@@ -204,6 +265,18 @@ class CommandHandler:
                 )
             working_dir = args[idx + 1]
             args = args[:idx] + args[idx + 2 :]
+
+        # Single-word arg: check if it's a registered project name
+        elif len(args) == 1 and not args[0].startswith("-"):
+            project_name = args[0]
+            with contextlib.suppress(Exception):
+                cfg = load_config()
+                match = next(
+                    (p for p in cfg.projects if p.name == project_name), None
+                )
+                if match:
+                    working_dir = match.path
+                    args = []  # don't use project name as description
 
         description = " ".join(args) if args else ""
 

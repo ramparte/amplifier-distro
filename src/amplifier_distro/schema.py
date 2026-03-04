@@ -92,6 +92,13 @@ class InterfacesConfig(BaseModel):
     gui: InterfaceEntry = Field(default_factory=InterfaceEntry)
 
 
+class ProjectEntry(BaseModel):
+    """A named project registered in distro.yaml."""
+
+    name: str
+    path: str
+
+
 class SlackConfig(BaseModel):
     """Slack bridge settings (non-secret).
 
@@ -192,6 +199,7 @@ class DistroConfig(BaseModel):
     backup: BackupConfig = Field(default_factory=BackupConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
+    projects: list[ProjectEntry] = Field(default_factory=list)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
     kepler: KeplerConfig = Field(default_factory=KeplerConfig)
