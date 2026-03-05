@@ -36,6 +36,7 @@ class Provider:
     fallback_models: tuple[str, ...] = ()
     base_url: str | None = None
     api_key_config: str | None = None
+    self_service: bool = True  # False = requires infrastructure (Ollama server, Azure endpoint, etc.)
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -108,6 +109,7 @@ PROVIDERS: dict[str, Provider] = {
         source_url="git+https://github.com/microsoft/amplifier-module-provider-ollama@main",
         console_url="https://ollama.com/",
         fallback_models=("llama3.1", "mistral", "codellama"),
+        self_service=False,
     ),
     "azure": Provider(
         id="azure",
@@ -121,6 +123,7 @@ PROVIDERS: dict[str, Provider] = {
         source_url="git+https://github.com/microsoft/amplifier-module-provider-azure-openai@main",
         console_url="https://portal.azure.com/",
         fallback_models=("gpt-4o", "gpt-4o-mini"),
+        self_service=False,
     ),
 }
 
