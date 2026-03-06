@@ -45,6 +45,14 @@ from amplifier_distro.fileutil import atomic_write
 
 logger = logging.getLogger(__name__)
 
+# Delegate events that may not appear in ALL_EVENTS but must always be registered
+_DELEGATE_EVENTS = [
+    "delegate:agent_spawned",
+    "delegate:agent_resumed",
+    "delegate:agent_completed",
+    "delegate:error",
+]
+
 
 def _encode_cwd(working_dir: Path) -> str:
     """Encode working directory to project directory name.
@@ -164,6 +172,12 @@ class BridgeConfig:
     display: BridgeDisplaySystem | None = None
     # Streaming callback
     on_stream: Callable[[str, dict[str, Any]], Any] | None = None
+    # Behaviors to activate in the session (e.g., ["web-search", "file-ops"])
+    # TODO: pass behaviors to bridge.create_session() when session config API is wired
+    behaviors: list[str] | None = None
+    # Whether to expose thinking blocks to the UI
+    # TODO: pass show_thinking to provider config when thinking toggle is wired
+    show_thinking: bool = False
 
 
 @dataclass
@@ -188,6 +202,28 @@ class SessionHandle:
             raise RuntimeError("Session not initialized")
         result: str = await self._session.execute(prompt)
         return result
+
+    async def cancel(self, level: str = "graceful") -> None:
+        """Request cancellation of the running session.
+
+        Declared async for interface consistency with run() and cleanup(),
+        though the underlying request_cancel() call is synchronous.
+        Safe to call when _session is None or coordinator is unavailable.
+        level: "graceful" (finish current tool) or "immediate" (stop now).
+        """
+        if self._session is None:
+            return
+        coordinator = getattr(self._session, "coordinator", None)
+        if coordinator is None:
+            return
+        request_cancel = getattr(coordinator, "request_cancel", None)
+        if request_cancel is not None:
+            try:
+                request_cancel(level)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Error requesting cancel (level=%s)", level, exc_info=True
+                )
 
     async def cleanup(self) -> None:
         """Clean up session resources."""
@@ -345,8 +381,7 @@ class LocalBridge:
         )
         if path.exists():
             logger.info(
-                "No bundle.active configured; "
-                "falling back to convention bundle at %s",
+                "No bundle.active configured; falling back to convention bundle at %s",
                 path,
             )
             return str(path)
@@ -435,6 +470,16 @@ class LocalBridge:
                     priority=100,
                     name=f"bridge-streaming:{event}",
                 )
+
+            # Explicitly register delegate events — they may not be in ALL_EVENTS
+            for _event in _DELEGATE_EVENTS:
+                if _event not in ALL_EVENTS:
+                    session.coordinator.hooks.register(
+                        event=_event,
+                        handler=streaming,
+                        priority=100,
+                        name=f"bridge-streaming:{_event}",
+                    )
         except (ImportError, AttributeError):
             logger.debug(
                 "Could not register streaming hooks"
@@ -618,6 +663,16 @@ class LocalBridge:
                     priority=100,
                     name=f"bridge-streaming:{event}",
                 )
+
+            # Explicitly register delegate events — they may not be in ALL_EVENTS
+            for _event in _DELEGATE_EVENTS:
+                if _event not in ALL_EVENTS:
+                    session.coordinator.hooks.register(
+                        event=_event,
+                        handler=streaming,
+                        priority=100,
+                        name=f"bridge-streaming:{_event}",
+                    )
         except (ImportError, AttributeError):
             logger.debug(
                 "Could not register streaming hooks"
@@ -682,7 +737,7 @@ class LocalBridge:
                                 "Injected %d messages from previous transcript",
                                 len(messages),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             logger.warning(
                                 "Failed to inject transcript messages into context",
                                 exc_info=True,

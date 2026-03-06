@@ -74,6 +74,14 @@ class SessionBackend(Protocol):
         """List all active sessions managed by this backend."""
         ...
 
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """Request cancellation of an active session. No-op for unknown IDs."""
+        ...
+
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """Resolve a pending approval gate. Returns True if found and unblocked."""
+        ...
+
 
 class MockBackend:
     """Mock backend for testing and simulation.
@@ -100,6 +108,7 @@ class MockBackend:
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         self._session_counter += 1
         session_id = f"mock-session-{self._session_counter:04d}"
@@ -163,6 +172,28 @@ class MockBackend:
         """Get the full message history for a session (testing helper)."""
         return self._message_history.get(session_id, [])
 
+    async def execute(
+        self,
+        session_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+    ) -> None:
+        """MockBackend execute: no-op (MockBackend doesn't stream events)."""
+
+    async def cancel_session(self, session_id: str, level: str = "graceful") -> None:
+        """No-op cancel for mock — records the call."""
+        self.calls.append(
+            {
+                "method": "cancel_session",
+                "session_id": session_id,
+                "level": level,
+            }
+        )
+
+    def resolve_approval(self, session_id: str, request_id: str, choice: str) -> bool:
+        """No-op approval resolution for mock — always returns False."""
+        return False
+
     async def resume_session(self, session_id: str, working_dir: str) -> None:
         """No-op resume for testing. Records the call for assertion."""
         self.calls.append(
@@ -195,24 +226,85 @@ class BridgeBackend:
         self._worker_tasks: dict[str, asyncio.Task] = {}
         # Tombstone: sessions that were intentionally ended (blocks reconnect)
         self._ended_sessions: set[str] = set()
+        self._approval_systems: dict[str, Any] = {}  # session_id → BridgeApprovalSystem
 
     async def create_session(
         self,
         working_dir: str = "~",
         bundle_name: str | None = None,
         description: str = "",
+        event_queue: asyncio.Queue | None = None,
     ) -> SessionInfo:
         from pathlib import Path
 
         from amplifier_distro.bridge import BridgeConfig
 
+        on_stream = None
+        display = None
+        if event_queue is not None:
+            from amplifier_distro.bridge_protocols import BridgeDisplaySystem as _BDS
+
+            _q = event_queue  # single assignment, shared by both closures
+
+            def on_stream(event: str, data: dict) -> None:
+                _q.put_nowait((event, data))
+
+            def _on_display_message(message: str, level: str, source: str) -> None:
+                _q.put_nowait(
+                    (
+                        "display_message",
+                        {
+                            "message": message,
+                            "level": level,
+                            "source": source,
+                        },
+                    )
+                )
+
+            display = _BDS(on_message=_on_display_message)
+
         config = BridgeConfig(
             working_dir=Path(working_dir).expanduser(),
             bundle_name=bundle_name,
             run_preflight=False,  # Server already validated
+            on_stream=on_stream,
+            display=display,
         )
         handle = await self._bridge.create_session(config)
         self._sessions[handle.session_id] = handle
+
+        # Wire the approval system for this session
+        from amplifier_distro.bridge_protocols import BridgeApprovalSystem as _BAS
+
+        # Wire on_approval_request to notify the client via event queue
+        def _on_approval_request(
+            request_id: str,
+            prompt: str,
+            options: list,
+            timeout: float,
+            default: str,
+        ) -> None:
+            if event_queue is not None:
+                event_queue.put_nowait(
+                    (
+                        "approval_request",
+                        {
+                            "request_id": request_id,
+                            "prompt": prompt,
+                            "options": options,
+                            "timeout": timeout,
+                            "default": default,
+                        },
+                    )
+                )
+
+        _approval = _BAS(
+            on_approval_request=_on_approval_request,
+            auto_approve=False,
+        )
+        self._approval_systems[handle.session_id] = _approval
+        if hasattr(handle, "set_approval_system"):
+            handle.set_approval_system(_approval)
 
         # Pre-start the session worker so the first message doesn't pay
         # the task-creation overhead, and so the worker is available for
@@ -259,10 +351,61 @@ class BridgeBackend:
                 self._session_worker(session_id)
             )
 
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future[str] = loop.create_future()
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         await self._session_queues[session_id].put((message, future))
         return await future
+
+    async def execute(
+        self,
+        session_id: str,
+        prompt: str,
+        images: list[str] | None = None,
+    ) -> None:
+        """Execute a prompt, streaming events into the queue wired at create_session().
+
+        Unlike send_message() which blocks for a return value, execute() awaits
+        handle.run() and streams all events through on_stream.
+        Raises ValueError if session not found.
+        """
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            raise ValueError(f"Unknown session: {session_id}")
+        # TODO(Task 27): pass images to handle.run() when image attachment is wired
+        await handle.run(prompt)
+
+    async def cancel_session(
+        self,
+        session_id: str,
+        level: str = "graceful",
+    ) -> None:
+        """Request cancellation of an active session.
+
+        Safe to call on unknown session IDs (no-op).
+        level: "graceful" or "immediate".
+        """
+        handle = self._sessions.get(session_id)
+        if handle is None:
+            logger.debug("cancel_session: unknown session %s (ignored)", session_id)
+            return
+        await handle.cancel(level)
+
+    def resolve_approval(
+        self,
+        session_id: str,
+        request_id: str,
+        choice: str,
+    ) -> bool:
+        """Unblock a pending approval request for a session.
+
+        Returns True if the request was found and unblocked, False otherwise.
+        """
+        approval = self._approval_systems.get(session_id)
+        if approval is None:
+            logger.warning(
+                "resolve_approval: no approval system for session %s", session_id
+            )
+            return False
+        return approval.handle_response(request_id, choice)
 
     async def _reconnect(self, session_id: str) -> Any:
         """Attempt to resume a session whose handle was lost (e.g. after restart).
@@ -280,6 +423,17 @@ class BridgeBackend:
         try:
             handle = await self._bridge.resume_session(session_id)
             self._sessions[session_id] = handle
+
+            # Re-wire approval system (mirrors create_session() wiring)
+            from amplifier_distro.bridge_protocols import BridgeApprovalSystem as _BAS
+
+            _approval = _BAS(auto_approve=False)
+            approval_systems = getattr(self, "_approval_systems", None)
+            if approval_systems is not None:
+                approval_systems[session_id] = _approval
+                if hasattr(handle, "set_approval_system"):
+                    handle.set_approval_system(_approval)
+
             logger.info(f"Reconnected session {session_id}")
             return handle
         except (FileNotFoundError, ValueError, RuntimeError, OSError) as err:
@@ -340,6 +494,9 @@ class BridgeBackend:
                 queue.task_done()  # exactly one call per item, all exit paths
 
     async def end_session(self, session_id: str) -> None:
+        # Clean up approval system before ending
+        self._approval_systems.pop(session_id, None)
+
         # Tombstone first — prevents _reconnect() from reviving this session
         self._ended_sessions.add(session_id)
 
@@ -405,6 +562,7 @@ class BridgeBackend:
 
         self._session_queues.clear()
         self._worker_tasks.clear()
+        self._approval_systems.clear()  # prevent memory leak on server shutdown
 
     async def get_session_info(self, session_id: str) -> SessionInfo | None:
         handle = self._sessions.get(session_id)

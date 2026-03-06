@@ -11,6 +11,7 @@ BridgeConfig.display and BridgeConfig.on_stream.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any, Literal
@@ -41,7 +42,7 @@ class BridgeDisplaySystem:
     ) -> None:
         if self._on_message:
             result = self._on_message(message, level, source)
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 await result
         else:
             log_level = {
@@ -69,45 +70,73 @@ class BridgeDisplaySystem:
 
 
 class BridgeApprovalSystem:
-    """Approval system for headless usage.
+    """Interactive approval system using asyncio.Event for WebSocket integration.
 
-    Default: auto-approve everything (headless mode).
-    Can be configured with a callback for interactive approval.
+    In auto_approve mode: immediately returns first option (headless usage).
+    In interactive mode: blocks request_approval() until handle_response()
+    is called from another coroutine (e.g., the WebSocket receive loop).
+
+    on_approval_request: async callback(request_id, prompt, options, timeout, default)
+      Called when a new approval request is pending — use this to notify the
+      WebSocket client that approval is needed.
     """
 
     def __init__(
         self,
-        on_approval: Callable[[str, list[str]], Any] | None = None,
+        on_approval_request: Callable[..., Any] | None = None,
         auto_approve: bool = True,
     ) -> None:
-        self._on_approval = on_approval
+        self._on_approval_request = on_approval_request
         self._auto_approve = auto_approve
-        self._pending: dict[str, asyncio.Future[str]] = {}
+        self._pending: dict[str, asyncio.Event] = {}
+        self._responses: dict[str, str] = {}
 
     async def request_approval(
         self,
         prompt: str,
         options: list[str],
         timeout: float = 300.0,
-        default: Literal["allow", "deny"] = "deny",
+        default: str = "deny",
     ) -> str:
         if self._auto_approve:
             return options[0] if options else "allow"
 
-        if self._on_approval:
-            result = self._on_approval(prompt, options)
-            if asyncio.iscoroutine(result):
-                return await result  # type: ignore[return-value]
-            return result  # type: ignore[return-value]
+        import uuid
 
-        return default
+        request_id = str(uuid.uuid4())
+        event = asyncio.Event()
+        self._pending[request_id] = event
+
+        try:
+            if self._on_approval_request:
+                result = self._on_approval_request(
+                    request_id, prompt, options, timeout, default
+                )
+                if inspect.isawaitable(result):
+                    await result
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return self._responses.pop(request_id, default)
+        except TimeoutError:
+            return default
+        finally:
+            self._pending.pop(request_id, None)
+            self._responses.pop(request_id, None)  # defensive cleanup
 
     def handle_response(self, request_id: str, choice: str) -> bool:
-        future = self._pending.pop(request_id, None)
-        if future and not future.done():
-            future.set_result(choice)
-            return True
-        return False
+        """Unblock a waiting request_approval().
+
+        Returns True if found and not already resolved.
+        """
+        event = self._pending.get(request_id)
+        if event is None:
+            return False
+        if event.is_set():
+            # Already resolved (either by a prior handle_response call, or
+            # timeout has fired and the event was set by the timeout path).
+            return False
+        self._responses[request_id] = choice
+        event.set()
+        return True
 
 
 class BridgeStreamingHook:
@@ -129,7 +158,7 @@ class BridgeStreamingHook:
     async def __call__(self, event: str, data: dict[str, Any]) -> Any:
         if self._on_event:
             result = self._on_event(event, data)
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 await result
 
         # Import here to avoid hard dependency at module level

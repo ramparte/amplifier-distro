@@ -37,6 +37,7 @@ def bridge_backend():
         backend._session_queues = {}
         backend._worker_tasks = {}
         backend._ended_sessions = set()
+        backend._approval_systems = {}
         return backend
 
 
@@ -356,6 +357,7 @@ class TestStopServicesShutdown:
 class TestSessionBackendProtocol:
     def test_protocol_declares_resume_session(self):
         from amplifier_distro.server.session_backend import SessionBackend
+
         assert hasattr(SessionBackend, "resume_session"), (
             "SessionBackend Protocol must declare resume_session"
         )
